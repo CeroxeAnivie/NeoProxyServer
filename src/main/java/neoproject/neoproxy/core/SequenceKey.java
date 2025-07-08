@@ -122,7 +122,7 @@ public class SequenceKey {
                 BufferedWriter bufferedWriter = new BufferedWriter(new FileWriter(keyFile, StandardCharsets.UTF_8));
                 bufferedWriter.write("rate=" + rate);
                 bufferedWriter.newLine();
-                bufferedWriter.write("expireTime="+expireTime);
+                bufferedWriter.write("expireTime=" + expireTime);
                 if (port != -1) {
                     bufferedWriter.newLine();
                     bufferedWriter.write("port=" + port);

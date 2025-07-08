@@ -26,7 +26,7 @@ public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = System.getProperty("user.dir");
     public static final File KEY_FILE_DIR = new File(CURRENT_DIR_PATH + File.separator + "keys");
 
-    public static String EXPECTED_CLIENT_VERSION = "2.0-RELEASE";
+    public static String EXPECTED_CLIENT_VERSION = "2.2-RELEASE";
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.stringArrayToList(EXPECTED_CLIENT_VERSION.split("\\|"));
 
     public static int HOST_HOOK_PORT = 801;
@@ -37,8 +37,8 @@ public class NeoProxyServer {
     public static ServerSocket hostServerTransferServerSocket = null;
     public static ServerSocket hostServerHookServerSocket = null;
     public static Loggist loggist;
-    public static final int START_PORT = 50000;
-    public static final int END_PORT = 65535;
+    public static int START_PORT = 50000;
+    public static int END_PORT = 65535;
     public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
     public static boolean IS_DEBUG_MODE = false;
 
@@ -116,7 +116,7 @@ public class NeoProxyServer {
 
         sayInfo("-----------------------------------------------------");
         sayInfo("""
-
+                
                    _____                                    \s
                   / ____|                                   \s
                  | |        ___   _ __    ___   __  __   ___\s
@@ -357,7 +357,7 @@ public class NeoProxyServer {
         if (IS_DEBUG_MODE) {
             String exceptionMsg = StringUtils.getExceptionMsg(e);
             System.out.println(exceptionMsg);
-            loggist.write(exceptionMsg,true);
+            loggist.write(exceptionMsg, true);
         }
     }
 

@@ -2,7 +2,6 @@ package neoproject.neoproxy.core;
 
 import neoproject.neoproxy.core.exceptions.IllegalConnectionException;
 import plethora.print.log.LogType;
-import plethora.print.log.State;
 import plethora.security.encryption.AESUtil;
 import plethora.utils.Sleeper;
 

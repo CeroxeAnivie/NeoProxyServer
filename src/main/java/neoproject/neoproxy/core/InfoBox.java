@@ -1,7 +1,6 @@
 package neoproject.neoproxy.core;
 
 import plethora.print.log.LogType;
-import plethora.print.log.State;
 
 import java.net.Socket;
 

@@ -5,7 +5,6 @@ import neoproject.neoproxy.core.HostClient;
 import neoproject.neoproxy.core.HostSign;
 import neoproject.neoproxy.core.InternetOperator;
 import plethora.print.log.LogType;
-import plethora.print.log.State;
 import plethora.utils.Sleeper;
 
 import java.io.IOException;

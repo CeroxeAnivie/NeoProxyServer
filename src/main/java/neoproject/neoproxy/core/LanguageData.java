@@ -21,7 +21,7 @@ public class LanguageData implements Serializable {
     public String THE_VAULT = "The vault ";
     public String ARE_OUT_OF_DATE = " are out of date.";
     public String THIS_ACCESS_CODE_HAVE = "This access code have ";
-    public String MB_IF_FLOW_LEFT = " MB of network flow left";
+    public String MB_OF_FLOW_LEFT = " MB of network flow left";
     public String YOU_HAVE_NO_NETWORK_FLOW_LEFT = "You have no network flow left ! Force exiting...";
     public String ACCESS_DENIED_FORCE_EXITING = "Access denied , force exiting...";
     public String EXPIRE_AT = "This serial number will expire at ";
@@ -52,7 +52,7 @@ public class LanguageData implements Serializable {
         languageData.THE_VAULT = "这个序列号 ";
         languageData.ARE_OUT_OF_DATE = " 已经过期了。";
         languageData.THIS_ACCESS_CODE_HAVE = "这个序列号有 ";
-        languageData.MB_IF_FLOW_LEFT = " MB 流量可以消耗。";
+        languageData.MB_OF_FLOW_LEFT = " MB 流量可以消耗。";
         languageData.YOU_HAVE_NO_NETWORK_FLOW_LEFT = "你已经没有流量了，强制退出。。。";
         languageData.ACCESS_DENIED_FORCE_EXITING = "序列号错误，强制退出。。。";
         languageData.EXPIRE_AT = "有效期至：";

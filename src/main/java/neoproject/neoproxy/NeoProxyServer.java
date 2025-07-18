@@ -279,7 +279,7 @@ public class NeoProxyServer {
 
         InternetOperator.sendCommand(hostClient, String.valueOf(port));//tell the host client remote out port
         //tell the message to the host client
-        InternetOperator.sendStr(hostClient, hostClient.getLangData().THIS_ACCESS_CODE_HAVE + hostClient.getVault().getRate() + hostClient.getLangData().MB_IF_FLOW_LEFT);
+        InternetOperator.sendStr(hostClient, hostClient.getLangData().THIS_ACCESS_CODE_HAVE + hostClient.getVault().getRate() + hostClient.getLangData().MB_OF_FLOW_LEFT);
         InternetOperator.sendStr(hostClient, hostClient.getLangData().EXPIRE_AT + hostClient.getVault().getExpireTime());
 
         InternetOperator.sendStr(hostClient, hostClient.getLangData().USE_THE_ADDRESS + LOCAL_DOMAIN_NAME + ":" + port + hostClient.getLangData().TO_START_UP_CONNECTION);//send remote connect address

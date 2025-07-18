@@ -112,7 +112,7 @@ public class Transformer implements Runnable {
         if (aTenMibSize[0] < TELL_RATE_MIB) {//tell the host client the rest rate.
             aTenMibSize[0] = aTenMibSize[0] + SizeCalculator.byteToMib(len);
         } else {
-            InternetOperator.sendStr(hostClient, languageData.THIS_ACCESS_CODE_HAVE + hostClient.getVault().getRate() + languageData.MB_IF_FLOW_LEFT);
+            InternetOperator.sendStr(hostClient, languageData.THIS_ACCESS_CODE_HAVE + hostClient.getVault().getRate() + languageData.MB_OF_FLOW_LEFT);
             aTenMibSize[0] = 0;
         }
     }

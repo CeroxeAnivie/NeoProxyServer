@@ -7,6 +7,8 @@ import neoproject.neoproxy.core.threads.management.AdminThread;
 import neoproject.neoproxy.core.threads.management.CheckUpdateThread;
 import neoproject.neoproxy.core.threads.management.TransferSocketAdapter;
 import plethora.management.bufferedFile.BufferedFile;
+import plethora.net.SecureServerSocket;
+import plethora.net.SecureSocket;
 import plethora.print.log.LogType;
 import plethora.print.log.Loggist;
 import plethora.print.log.State;
@@ -26,7 +28,7 @@ public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = System.getProperty("user.dir");
     public static final File KEY_FILE_DIR = new File(CURRENT_DIR_PATH + File.separator + "keys");
 
-    public static String EXPECTED_CLIENT_VERSION = "2.3-RELEASE";
+    public static String EXPECTED_CLIENT_VERSION = "3.0-RELEASE";
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.stringArrayToList(EXPECTED_CLIENT_VERSION.split("\\|"));
 
     public static int HOST_HOOK_PORT = 801;
@@ -34,8 +36,8 @@ public class NeoProxyServer {
 
     public static String LOCAL_DOMAIN_NAME = "127.0.0.1";
     public static CopyOnWriteArrayList<SequenceKey> sequenceKeyDatabase = new CopyOnWriteArrayList<>();
-    public static ServerSocket hostServerTransferServerSocket = null;
-    public static ServerSocket hostServerHookServerSocket = null;
+    public static SecureServerSocket hostServerTransferServerSocket = null;
+    public static SecureServerSocket hostServerHookServerSocket = null;
     public static Loggist loggist;
     public static int START_PORT = 50000;
     public static int END_PORT = 65535;
@@ -52,12 +54,12 @@ public class NeoProxyServer {
     public static void initStructure() {
 
         initLoggist();//初始化日志系统
-        initVaultDatabase();
+        initKeyDatabase();
 
         ConfigOperator.readAndSetValue();
 
         try {
-            hostServerHookServerSocket = new ServerSocket(HOST_HOOK_PORT);
+            hostServerHookServerSocket = new SecureServerSocket(HOST_HOOK_PORT);
             TransferSocketAdapter.startThread();
         } catch (IOException e) {
             debugOperation(e);
@@ -80,7 +82,7 @@ public class NeoProxyServer {
 
     }
 
-    public static void initVaultDatabase() {
+    public static void initKeyDatabase() {
         if (KEY_FILE_DIR.exists()) {
             File[] c = KEY_FILE_DIR.listFiles();
             if (c == null) {
@@ -157,7 +159,7 @@ public class NeoProxyServer {
                         hostClient.close();
                     } catch (SlientException ignore) {
                     }
-                }).start();
+                }, "监听 host client 连接的服务").start();
             } catch (IOException e) {
                 sayInfo(LogType.INFO, "Main", "A host client try to connect but fail .");
             } catch (SlientException ignored) {
@@ -168,12 +170,12 @@ public class NeoProxyServer {
 
     public static HostClient listenAndConfigureHostClient() throws SlientException, IOException {
         //listen for host client,and check is ban and available
-        Socket hostServerHook = hostServerHookServerSocket.accept();
-        if (IPChecker.exec(hostServerHook, IPChecker.CHECK_IS_BAN)) {
+        SecureSocket hostServerHook = hostServerHookServerSocket.accept();
+        if (IPChecker.exec(hostServerHook.getInetAddress().getHostAddress(), IPChecker.CHECK_IS_BAN)) {
             InternetOperator.close(hostServerHook);
             SlientException.throwException();//skip while
         }
-        sayInfo("HostClient on " + hostServerHook.getInetAddress() + ":" + hostServerHook.getPort() + " try to connect !");
+        sayInfo("HostClient on " + hostServerHook.getInetAddress().getHostAddress() + ":" + hostServerHook.getPort() + " try to connect !");
         HostClient hostClient = null;
         try {
             hostClient = new HostClient(hostServerHook);
@@ -214,9 +216,9 @@ public class NeoProxyServer {
                 }
 
                 //获取host client发来的AES传输通道socket
-                HostSign hostSign;
+                HostReply hostReply;
                 try {
-                    hostSign = TransferSocketAdapter.getThisHostClientHostSign(hostClient.getOutPort());
+                    hostReply = TransferSocketAdapter.getThisHostClientHostSign(hostClient.getOutPort());
                 } catch (IOException e) {//if host client timeout
                     InfoBox.sayClientSuccConnecToChaSerButHostClientTimeOut(hostClient);
                     sayInfo("Killing client's side connection: " + InternetOperator.getInternetAddressAndPort(client));
@@ -225,11 +227,11 @@ public class NeoProxyServer {
                 }
 
                 //立即服务
-                Transformer.startThread(hostClient, hostSign, client);
+                Transformer.startThread(hostClient, hostReply, client);
 
                 InfoBox.sayClientConnectBuildUpInfo(hostClient, client);//say connection build up info
             }
-        }).start();
+        }, "这个子线程是对于连接成功的 host client 后续的服务").start();
     }
 
     public static void sayInfo(String str) {
@@ -283,14 +285,12 @@ public class NeoProxyServer {
         InternetOperator.sendStr(hostClient, hostClient.getLangData().EXPIRE_AT + hostClient.getVault().getExpireTime());
 
         InternetOperator.sendStr(hostClient, hostClient.getLangData().USE_THE_ADDRESS + LOCAL_DOMAIN_NAME + ":" + port + hostClient.getLangData().TO_START_UP_CONNECTION);//send remote connect address
+
         //print the property into the console
         sayInfo("Assigned connection address: " + LOCAL_DOMAIN_NAME + ":" + port);
     }
 
-    private static Object[] checkHostClientVersionAndKeyAndLang(HostClient hostClient) throws IOException, UnSupportHostVersionException, UnRecognizedKeyException, AlreadyBlindPortException, IndexOutOfBoundsException, SlientException {
-        if (hostClient.getReader() == null) {
-            SlientException.throwException();
-        }
+    private static Object[] checkHostClientVersionAndKeyAndLang(HostClient hostClient) throws IOException, UnSupportHostVersionException, UnRecognizedKeyException, AlreadyBlindPortException, IndexOutOfBoundsException {
         String hostClientInfo = InternetOperator.receiveStr(hostClient);//host client property in one line
 
         if (hostClientInfo == null) {

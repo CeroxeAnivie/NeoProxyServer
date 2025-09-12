@@ -3,11 +3,14 @@ package neoproject.neoproxy.core.threads;
 import neoproject.neoproxy.NeoProxyServer;
 import neoproject.neoproxy.core.*;
 import neoproject.neoproxy.core.exceptions.NoMoreNetworkFlowException;
-import neoproject.publicInstance.DataPacket;
 import plethora.management.bufferedFile.SizeCalculator;
+import plethora.net.SecureSocket;
 import plethora.thread.ThreadManager;
 
-import java.io.*;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.Closeable;
+import java.io.IOException;
 import java.net.Socket;
 
 import static neoproject.neoproxy.core.InternetOperator.close;
@@ -18,38 +21,34 @@ public class Transformer implements Runnable {
     public static int TELL_RATE_MIB = 10;
     private final HostClient hostClient;
     private final Socket client;
-    private HostSign hostSign;
+    private HostReply hostReply;
 
 
-    private Transformer(HostClient hostClient, Socket client, HostSign hostSign) {
+    private Transformer(HostClient hostClient, Socket client, HostReply hostReply) {
         this.hostClient = hostClient;
         this.client = client;
-        this.hostSign = hostSign;
+        this.hostReply = hostReply;
     }
 
-    public static void startThread(HostClient hostClient, HostSign hostSign, Socket client) {
-        new Thread(new Transformer(hostClient, client, hostSign)).start();
+    public static void startThread(HostClient hostClient, HostReply hostReply, Socket client) {
+        new Thread(new Transformer(hostClient, client, hostReply), "new Transformer").start();
     }
 
-    public static void transferDataToNeoServer(HostClient hostClient, Socket client, HostSign hostSign, double[] aTenMibSize) {
+    public static void ClientToHost(HostClient hostClient, Socket client, HostReply hostReply, double[] aTenMibSize) {
         try {
             BufferedInputStream bufferedInputStream = new BufferedInputStream(client.getInputStream());
-            ObjectOutputStream objectOutputStream = hostSign.objectOutputStream();
 
             int len;
             byte[] data = new byte[BUFFER_LEN];
             while ((len = bufferedInputStream.read(data)) != -1) {
+                int enLength = hostReply.host().sendByte(data, 0, len);
 
-                byte[] enData = hostClient.getAESUtil().encrypt(data, 0, len);
-                objectOutputStream.writeObject(new DataPacket(len, enData));
-                objectOutputStream.flush();
-
-                hostClient.getVault().mineMib(SizeCalculator.byteToMib(enData.length + 100));//real + 0.1kb
-                tellRestRate(hostClient, aTenMibSize, enData.length, hostClient.getLangData());//tell the host client the rest rate.
+                hostClient.getVault().mineMib(SizeCalculator.byteToMib(enLength + 10));//real + 0.01kb
+                tellRestRate(hostClient, aTenMibSize, enLength, hostClient.getLangData());//tell the host client the rest rate.
             }
 
-            objectOutputStream.writeObject(null);//tell host client is end!
-            hostSign.host().shutdownOutput();
+            hostReply.host().sendByte(null);//告知传输完成
+            hostReply.host().shutdownOutput();
             client.shutdownInput();
 
         } catch (IOException e) {
@@ -57,55 +56,47 @@ public class Transformer implements Runnable {
 
             try {
 
-                hostSign.objectOutputStream().writeObject(null);//tell host client is end!
-                hostSign.host().shutdownOutput();
+                hostReply.host().shutdownOutput();//传输出现问题
                 client.shutdownInput();
 
             } catch (IOException ignore) {
             }
-
         } catch (NoMoreNetworkFlowException e) {
             removeVaultOnAll(hostClient.getVault());
-            kickAllWithMsg(hostClient, hostSign.host(), client);
+            kickAllWithMsg(hostClient, hostReply.host(), client);
         }
-        System.gc();
     }
 
-    public static void transferDataToOuterClient(HostClient hostClient, HostSign hostSign, Socket client, double[] aTenMibSize) {
+    public static void HostToClient(HostClient hostClient, HostReply hostReply, Socket client, double[] aTenMibSize) {
         try {
-            ObjectInputStream objectInputStream = hostSign.objectInputStream();
             BufferedOutputStream bufferedOutputStream = new BufferedOutputStream(client.getOutputStream());
 
-            DataPacket dataPacket;
-            while ((dataPacket = (DataPacket) objectInputStream.readObject()) != null) {
-
-
-                byte[] deData = hostClient.getAESUtil().decrypt(dataPacket.enData);
-                bufferedOutputStream.write(deData, 0, dataPacket.realLen);
+            byte[] data;
+            while ((data = hostReply.host().receiveByte()) != null) {
+                bufferedOutputStream.write(data);
                 bufferedOutputStream.flush();
 
-                hostClient.getVault().mineMib(SizeCalculator.byteToMib(deData.length));
-                tellRestRate(hostClient, aTenMibSize, deData.length, hostClient.getLangData());//tell the host client the rest rate.
+                hostClient.getVault().mineMib(SizeCalculator.byteToMib(data.length));
+                tellRestRate(hostClient, aTenMibSize, data.length, hostClient.getLangData());//tell the host client the rest rate.
             }
 
-            hostSign.host().shutdownInput();
+            hostReply.host().shutdownInput();
             client.shutdownOutput();
 
-        } catch (IOException | ClassNotFoundException e) {
+        } catch (IOException e) {
             NeoProxyServer.debugOperation(e);
 
             try {
 
-                hostSign.host().shutdownInput();
+                hostReply.host().shutdownInput();
                 client.shutdownOutput();
 
             } catch (IOException ignore) {
             }
         } catch (NoMoreNetworkFlowException e) {
             removeVaultOnAll(hostClient.getVault());
-            kickAllWithMsg(hostClient, hostSign.host(), client);
+            kickAllWithMsg(hostClient, hostReply.host(), client);
         }
-        System.gc();
     }
 
     public static void tellRestRate(HostClient hostClient, double[] aTenMibSize, int len, LanguageData languageData) throws IOException {
@@ -117,7 +108,7 @@ public class Transformer implements Runnable {
         }
     }
 
-    public static void kickAllWithMsg(HostClient hostClient, Socket host, Closeable clientEle) {
+    public static void kickAllWithMsg(HostClient hostClient, SecureSocket host, Closeable clientEle) {
         close(clientEle, host);
         try {
             InternetOperator.sendCommand(hostClient, "exit");
@@ -132,17 +123,16 @@ public class Transformer implements Runnable {
     public void run() {
         try {
             final double[] aTenMibSize = {0};//Just for code! No function.
-            Runnable clientToHostClientThread = () -> transferDataToNeoServer(hostClient, client, hostSign, aTenMibSize);
-            Runnable hostClientToClientThread = () -> transferDataToOuterClient(hostClient, hostSign, client, aTenMibSize);
+            Runnable clientToHostClientThread = () -> ClientToHost(hostClient, client, hostReply, aTenMibSize);
+            Runnable hostClientToClientThread = () -> HostToClient(hostClient, hostReply, client, aTenMibSize);
             ThreadManager threadManager = new ThreadManager(clientToHostClientThread, hostClientToClientThread);
             threadManager.startAll();
-            close(client, hostSign.host());
+            close(client, hostReply.host());
             InfoBox.sayClientConnectDestroyInfo(hostClient, client);
         } catch (Exception ignore) {
-            close(client, hostSign.host());
+            close(client, hostReply.host());
             InfoBox.sayClientConnectDestroyInfo(hostClient, client);
         }
-        System.gc();
     }
 
 }

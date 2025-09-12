@@ -2,13 +2,13 @@ package neoproject.neoproxy.core;
 
 import neoproject.neoproxy.core.exceptions.NoMoreNetworkFlowException;
 import plethora.management.bufferedFile.SizeCalculator;
+import plethora.net.SecureSocket;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import java.net.Socket;
-import java.nio.charset.StandardCharsets;
+
+import static neoproject.neoproxy.NeoProxyServer.debugOperation;
 
 public final class InternetOperator {
     public static final String COMMAND_PREFIX = ":>";
@@ -17,26 +17,22 @@ public final class InternetOperator {
     }
 
     public static void sendStr(HostClient hostClient, String str) throws IOException {
-        ObjectOutputStream objectOutputStream = hostClient.getWriter();
-        byte[] data = hostClient.getAESUtil().encrypt(str.getBytes(StandardCharsets.UTF_8));
-        objectOutputStream.writeObject(data);
-        objectOutputStream.flush();
+        int length = hostClient.getHostServerHook().sendStr(str);
 
         if (hostClient.getVault() != null) {
             try {
-                hostClient.getVault().mineMib(SizeCalculator.byteToMib(data.length));
+                hostClient.getVault().mineMib(SizeCalculator.byteToMib(length));
             } catch (NoMoreNetworkFlowException e) {
                 hostClient.close();
             }
         }
     }
 
-    public static String receiveStr(HostClient hostClient) throws IOException {
+    public static String receiveStr(HostClient hostClient) {
         try {
-            ObjectInputStream objectInputStream = hostClient.getReader();
-            return new String(hostClient.getAESUtil().decrypt((byte[]) objectInputStream.readObject()), StandardCharsets.UTF_8);
-        } catch (ClassNotFoundException e) {
-            e.printStackTrace();
+            return hostClient.getHostServerHook().receiveStr();
+        } catch (Exception e) {
+            debugOperation(e);
             return null;
         }
     }
@@ -60,7 +56,11 @@ public final class InternetOperator {
     }
 
     public static String getInternetAddressAndPort(Socket socket) {
-        return socket.getInetAddress().toString().replaceAll("/", "") + ":" + socket.getPort();
+        return socket.getInetAddress().getHostAddress() + ":" + socket.getPort();
+    }
+
+    public static String getInternetAddressAndPort(SecureSocket socket) {
+        return socket.getInetAddress().getHostAddress() + ":" + socket.getPort();
     }
 
     public static String getIP(Socket socket) {

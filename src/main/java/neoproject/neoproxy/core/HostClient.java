@@ -1,18 +1,14 @@
 package neoproject.neoproxy.core;
 
 import neoproject.neoproxy.core.exceptions.IllegalConnectionException;
+import plethora.net.SecureSocket;
 import plethora.print.log.LogType;
 import plethora.security.encryption.AESUtil;
 import plethora.utils.Sleeper;
 
-import javax.crypto.Cipher;
 import java.io.Closeable;
 import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
 import java.net.ServerSocket;
-import java.net.Socket;
-import java.security.PublicKey;
 
 import static neoproject.neoproxy.NeoProxyServer.availableHostClient;
 import static neoproject.neoproxy.NeoProxyServer.sayInfo;
@@ -24,39 +20,18 @@ public final class HostClient implements Closeable {
     public static int FAILURE_LIMIT = 5;
     private boolean isStopped = false;
     private SequenceKey sequenceKey = null;
-    private final Socket hostServerHook;
+    private final SecureSocket hostServerHook;
     private ServerSocket clientServerSocket = null;
-    private ObjectOutputStream hostServerHookWriter = null;
-    private ObjectInputStream hostServerHookReader = null;
     private LanguageData languageData = new LanguageData();
     private int outPort = -1;
     public static int AES_KEY_SIZE = 128;
     private final AESUtil aesUtil = new AESUtil(AES_KEY_SIZE);//AES-128
 
-    public HostClient(Socket hostServerHook) throws IOException, IllegalConnectionException {
+    public HostClient(SecureSocket hostServerHook) throws IOException, IllegalConnectionException {
         this.hostServerHook = hostServerHook;
 
-        HostClient.initConnection(this);
-
         HostClient.enableAutoSaveThread(this);
-        HostClient.enableVaultDetectionTread(this);
-    }
-
-    private static void initConnection(HostClient hostClient) throws IllegalConnectionException {
-        try {
-
-            hostClient.hostServerHookWriter = new ObjectOutputStream(hostClient.getHostServerHook().getOutputStream());
-            hostClient.hostServerHookReader = new ObjectInputStream(hostClient.getHostServerHook().getInputStream());
-
-            Cipher enCipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
-            enCipher.init(Cipher.ENCRYPT_MODE, (PublicKey) hostClient.hostServerHookReader.readObject());
-            hostClient.getWriter().writeObject(enCipher.doFinal(hostClient.getAESUtil().getKeyBytes()));
-            hostClient.getWriter().flush();
-
-        } catch (Exception e) {
-            hostClient.close();
-            IllegalConnectionException.throwException(hostClient.hostServerHook);
-        }
+        HostClient.enableKeyDetectionTread(this);
     }
 
     private static void enableAutoSaveThread(HostClient hostClient) {
@@ -75,7 +50,7 @@ public final class HostClient implements Closeable {
         a.start();
     }
 
-    private static void enableVaultDetectionTread(HostClient hostClient) {
+    private static void enableKeyDetectionTread(HostClient hostClient) {
         Thread a = new Thread(() -> {
             while (true) {
                 if (hostClient.getVault() != null && !hostClient.isStopped && hostClient.getVault().isOutOfDate()) {
@@ -84,7 +59,7 @@ public final class HostClient implements Closeable {
                         InternetOperator.sendStr(hostClient, hostClient.getLangData().THE_VAULT + hostClient.getVault().getName() + hostClient.getLangData().ARE_OUT_OF_DATE);
                         InternetOperator.sendCommand(hostClient, "exit");
                         InfoBox.sayHostClientDiscInfo(hostClient, "VaultDetectionTread");
-                    } catch (IOException e2) {
+                    } catch (Exception e2) {
                         InfoBox.sayHostClientDiscInfo(hostClient, "VaultDetectionTread");
                     }
                     removeVaultOnAll(hostClient.getVault());
@@ -105,10 +80,6 @@ public final class HostClient implements Closeable {
 
     public void close() {
         availableHostClient.remove(this);
-        try {
-            hostServerHookWriter.writeObject(null);//tell the client is exit!
-        } catch (IOException ignore) {
-        }
 
         InternetOperator.close(hostServerHook);
 
@@ -120,7 +91,6 @@ public final class HostClient implements Closeable {
         }
 
         this.isStopped = true;
-        this.gc();
     }
 
     public void enableCheckAliveThread() {
@@ -130,8 +100,8 @@ public final class HostClient implements Closeable {
         new Thread(() -> {
             while (failureTime[0] < FAILURE_LIMIT) {
                 try {
-                    Object obj = hostClient.hostServerHookReader.readObject();
-                    if (obj == null) {
+                    String str = hostClient.hostServerHook.receiveStr();
+                    if (str == null) {
                         failureTime[0]++;
                     } else {
                         failureTime[0] = 0;
@@ -141,7 +111,6 @@ public final class HostClient implements Closeable {
                 }
                 Sleeper.sleep(1000);
             }
-            System.gc();
         }).start();
 
         new Thread(() -> {
@@ -167,7 +136,7 @@ public final class HostClient implements Closeable {
         this.sequenceKey = sequenceKey;
     }
 
-    public Socket getHostServerHook() {
+    public SecureSocket getHostServerHook() {
         return hostServerHook;
     }
 
@@ -177,14 +146,6 @@ public final class HostClient implements Closeable {
 
     public void setClientServerSocket(ServerSocket clientServerSocket) {
         this.clientServerSocket = clientServerSocket;
-    }
-
-    public ObjectOutputStream getWriter() {
-        return hostServerHookWriter;
-    }
-
-    public ObjectInputStream getReader() {
-        return hostServerHookReader;
     }
 
     public String getAddressAndPort() {

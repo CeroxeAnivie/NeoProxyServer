@@ -100,8 +100,8 @@ public final class HostClient implements Closeable {
         new Thread(() -> {
             while (failureTime[0] < FAILURE_LIMIT) {
                 try {
-                    String str = hostClient.hostServerHook.receiveStr();
-                    if (str == null) {
+                    byte[] bytes = hostClient.hostServerHook.receiveByte();
+                    if (bytes == null) {
                         failureTime[0]++;
                     } else {
                         failureTime[0] = 0;

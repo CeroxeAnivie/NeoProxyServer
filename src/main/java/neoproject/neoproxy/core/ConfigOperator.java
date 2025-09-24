@@ -97,7 +97,7 @@ public class ConfigOperator {
                     
                     #外部接收数据包数组的长度
                     #The length of the external receive packet array
-                    BUFFER_LEN=117
+                    BUFFER_LEN=4096
                     
                     UPDATE_PORT=803
                     ADMIN_PORT=945

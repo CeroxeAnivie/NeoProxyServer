@@ -16,19 +16,9 @@ import java.net.Socket;
 import static neoproject.neoproxy.core.InternetOperator.close;
 import static neoproject.neoproxy.core.SequenceKey.removeVaultOnAll;
 
-public class Transformer implements Runnable {
+public record Transformer(HostClient hostClient, Socket client, HostReply hostReply) implements Runnable {
     public static int BUFFER_LEN = 256;
     public static int TELL_RATE_MIB = 10;
-    private final HostClient hostClient;
-    private final Socket client;
-    private HostReply hostReply;
-
-
-    private Transformer(HostClient hostClient, Socket client, HostReply hostReply) {
-        this.hostClient = hostClient;
-        this.client = client;
-        this.hostReply = hostReply;
-    }
 
     public static void startThread(HostClient hostClient, HostReply hostReply, Socket client) {
         new Thread(new Transformer(hostClient, client, hostReply), "new Transformer").start();

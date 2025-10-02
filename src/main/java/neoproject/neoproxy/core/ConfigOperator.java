@@ -6,7 +6,6 @@ import neoproject.neoproxy.core.threads.management.AdminThread;
 import neoproject.neoproxy.core.threads.management.CheckUpdateThread;
 import neoproject.neoproxy.core.threads.management.TransferSocketAdapter;
 import plethora.management.bufferedFile.BufferedFile;
-import plethora.print.log.LogType;
 import plethora.utils.config.LineConfigReader;
 
 import java.io.BufferedWriter;
@@ -36,17 +35,12 @@ public class ConfigOperator {
                 NeoProxyServer.START_PORT = Integer.parseInt(lineConfigReader.get("START_PORT"));
                 NeoProxyServer.END_PORT = Integer.parseInt(lineConfigReader.get("END_PORT"));
                 CheckUpdateThread.UPDATE_PORT = Integer.parseInt(lineConfigReader.get("UPDATE_PORT"));
-                AdminThread.ADMIN_PORT = Integer.parseInt(lineConfigReader.get("ADMIN_PORT"));
-                AdminThread.ADMIN_PASSWORD = lineConfigReader.get("ADMIN_PASSWORD");
-                HostClient.DETECTION_DELAY = Integer.parseInt(lineConfigReader.get("DETECTION_DELAY"));
-                HostClient.FAILURE_LIMIT = Integer.parseInt(lineConfigReader.get("FAILURE_LIMIT"));
                 HostClient.SAVE_DELAY = Integer.parseInt(lineConfigReader.get("SAVE_DELAY"));
                 HostClient.AES_KEY_SIZE = Integer.parseInt(lineConfigReader.get("AES_KEY_SIZE"));
                 Transformer.BUFFER_LEN = Integer.parseInt(lineConfigReader.get("BUFFER_LEN"));
                 Transformer.TELL_RATE_MIB = Integer.parseInt(lineConfigReader.get("TELL_RATE_MIB"));
                 IPChecker.ENABLE_BAN = Boolean.parseBoolean(lineConfigReader.get("ENABLE_BAN"));
                 TransferSocketAdapter.SO_TIMEOUT = Integer.parseInt(lineConfigReader.get("SO_TIMEOUT"));
-
 
             } catch (Exception e) {
                 createAndSetDefaultConfig();
@@ -99,17 +93,8 @@ public class ConfigOperator {
                     #The length of the external receive packet array
                     BUFFER_LEN=4096
                     
+                    #设定更新服务器绑定的端口
                     UPDATE_PORT=803
-                    ADMIN_PORT=945
-                    ADMIN_PASSWORD=8888888
-                    
-                    #服务端检测客户端心跳包的间隔，单位为毫秒
-                    #The interval at which the server detects client heartbeat packets, in milliseconds
-                    DETECTION_DELAY=1000
-                    
-                    #设置允许丢失心跳包的个数
-                    #Set the number of heartbeat packets allowed to be lost
-                    FAILURE_LIMIT=3
                     
                     #设置保存序列号文件的间隔，单位为毫秒
                     #Set the interval for saving the serial number file, in milliseconds
@@ -119,7 +104,7 @@ public class ConfigOperator {
             bufferedWriter.close();
 
         } catch (IOException e) {
-            NeoProxyServer.sayInfo(LogType.ERROR, "ConfigOperator", "Fail to write default config.");
+            NeoProxyServer.sayError("ConfigOperator", "Fail to write default config.");
             System.exit(-1);
         }
 

@@ -18,7 +18,8 @@ public class LanguageData implements Serializable {
     public String FAIL_TO_BUILD_A_CHANNEL_FROM = "Fail to build a channel from ";
     public String DESTROY = " destroyed";
     public String FAIL_TO_CONNECT_LOCALHOST = "Fail to connect to 127.0.0.1:";
-    public String THE_VAULT = "The vault ";
+    public String THE_KEY = "The vault ";
+    public String KEY = "Key ";
     public String ARE_OUT_OF_DATE = " are out of date.";
     public String THIS_ACCESS_CODE_HAVE = "This access code have ";
     public String MB_OF_FLOW_LEFT = " MB of network flow left";
@@ -49,7 +50,8 @@ public class LanguageData implements Serializable {
         languageData.DESTROY = " 的通道关闭";
         languageData.FAIL_TO_CONNECT_LOCALHOST = "连接以下地址失败：127.0.0.1:";
 
-        languageData.THE_VAULT = "这个序列号 ";
+        languageData.THE_KEY = "这个序列号 ";
+        languageData.KEY = "序列号 ";
         languageData.ARE_OUT_OF_DATE = " 已经过期了。";
         languageData.THIS_ACCESS_CODE_HAVE = "这个序列号有 ";
         languageData.MB_OF_FLOW_LEFT = " MB 流量可以消耗。";

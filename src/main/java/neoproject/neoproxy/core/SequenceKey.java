@@ -13,14 +13,16 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 
+import static neoproject.neoproxy.NeoProxyServer.KEY_FILE_DIR;
+import static neoproject.neoproxy.NeoProxyServer.sayError;
+
 public class SequenceKey {
     private double rate;//mb
-    private String expireTime;//2026/01/01 13:33
+    private String expireTime;//2026/01/01-13:33
     private File keyFile;
     private int port = -1;
 
     public SequenceKey(File keyFile) {
-
         try {
             this.keyFile = keyFile;
             readAndSetElementFromFile(keyFile);
@@ -30,14 +32,30 @@ public class SequenceKey {
         }
     }
 
+    public static SequenceKey createNewKey(String name, double rate, String expireTime, int port) throws IOException {
+        File keyFile = new File(KEY_FILE_DIR + File.separator + name);
+        keyFile.createNewFile();
+        BufferedWriter bufferedWriter = new BufferedWriter(new FileWriter(keyFile, StandardCharsets.UTF_8));
+        bufferedWriter.write("rate=" + rate);
+        bufferedWriter.newLine();
+        bufferedWriter.write("expireTime=" + expireTime);
+        if (port != -1) {
+            bufferedWriter.newLine();
+            bufferedWriter.write("port=" + port);
+        }
+        bufferedWriter.close();
+        return new SequenceKey(keyFile);
+    }
+
     public static boolean isOutOfDate(String endTime) {
+        String endTime1 = endTime.replaceAll("-", " ");
         // 定义时间格式
-        //2023/3/2 13:33
+        //2023/03/02 13:33
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm");
 
         try {
             // 将传入的字符串转换为 LocalDateTime
-            LocalDateTime endDateTime = LocalDateTime.parse(endTime, formatter);
+            LocalDateTime endDateTime = LocalDateTime.parse(endTime1, formatter);
 
             // 获取当前的系统时间
             LocalDateTime currentDateTime = LocalDateTime.now();
@@ -46,12 +64,12 @@ public class SequenceKey {
             return currentDateTime.isAfter(endDateTime);
         } catch (DateTimeParseException e) {
             // 如果日期格式不正确，输出错误日志并返回 false
-            System.err.println("日期格式错误: " + e.getMessage());
+            sayError("SequenceKey", e.getMessage());
             return false; // 可以根据需求选择返回 false 或者抛出异常
         }
     }
 
-    public static void removeVaultOnAll(SequenceKey sequenceKey) {
+    public static void removeKey(SequenceKey sequenceKey) {
         NeoProxyServer.sequenceKeyDatabase.remove(sequenceKey);
     }
 
@@ -105,10 +123,6 @@ public class SequenceKey {
         if (rate > 0) {
             rate = rate - mib;
         } else {
-            if (keyFile.exists()) {
-                keyFile.delete();
-                //the exception will auto say
-            }
             NoMoreNetworkFlowException.throwException(this.keyFile.getName());
         }
 

@@ -6,7 +6,6 @@ import neoproject.neoproxy.core.HostReply;
 import neoproject.neoproxy.core.InternetOperator;
 import plethora.net.SecureServerSocket;
 import plethora.net.SecureSocket;
-import plethora.print.log.LogType;
 import plethora.utils.Sleeper;
 
 import java.io.IOException;
@@ -49,7 +48,7 @@ public class TransferSocketAdapter implements Runnable {
             }
         } catch (IOException e) {
             e.printStackTrace();
-            NeoProxyServer.sayInfo(LogType.ERROR, "TransferSocketAdapter", "Can not blind the port , it's Occupied ?");
+            NeoProxyServer.sayError("TransferSocketAdapter", "Can not blind the port , it's Occupied ?");
             System.exit(-1);
         }
     }

@@ -6,14 +6,10 @@ import neoproject.neoproxy.core.threads.Transformer;
 import neoproject.neoproxy.core.threads.management.AdminThread;
 import neoproject.neoproxy.core.threads.management.CheckUpdateThread;
 import neoproject.neoproxy.core.threads.management.TransferSocketAdapter;
-import plethora.management.bufferedFile.BufferedFile;
 import plethora.net.SecureServerSocket;
 import plethora.net.SecureSocket;
-import plethora.print.log.LogType;
-import plethora.print.log.Loggist;
-import plethora.print.log.State;
-import plethora.time.Time;
 import plethora.utils.ArrayUtils;
+import plethora.utils.MyConsole;
 import plethora.utils.StringUtils;
 
 import java.io.File;
@@ -28,7 +24,7 @@ public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = System.getProperty("user.dir");
     public static final File KEY_FILE_DIR = new File(CURRENT_DIR_PATH + File.separator + "keys");
 
-    public static String EXPECTED_CLIENT_VERSION = "3.1-RELEASE";
+    public static String EXPECTED_CLIENT_VERSION = "3.2-RELEASE";
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.stringArrayToList(EXPECTED_CLIENT_VERSION.split("\\|"));
 
     public static int HOST_HOOK_PORT = 801;
@@ -38,22 +34,19 @@ public class NeoProxyServer {
     public static CopyOnWriteArrayList<SequenceKey> sequenceKeyDatabase = new CopyOnWriteArrayList<>();
     public static SecureServerSocket hostServerTransferServerSocket = null;
     public static SecureServerSocket hostServerHookServerSocket = null;
-    public static Loggist loggist;
     public static int START_PORT = 50000;
     public static int END_PORT = 65535;
     public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
     public static boolean IS_DEBUG_MODE = false;
+    public static MyConsole myConsole;
 
-    public static void initLoggist() {
-        File logFile = new File(CURRENT_DIR_PATH + File.separator + "logs" + File.separator + Time.getCurrentTimeAsFileName(false) + ".log");
-        Loggist l = new Loggist(logFile);
-        l.openWriteChannel();
-        NeoProxyServer.loggist = l;
+    public static void initConsole() {
+        ConsoleManager.init();
     }
 
     public static void initStructure() {
 
-        initLoggist();//初始化日志系统
+        initConsole();//初始化日控制台系统
         initKeyDatabase();
 
         ConfigOperator.readAndSetValue();
@@ -63,18 +56,13 @@ public class NeoProxyServer {
             TransferSocketAdapter.startThread();
         } catch (IOException e) {
             debugOperation(e);
-            sayInfo(LogType.ERROR, "Main", "Can not blind the port , it's Occupied ?");
+            sayError("Can not blind the port , it's Occupied ?");
             System.exit(-1);
         }
 
         if (!KEY_FILE_DIR.exists()) {
             KEY_FILE_DIR.mkdirs();
 
-        }
-
-        BufferedFile logDir = new BufferedFile(CURRENT_DIR_PATH + File.separator + "logs");
-        if (!logDir.exists()) {
-            logDir.mkdirs();
         }
 
         AdminThread.startThread();//Not completed yet!
@@ -86,7 +74,7 @@ public class NeoProxyServer {
         if (KEY_FILE_DIR.exists()) {
             File[] c = KEY_FILE_DIR.listFiles();
             if (c == null) {
-                sayInfo(LogType.WARNING, "Main", "No key at all...");
+                sayWarn("No key at all...");
             }
             if (c != null) {
                 for (File file : c) {
@@ -96,16 +84,14 @@ public class NeoProxyServer {
 //            vaultDatabase.add(new Vault(new File("C:\\Users\\Administrator\\Desktop\\Test\\AtomServerX\\vault\\Sample1")));
 
         } else {
-            sayInfo(LogType.ERROR, "Main", "No key at all...");
+            sayWarn("No key at all...");
             KEY_FILE_DIR.mkdirs();
-            System.exit(-1);
         }
     }
 
     private static void checkARGS(String[] args) {
         for (String arg : args) {
             switch (arg) {
-                case "--no-color" -> loggist.disableColor();
                 case "--debug" -> IS_DEBUG_MODE = true;
             }
         }
@@ -130,7 +116,7 @@ public class NeoProxyServer {
                 """);
 
 
-        sayInfo("Current log file : " + loggist.getLogFile().getAbsolutePath());
+        sayInfo("Current log file : " + myConsole.getLogFile().getAbsolutePath());
         sayInfo("LOCAL_DOMAIN_NAME: " + LOCAL_DOMAIN_NAME);
         sayInfo("Listen HOST_CONNECT_PORT on " + HOST_CONNECT_PORT);
         sayInfo("Listen HOST_HOOK_PORT on " + HOST_HOOK_PORT);
@@ -152,7 +138,7 @@ public class NeoProxyServer {
 
                     } catch (UnSupportHostVersionException | IndexOutOfBoundsException | IOException |
                              NoMorePortException |
-                             AlreadyBlindPortException | UnRecognizedKeyException e) {
+                             AlreadyBlindPortException | UnRecognizedKeyException | OutDatedKeyException e) {
                         // exception class will auto say OTHER info ! Just do things.
 //                        e.printStackTrace();
                         InfoBox.sayHostClientDiscInfo(hostClient, "Main");
@@ -161,7 +147,7 @@ public class NeoProxyServer {
                     }
                 }, "监听 host client 连接的服务").start();
             } catch (IOException e) {
-                sayInfo(LogType.INFO, "Main", "A host client try to connect but fail .");
+                sayInfo("A host client try to connect but fail .");
             } catch (SlientException ignored) {
             }
         }
@@ -235,11 +221,27 @@ public class NeoProxyServer {
     }
 
     public static void sayInfo(String str) {
-        loggist.say(new State(LogType.INFO, "Main", str));
+        myConsole.log("Main", str);
     }
 
-    public static void sayInfo(LogType type, String subject, String str) {
-        loggist.say(new State(type, subject, str));
+    public static void sayInfo(String subject, String str) {
+        myConsole.log(subject, str);
+    }
+
+    public static void sayWarn(String str) {
+        myConsole.warn("Main", str);
+    }
+
+    public static void sayWarn(String subject, String str) {
+        myConsole.warn(subject, str);
+    }
+
+    public static void sayError(String str) {
+        myConsole.error("Main", str);
+    }
+
+    public static void sayError(String subject, String str) {
+        myConsole.error(subject, str);
     }
 
     private static int getCurrentAvailableOutPort() {
@@ -254,7 +256,7 @@ public class NeoProxyServer {
         return -1;
     }
 
-    private static void checkHostClientLegitimacyAndTellInfo(HostClient hostClient) throws IOException, NoMorePortException, SlientException, UnRecognizedKeyException, AlreadyBlindPortException, UnSupportHostVersionException {
+    private static void checkHostClientLegitimacyAndTellInfo(HostClient hostClient) throws IOException, NoMorePortException, SlientException, UnRecognizedKeyException, AlreadyBlindPortException, UnSupportHostVersionException, OutDatedKeyException {
         //get and check host client property
         Object[] obj = NeoProxyServer.checkHostClientVersionAndKeyAndLang(hostClient);
         sayInfo("HostClient on " + InternetOperator.getInternetAddressAndPort(hostClient.getHostServerHook()) + " register successfully!");
@@ -290,7 +292,7 @@ public class NeoProxyServer {
         sayInfo("Assigned connection address: " + LOCAL_DOMAIN_NAME + ":" + port);
     }
 
-    private static Object[] checkHostClientVersionAndKeyAndLang(HostClient hostClient) throws IOException, UnSupportHostVersionException, UnRecognizedKeyException, AlreadyBlindPortException, IndexOutOfBoundsException {
+    private static Object[] checkHostClientVersionAndKeyAndLang(HostClient hostClient) throws IOException, UnSupportHostVersionException, UnRecognizedKeyException, AlreadyBlindPortException, IndexOutOfBoundsException, OutDatedKeyException {
         String hostClientInfo = InternetOperator.receiveStr(hostClient);//host client property in one line
 
         if (hostClientInfo == null) {
@@ -338,6 +340,10 @@ public class NeoProxyServer {
                 AlreadyBlindPortException.throwException(currentSequenceKey.getPort());
             }
         }
+        if (currentSequenceKey.isOutOfDate()) {
+            InternetOperator.sendStr(hostClient, languageData.KEY + info[2] + languageData.ARE_OUT_OF_DATE);
+            OutDatedKeyException.throwException(currentSequenceKey);
+        }
 
         //if nothing is bad,complete checking
         InternetOperator.sendStr(hostClient, languageData.CONNECTION_BUILD_UP_SUCCESSFULLY);
@@ -356,8 +362,7 @@ public class NeoProxyServer {
     public static void debugOperation(Exception e) {
         if (IS_DEBUG_MODE) {
             String exceptionMsg = StringUtils.getExceptionMsg(e);
-            System.out.println(exceptionMsg);
-            loggist.write(exceptionMsg, true);
+            myConsole.error("Debugger", exceptionMsg, e);
         }
     }
 

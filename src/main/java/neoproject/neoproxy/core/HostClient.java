@@ -2,7 +2,6 @@ package neoproject.neoproxy.core;
 
 import neoproject.neoproxy.core.exceptions.IllegalConnectionException;
 import plethora.net.SecureSocket;
-import plethora.print.log.LogType;
 import plethora.security.encryption.AESUtil;
 import plethora.utils.Sleeper;
 
@@ -12,12 +11,11 @@ import java.net.ServerSocket;
 
 import static neoproject.neoproxy.NeoProxyServer.availableHostClient;
 import static neoproject.neoproxy.NeoProxyServer.sayInfo;
-import static neoproject.neoproxy.core.SequenceKey.removeVaultOnAll;
 
 public final class HostClient implements Closeable {
     public static int SAVE_DELAY = 3000;//3s
     public static int DETECTION_DELAY = 1000;
-    public static int FAILURE_LIMIT = 5;
+    public static int FAILURE_SECOND = 5;
     private boolean isStopped = false;
     private SequenceKey sequenceKey = null;
     private final SecureSocket hostServerHook;
@@ -56,14 +54,16 @@ public final class HostClient implements Closeable {
                 if (hostClient.getVault() != null && !hostClient.isStopped && hostClient.getVault().isOutOfDate()) {
                     sayInfo("The vault " + hostClient.getVault().getName() + " is out of date !");
                     try {
-                        InternetOperator.sendStr(hostClient, hostClient.getLangData().THE_VAULT + hostClient.getVault().getName() + hostClient.getLangData().ARE_OUT_OF_DATE);
+                        InternetOperator.sendStr(hostClient, hostClient.getLangData().THE_KEY + hostClient.getVault().getName() + hostClient.getLangData().ARE_OUT_OF_DATE);
                         InternetOperator.sendCommand(hostClient, "exit");
                         InfoBox.sayHostClientDiscInfo(hostClient, "VaultDetectionTread");
                     } catch (Exception e2) {
                         InfoBox.sayHostClientDiscInfo(hostClient, "VaultDetectionTread");
                     }
-                    removeVaultOnAll(hostClient.getVault());
-                    hostClient.getVault().getFile().delete();
+
+//                    removeKey(hostClient.getVault());
+//                    hostClient.getVault().getFile().delete();
+                    //改策略了，不删 Key 了
                     hostClient.close();
                     break;
                 } else {
@@ -96,34 +96,21 @@ public final class HostClient implements Closeable {
     public void enableCheckAliveThread() {
         HostClient hostClient = this;
 
-        final int[] failureTime = {0};
         new Thread(() -> {
-            while (failureTime[0] < FAILURE_LIMIT) {
+            while (true) {
                 try {
-                    byte[] bytes = hostClient.hostServerHook.receiveByte();
-                    if (bytes == null) {
-                        failureTime[0]++;
-                    } else {
-                        failureTime[0] = 0;
+                    byte[] bytes = hostClient.hostServerHook.receiveRaw();
+                    if (bytes.length == 0) {
+                        hostClient.close();
+                        sayInfo("CheckAliveThread", "Detected hostClient on " + hostClient.getAddressAndPort() + " has been disconnected !");
+                        break;
                     }
                 } catch (Exception e) {
-                    failureTime[0]++;
+                    hostClient.close();
+                    sayInfo("CheckAliveThread", "Detected hostClient on " + hostClient.getAddressAndPort() + " has been disconnected !");
+                    break;
                 }
-                Sleeper.sleep(1000);
             }
-        }).start();
-
-        new Thread(() -> {
-            while (failureTime[0] < FAILURE_LIMIT) {
-                Sleeper.sleep(1000);
-            }
-
-            hostClient.close();
-            isStopped = true;
-
-            sayInfo(LogType.INFO, "CheckAliveThread", "Detected hostClient on " + hostClient.getAddressAndPort() + " has been disconnected !");
-
-            System.gc();
         }).start();
 
     }

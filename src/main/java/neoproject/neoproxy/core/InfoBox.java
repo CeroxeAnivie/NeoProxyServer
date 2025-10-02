@@ -1,14 +1,12 @@
 package neoproject.neoproxy.core;
 
-import plethora.print.log.LogType;
-
 import java.net.Socket;
 
 import static neoproject.neoproxy.NeoProxyServer.sayInfo;
 
 public class InfoBox {
     public static void sayHostClientDiscInfo(HostClient hostClient, String subject) {
-        sayInfo(LogType.INFO, subject, "Detected hostClient on " + hostClient.getAddressAndPort() + " has been disconnected !");
+        sayInfo(subject, "Detected hostClient on " + hostClient.getAddressAndPort() + " has been disconnected !");
     }
 
     public static void sayClientConnectBuildUpInfo(HostClient hostClient, Socket client) {

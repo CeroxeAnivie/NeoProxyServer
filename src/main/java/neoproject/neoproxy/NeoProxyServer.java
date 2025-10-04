@@ -3,7 +3,6 @@ package neoproject.neoproxy;
 import neoproject.neoproxy.core.*;
 import neoproject.neoproxy.core.exceptions.*;
 import neoproject.neoproxy.core.threads.Transformer;
-import neoproject.neoproxy.core.threads.management.AdminThread;
 import neoproject.neoproxy.core.threads.management.CheckUpdateThread;
 import neoproject.neoproxy.core.threads.management.TransferSocketAdapter;
 import plethora.net.SecureServerSocket;
@@ -24,7 +23,7 @@ public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = System.getProperty("user.dir");
     public static final File KEY_FILE_DIR = new File(CURRENT_DIR_PATH + File.separator + "keys");
 
-    public static String EXPECTED_CLIENT_VERSION = "3.2-RELEASE";
+    public static String EXPECTED_CLIENT_VERSION = "3.2-RELEASE|3.3-RELEASE";
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.stringArrayToList(EXPECTED_CLIENT_VERSION.split("\\|"));
 
     public static int HOST_HOOK_PORT = 801;
@@ -65,7 +64,6 @@ public class NeoProxyServer {
 
         }
 
-        AdminThread.startThread();//Not completed yet!
         CheckUpdateThread.startThread();
 
     }
@@ -78,7 +76,12 @@ public class NeoProxyServer {
             }
             if (c != null) {
                 for (File file : c) {
-                    sequenceKeyDatabase.add(new SequenceKey(file));
+                    try {
+                        sequenceKeyDatabase.add(new SequenceKey(file));
+                    } catch (IOException e) {
+                        debugOperation(e);
+                        sayError("Fail to load key " + file.getName());
+                    }
                 }
             }
 //            vaultDatabase.add(new Vault(new File("C:\\Users\\Administrator\\Desktop\\Test\\AtomServerX\\vault\\Sample1")));
@@ -269,8 +272,8 @@ public class NeoProxyServer {
 
         //arrange port if no specific , or give the chosen one
         int port;
-        if (hostClient.getVault().getPort() != -1) {
-            port = hostClient.getVault().getPort();
+        if (hostClient.getKey().getPort() != -1) {
+            port = hostClient.getKey().getPort();
         } else {
             port = NeoProxyServer.getCurrentAvailableOutPort();
             if (port == -1) {
@@ -283,8 +286,8 @@ public class NeoProxyServer {
 
         InternetOperator.sendCommand(hostClient, String.valueOf(port));//tell the host client remote out port
         //tell the message to the host client
-        InternetOperator.sendStr(hostClient, hostClient.getLangData().THIS_ACCESS_CODE_HAVE + hostClient.getVault().getRate() + hostClient.getLangData().MB_OF_FLOW_LEFT);
-        InternetOperator.sendStr(hostClient, hostClient.getLangData().EXPIRE_AT + hostClient.getVault().getExpireTime());
+        InternetOperator.sendStr(hostClient, hostClient.getLangData().THIS_ACCESS_CODE_HAVE + hostClient.getKey().getBalance() + hostClient.getLangData().MB_OF_FLOW_LEFT);
+        InternetOperator.sendStr(hostClient, hostClient.getLangData().EXPIRE_AT + hostClient.getKey().getExpireTime());
 
         InternetOperator.sendStr(hostClient, hostClient.getLangData().USE_THE_ADDRESS + LOCAL_DOMAIN_NAME + ":" + port + hostClient.getLangData().TO_START_UP_CONNECTION);//send remote connect address
 

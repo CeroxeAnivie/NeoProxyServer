@@ -2,7 +2,6 @@ package neoproject.neoproxy.core;
 
 import neoproject.neoproxy.NeoProxyServer;
 import neoproject.neoproxy.core.threads.Transformer;
-import neoproject.neoproxy.core.threads.management.AdminThread;
 import neoproject.neoproxy.core.threads.management.CheckUpdateThread;
 import neoproject.neoproxy.core.threads.management.TransferSocketAdapter;
 import plethora.management.bufferedFile.BufferedFile;
@@ -38,7 +37,7 @@ public class ConfigOperator {
                 HostClient.SAVE_DELAY = Integer.parseInt(lineConfigReader.get("SAVE_DELAY"));
                 HostClient.AES_KEY_SIZE = Integer.parseInt(lineConfigReader.get("AES_KEY_SIZE"));
                 Transformer.BUFFER_LEN = Integer.parseInt(lineConfigReader.get("BUFFER_LEN"));
-                Transformer.TELL_RATE_MIB = Integer.parseInt(lineConfigReader.get("TELL_RATE_MIB"));
+                Transformer.TELL_BALANCE_MIB = Integer.parseInt(lineConfigReader.get("TELL_BALANCE_MIB"));
                 IPChecker.ENABLE_BAN = Boolean.parseBoolean(lineConfigReader.get("ENABLE_BAN"));
                 TransferSocketAdapter.SO_TIMEOUT = Integer.parseInt(lineConfigReader.get("SO_TIMEOUT"));
 
@@ -77,7 +76,7 @@ public class ConfigOperator {
                     
                     #当多少流量被消耗时告诉客户端剩余的流量
                     #When how much traffic is consumed, tell the client the remaining traffic
-                    TELL_RATE_MIB=10
+                    TELL_BALANCE_MIB=10
                     
                     #AES加密的秘钥长度
                     #AES encryption key length

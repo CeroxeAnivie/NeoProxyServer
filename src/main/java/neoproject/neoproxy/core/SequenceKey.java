@@ -13,38 +13,42 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 
-import static neoproject.neoproxy.NeoProxyServer.KEY_FILE_DIR;
-import static neoproject.neoproxy.NeoProxyServer.sayError;
+import static neoproject.neoproxy.NeoProxyServer.*;
 
 public class SequenceKey {
-    private double rate;//mb
+    private double balance;//mb
     private String expireTime;//2026/01/01-13:33
-    private File keyFile;
+    private final File keyFile;
     private int port = -1;
+    private double rate = 0;//mbps
 
-    public SequenceKey(File keyFile) {
-        try {
-            this.keyFile = keyFile;
-            readAndSetElementFromFile(keyFile);
-        } catch (Exception e) {
-            NeoProxyServer.debugOperation(e);
-            keyFile.delete();
-        }
+    public SequenceKey(File keyFile) throws IOException {
+        this.keyFile = keyFile;
+        readAndSetElementFromFile(this, keyFile);
+
     }
 
-    public static SequenceKey createNewKey(String name, double rate, String expireTime, int port) throws IOException {
-        File keyFile = new File(KEY_FILE_DIR + File.separator + name);
-        keyFile.createNewFile();
-        BufferedWriter bufferedWriter = new BufferedWriter(new FileWriter(keyFile, StandardCharsets.UTF_8));
-        bufferedWriter.write("rate=" + rate);
-        bufferedWriter.newLine();
-        bufferedWriter.write("expireTime=" + expireTime);
-        if (port != -1) {
-            bufferedWriter.newLine();
-            bufferedWriter.write("port=" + port);
+    private SequenceKey(String name, double balance, String expireTime, int port, int rate) {
+        this.keyFile = new File(KEY_FILE_DIR + File.separator + name);
+        this.balance = balance;
+        this.expireTime = expireTime;
+        this.port = port;
+        this.rate = rate;
+    }
+
+    public static boolean createNewKey(String name, double balance, String expireTime, int port, int rate) {
+        SequenceKey sequenceKey = new SequenceKey(name, balance, expireTime, port, rate);
+        if (saveToFile(sequenceKey)) {
+            try {
+                readAndSetElementFromFile(sequenceKey, sequenceKey.getFile());
+            } catch (IOException e) {
+                debugOperation(e);
+            }
+            sequenceKeyDatabase.add(sequenceKey);
+            return true;
+        } else {
+            return false;
         }
-        bufferedWriter.close();
-        return new SequenceKey(keyFile);
     }
 
     public static boolean isOutOfDate(String endTime) {
@@ -69,19 +73,34 @@ public class SequenceKey {
         }
     }
 
-    public static void removeKey(SequenceKey sequenceKey) {
-        NeoProxyServer.sequenceKeyDatabase.remove(sequenceKey);
+    public static boolean removeKey(String name) {
+        for (SequenceKey sequenceKey : NeoProxyServer.sequenceKeyDatabase) {
+            if (sequenceKey.getFile().getName().equals(name)) {
+                boolean b = sequenceKey.getFile().delete();
+                if (b) {//保持文件始终跟集合同步
+                    NeoProxyServer.sequenceKeyDatabase.remove(sequenceKey);
+                }
+                return b;
+            }
+        }
+        return false;
     }
 
-    public void readAndSetElementFromFile(File vaultFile) throws IOException {
-        LineConfigReader lineConfigReader = new LineConfigReader(vaultFile);
-        lineConfigReader.load();
-        rate = Double.parseDouble(lineConfigReader.get("rate"));
-        expireTime = lineConfigReader.get("expireTime");
-        if (lineConfigReader.containsKey("port")) {
-            port = Integer.parseInt(lineConfigReader.get("port"));
-        }
+    private static void readAndSetElementFromFile(SequenceKey sequenceKey, File vaultFile) throws IOException {
+        try {
+            LineConfigReader lineConfigReader = new LineConfigReader(vaultFile);
+            lineConfigReader.load();
+            sequenceKey.balance = Double.parseDouble(lineConfigReader.get("balance"));
+            sequenceKey.expireTime = lineConfigReader.get("expireTime");
+            if (lineConfigReader.containsKey("port")) {
+                sequenceKey.port = Integer.parseInt(lineConfigReader.get("port"));
+            }
+            sequenceKey.rate = Integer.parseInt(lineConfigReader.get("rate"));
 
+        }catch (Exception e){
+            debugOperation(e);
+            throw new IOException();
+        }
     }
 
     public String getExpireTime() {
@@ -90,6 +109,10 @@ public class SequenceKey {
 
     public boolean isOutOfDate() {
         return SequenceKey.isOutOfDate(expireTime);
+    }
+
+    public boolean isExist() {
+        return keyFile.exists();
     }
 
     public int getPort() {
@@ -102,8 +125,8 @@ public class SequenceKey {
         }
     }
 
-    public double getRate() {
-        return rate;
+    public double getBalance() {
+        return balance;
     }
 
     public String getName() {
@@ -115,40 +138,58 @@ public class SequenceKey {
     }
 
     public void addMib(double mib) {
-        rate = rate + mib;
+        balance = balance + mib;
     }
 
     public synchronized void mineMib(double mib) throws NoMoreNetworkFlowException {
 //        System.out.println("mib = " + mib);
-        if (rate > 0) {
-            rate = rate - mib;
+        if (balance > 0) {
+            balance = balance - mib;
         } else {
             NoMoreNetworkFlowException.throwException(this.keyFile.getName());
         }
 
     }
 
-    public void save() {
+    public static boolean saveToFile(SequenceKey sequenceKey) {
         try {
-            if ((!SequenceKey.isOutOfDate(expireTime)) && rate > 0) {
-                keyFile.delete();
-                keyFile.createNewFile();
-                BufferedWriter bufferedWriter = new BufferedWriter(new FileWriter(keyFile, StandardCharsets.UTF_8));
-                bufferedWriter.write("rate=" + rate);
+            if (!SequenceKey.isOutOfDate(sequenceKey.expireTime) && sequenceKey.balance > 0) {
+                if (sequenceKey.keyFile.exists()) {
+                    if (!sequenceKey.keyFile.delete()) {//无法删除
+                        myConsole.warn("SK-Manager", "Unable to delete key file: " + sequenceKey.getName());
+                        return false;
+                    }
+                }
+                if (!sequenceKey.keyFile.createNewFile()) {//无法创建
+                    myConsole.warn("SK-Manager", "Unable to create key file: " + sequenceKey.getName());
+                    return false;
+                }
+                BufferedWriter bufferedWriter = new BufferedWriter(new FileWriter(sequenceKey.keyFile, StandardCharsets.UTF_8));
+                bufferedWriter.write("balance=" + sequenceKey.balance);
                 bufferedWriter.newLine();
-                bufferedWriter.write("expireTime=" + expireTime);
-                if (port != -1) {
-                    bufferedWriter.newLine();
-                    bufferedWriter.write("port=" + port);
-                }
+                bufferedWriter.write("expireTime=" + sequenceKey.expireTime);
+                bufferedWriter.newLine();
+                bufferedWriter.write("port=" + sequenceKey.port);
+                bufferedWriter.newLine();
+                bufferedWriter.write("rate=" + sequenceKey.rate);
                 bufferedWriter.close();
+                return true;
             } else {
-                if (keyFile.exists()) {
-                    keyFile.delete();
+                if (sequenceKey.keyFile.exists()) {
+                    boolean b = sequenceKey.keyFile.delete();
+                    if (b) {
+                        myConsole.warn("SK-Manager", "Unable to delete key file: " + sequenceKey.getName());
+                    }
                 }
+                return false;
             }
         } catch (Exception e) {
             NeoProxyServer.debugOperation(e);
+            return false;
         }
+    }
+
+    public double getRate() {
+        return rate;
     }
 }

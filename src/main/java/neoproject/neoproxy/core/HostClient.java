@@ -11,11 +11,11 @@ import java.net.ServerSocket;
 
 import static neoproject.neoproxy.NeoProxyServer.availableHostClient;
 import static neoproject.neoproxy.NeoProxyServer.sayInfo;
+import static neoproject.neoproxy.core.SequenceKey.saveToFile;
 
 public final class HostClient implements Closeable {
     public static int SAVE_DELAY = 3000;//3s
     public static int DETECTION_DELAY = 1000;
-    public static int FAILURE_SECOND = 5;
     private boolean isStopped = false;
     private SequenceKey sequenceKey = null;
     private final SecureSocket hostServerHook;
@@ -35,15 +35,11 @@ public final class HostClient implements Closeable {
     private static void enableAutoSaveThread(HostClient hostClient) {
         Thread a = new Thread(() -> {
             while (true) {
-                if (hostClient.getVault() != null && !hostClient.isStopped) {
-                    hostClient.getVault().save();
-                }
-                if (hostClient.isStopped) {
-                    break;
+                if (hostClient.getKey() != null && !hostClient.isStopped) {
+                    saveToFile(hostClient.getKey());
                 }
                 Sleeper.sleep(SAVE_DELAY);
             }
-            System.gc();
         });
         a.start();
     }
@@ -51,10 +47,10 @@ public final class HostClient implements Closeable {
     private static void enableKeyDetectionTread(HostClient hostClient) {
         Thread a = new Thread(() -> {
             while (true) {
-                if (hostClient.getVault() != null && !hostClient.isStopped && hostClient.getVault().isOutOfDate()) {
-                    sayInfo("The vault " + hostClient.getVault().getName() + " is out of date !");
+                if (hostClient.getKey() != null && !hostClient.isStopped && hostClient.getKey().isOutOfDate()) {
+                    sayInfo("The key " + hostClient.getKey().getName() + " is out of date !");
                     try {
-                        InternetOperator.sendStr(hostClient, hostClient.getLangData().THE_KEY + hostClient.getVault().getName() + hostClient.getLangData().ARE_OUT_OF_DATE);
+                        InternetOperator.sendStr(hostClient, hostClient.getLangData().THE_KEY + hostClient.getKey().getName() + hostClient.getLangData().ARE_OUT_OF_DATE);
                         InternetOperator.sendCommand(hostClient, "exit");
                         InfoBox.sayHostClientDiscInfo(hostClient, "VaultDetectionTread");
                     } catch (Exception e2) {
@@ -66,14 +62,16 @@ public final class HostClient implements Closeable {
                     //改策略了，不删 Key 了
                     hostClient.close();
                     break;
-                } else {
-                    Sleeper.sleep(DETECTION_DELAY);
                 }
+
+                //不能通过判断 keyfile 是否存在来断定是否有效，因为 keyfile 刷新的时候会删除文件再创建
+
                 if (hostClient.isStopped) {
                     break;
                 }
+
+                Sleeper.sleep(DETECTION_DELAY);
             }
-            System.gc();
         });
         a.start();
     }
@@ -115,7 +113,7 @@ public final class HostClient implements Closeable {
 
     }
 
-    public SequenceKey getVault() {
+    public SequenceKey getKey() {
         return sequenceKey;
     }
 
@@ -157,10 +155,6 @@ public final class HostClient implements Closeable {
 
     public AESUtil getAESUtil() {
         return aesUtil;
-    }
-
-    private void gc() {
-        System.gc();
     }
 
 }

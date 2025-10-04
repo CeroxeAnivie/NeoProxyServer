@@ -19,9 +19,9 @@ public final class InternetOperator {
     public static void sendStr(HostClient hostClient, String str) throws IOException {
         int length = hostClient.getHostServerHook().sendStr(str);
 
-        if (hostClient.getVault() != null) {
+        if (hostClient.getKey() != null) {
             try {
-                hostClient.getVault().mineMib(SizeCalculator.byteToMib(length));
+                hostClient.getKey().mineMib(SizeCalculator.byteToMib(length));
             } catch (NoMoreNetworkFlowException e) {
                 hostClient.close();
             }

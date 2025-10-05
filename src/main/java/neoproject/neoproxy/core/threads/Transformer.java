@@ -121,7 +121,7 @@ public record Transformer(HostClient hostClient, Socket client, HostReply hostRe
             Runnable clientToHostClientThread = () -> ClientToHost(hostClient, client, hostReply, aTenMibSize);
             Runnable hostClientToClientThread = () -> HostToClient(hostClient, hostReply, client, aTenMibSize);
             ThreadManager threadManager = new ThreadManager(clientToHostClientThread, hostClientToClientThread);
-            threadManager.startAll();
+            threadManager.start();
             close(client, hostReply.host());
             InfoBox.sayClientConnectDestroyInfo(hostClient, client);
         } catch (Exception ignore) {

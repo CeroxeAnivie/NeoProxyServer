@@ -16,11 +16,15 @@ import java.time.format.DateTimeParseException;
 import static neoproject.neoproxy.NeoProxyServer.*;
 
 public class SequenceKey {
-    private double balance;//mb
-    private String expireTime;//2026/01/01-13:33
+
+    private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy/MM/dd-HH:mm");
+    private static final String url = "jdbc:h2:./data/key";
+
+    protected double balance;//mb
+    protected String expireTime;//2026/01/01-13:33
+    protected int port = -1;
+    protected double rate = 0;//mbps
     private final File keyFile;
-    private int port = -1;
-    private double rate = 0;//mbps
 
     public SequenceKey(File keyFile) throws IOException {
         this.keyFile = keyFile;
@@ -28,7 +32,7 @@ public class SequenceKey {
 
     }
 
-    private SequenceKey(String name, double balance, String expireTime, int port, int rate) {
+    private SequenceKey(String name, double balance, String expireTime, int port, double rate) {
         this.keyFile = new File(KEY_FILE_DIR + File.separator + name);
         this.balance = balance;
         this.expireTime = expireTime;
@@ -36,7 +40,12 @@ public class SequenceKey {
         this.rate = rate;
     }
 
-    public static boolean createNewKey(String name, double balance, String expireTime, int port, int rate) {
+    public static boolean createNewKey(String name, double balance, String expireTime, int port, double rate) {
+        for (SequenceKey sequenceKey : sequenceKeyDatabase) {//检查是否已经存在，如果存在，返回 false 表示创建失败
+            if (sequenceKey.getName().equals(name)){
+                return false;
+            }
+        }
         SequenceKey sequenceKey = new SequenceKey(name, balance, expireTime, port, rate);
         if (saveToFile(sequenceKey)) {
             try {
@@ -52,24 +61,20 @@ public class SequenceKey {
     }
 
     public static boolean isOutOfDate(String endTime) {
-        String endTime1 = endTime.replaceAll("-", " ");
-        // 定义时间格式
-        //2023/03/02 13:33
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm");
-
         try {
-            // 将传入的字符串转换为 LocalDateTime
-            LocalDateTime endDateTime = LocalDateTime.parse(endTime1, formatter);
-
-            // 获取当前的系统时间
-            LocalDateTime currentDateTime = LocalDateTime.now();
-
-            // 比较当前时间与结束时间
-            return currentDateTime.isAfter(endDateTime);
+            // 将输入的字符串解析为 LocalDateTime 对象
+            LocalDateTime inputTime = LocalDateTime.parse(endTime, FORMATTER);
+            // 获取当前的日期和时间
+            LocalDateTime now = LocalDateTime.now();
+            // 如果当前时间在输入时间之后，则已过期，返回 true
+            return now.isAfter(inputTime);
         } catch (DateTimeParseException e) {
-            // 如果日期格式不正确，输出错误日志并返回 false
-            sayError("SequenceKey", e.getMessage());
-            return false; // 可以根据需求选择返回 false 或者抛出异常
+            // 如果字符串格式不正确，无法解析，则认为是无效输入
+            // 根据需求，这里可以选择抛出异常或返回一个默认值。
+            // 通常，对于无效的过期时间，可以认为它“未过期”或“已过期”。
+            // 此处按常规逻辑，无法判断则视为未过期（返回 false）。
+            // 你也可以根据业务需求改为抛出异常。
+            return false;
         }
     }
 
@@ -95,7 +100,7 @@ public class SequenceKey {
             if (lineConfigReader.containsKey("port")) {
                 sequenceKey.port = Integer.parseInt(lineConfigReader.get("port"));
             }
-            sequenceKey.rate = Integer.parseInt(lineConfigReader.get("rate"));
+            sequenceKey.rate = Double.parseDouble(lineConfigReader.get("rate"));
 
         }catch (Exception e){
             debugOperation(e);

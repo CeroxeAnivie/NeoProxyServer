@@ -102,8 +102,9 @@ public class NeoProxyServer {
 
     public static void main(String[] args) {
 
-        NeoProxyServer.initStructure();
         NeoProxyServer.checkARGS(args);
+        NeoProxyServer.initStructure();
+
 
         sayInfo("-----------------------------------------------------");
         sayInfo("""

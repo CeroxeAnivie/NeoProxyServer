@@ -14,6 +14,7 @@ import java.io.IOException;
 import java.net.Socket;
 
 import static neoproject.neoproxy.core.InternetOperator.close;
+import static neoproject.neoproxy.core.SequenceKey.removeKey;
 
 public record Transformer(HostClient hostClient, Socket client, HostReply hostReply) implements Runnable {
     public static int BUFFER_LEN = 1024;
@@ -54,7 +55,7 @@ public record Transformer(HostClient hostClient, Socket client, HostReply hostRe
             } catch (IOException ignore) {
             }
         } catch (NoMoreNetworkFlowException e) {
-//            removeKey(hostClient.getVault());
+            removeKey(hostClient.getKey().getName());
             kickAllWithMsg(hostClient, hostReply.host(), client);
         }
     }
@@ -89,7 +90,7 @@ public record Transformer(HostClient hostClient, Socket client, HostReply hostRe
             } catch (IOException ignore) {
             }
         } catch (NoMoreNetworkFlowException e) {
-//            removeKey(hostClient.getVault());
+            removeKey(hostClient.getKey().getName());
             kickAllWithMsg(hostClient, hostReply.host(), client);
         }
     }

@@ -17,6 +17,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import static neoproject.neoproxy.core.SequenceKey.initKeyDatabase;
 import static neoproject.neoproxy.core.threads.management.CheckUpdateThread.UPDATE_PORT;
 
 public class NeoProxyServer {
@@ -30,7 +31,6 @@ public class NeoProxyServer {
     public static int HOST_CONNECT_PORT = 802;
 
     public static String LOCAL_DOMAIN_NAME = "127.0.0.1";
-    public static CopyOnWriteArrayList<SequenceKey> sequenceKeyDatabase = new CopyOnWriteArrayList<>();
     public static SecureServerSocket hostServerTransferServerSocket = null;
     public static SecureServerSocket hostServerHookServerSocket = null;
     public static int START_PORT = 50000;
@@ -66,30 +66,6 @@ public class NeoProxyServer {
 
         CheckUpdateThread.startThread();
 
-    }
-
-    public static void initKeyDatabase() {
-        if (KEY_FILE_DIR.exists()) {
-            File[] c = KEY_FILE_DIR.listFiles();
-            if (c == null) {
-                sayWarn("No key at all...");
-            }
-            if (c != null) {
-                for (File file : c) {
-                    try {
-                        sequenceKeyDatabase.add(new SequenceKey(file));
-                    } catch (IOException e) {
-                        debugOperation(e);
-                        sayError("Fail to load key " + file.getName());
-                    }
-                }
-            }
-//            vaultDatabase.add(new Vault(new File("C:\\Users\\Administrator\\Desktop\\Test\\AtomServerX\\vault\\Sample1")));
-
-        } else {
-            sayWarn("No key at all...");
-            KEY_FILE_DIR.mkdirs();
-        }
     }
 
     private static void checkARGS(String[] args) {
@@ -325,7 +301,7 @@ public class NeoProxyServer {
             UnSupportHostVersionException.throwException(info[1], hostClient);
         }
 
-        SequenceKey currentSequenceKey = NeoProxyServer.getKeyOnDatabase(info[2]);
+        SequenceKey currentSequenceKey = SequenceKey.getKeyFromDB(info[2]);
         if (currentSequenceKey == null) {//在数据库里找不到序列号,踢掉
             InternetOperator.sendStr(hostClient, languageData.ACCESS_DENIED_FORCE_EXITING);
             hostClient.close();
@@ -352,15 +328,6 @@ public class NeoProxyServer {
         //if nothing is bad,complete checking
         InternetOperator.sendStr(hostClient, languageData.CONNECTION_BUILD_UP_SUCCESSFULLY);
         return new Object[]{currentSequenceKey, languageData};
-    }
-
-    public static SequenceKey getKeyOnDatabase(String key) {
-        for (SequenceKey sequenceKey : sequenceKeyDatabase) {
-            if (key.equals(sequenceKey.getName())) {// vault file does not have suffix
-                return sequenceKey;
-            }
-        }
-        return null;
     }
 
     public static void debugOperation(Exception e) {

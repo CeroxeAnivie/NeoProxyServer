@@ -11,7 +11,7 @@ import java.net.ServerSocket;
 
 import static neoproject.neoproxy.NeoProxyServer.availableHostClient;
 import static neoproject.neoproxy.NeoProxyServer.sayInfo;
-import static neoproject.neoproxy.core.SequenceKey.saveToFile;
+import static neoproject.neoproxy.core.SequenceKey.saveToDB;
 
 public final class HostClient implements Closeable {
     public static int SAVE_DELAY = 3000;//3s
@@ -36,7 +36,7 @@ public final class HostClient implements Closeable {
         Thread a = new Thread(() -> {
             while (true) {
                 if (hostClient.getKey() != null && !hostClient.isStopped) {
-                    saveToFile(hostClient.getKey());
+                    saveToDB(hostClient.getKey());
                 }
                 Sleeper.sleep(SAVE_DELAY);
             }

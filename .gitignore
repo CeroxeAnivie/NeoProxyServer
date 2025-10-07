@@ -36,3 +36,10 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+logs
+
+clients
+
+sk.mv.db
+sk.trace.db

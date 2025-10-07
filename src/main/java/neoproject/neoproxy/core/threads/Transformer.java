@@ -107,7 +107,7 @@ public record Transformer(HostClient hostClient, Socket client, HostReply hostRe
     public static void kickAllWithMsg(HostClient hostClient, SecureSocket host, Closeable clientEle) {
         close(clientEle, host);
         try {
-            InternetOperator.sendCommand(hostClient, "exit");
+            InternetOperator.sendCommand(hostClient, "exitNoFlow");
             InfoBox.sayHostClientDiscInfo(hostClient, "Transformer");
         } catch (Exception e) {
             InfoBox.sayHostClientDiscInfo(hostClient, "Transformer");

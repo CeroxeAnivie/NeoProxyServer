@@ -99,10 +99,18 @@ public class ConsoleManager {
         }
 
         // 3. 执行设置操作
-        SequenceKey sequenceKey = getKeyFromDB(name);
-        if (sequenceKey == null) {
-            myConsole.warn("Admin", "Could not find the key in database.");
-            return;
+        SequenceKey sequenceKey=null;
+        for (HostClient hostClient : availableHostClient) {//优先从当前正在使用的 key 中寻找
+            if (hostClient.getKey().getName().equals(name)){
+                sequenceKey=hostClient.getKey();
+            }
+        }
+        if (sequenceKey==null){//如果 key 本身还没被使用，就从数据库找
+            sequenceKey = getKeyFromDB(name);
+            if (sequenceKey == null) {//如果全都找不到
+                myConsole.warn("Admin", "Could not find the key in database.");
+                return;
+            }
         }
 
         sequenceKey.balance = balance;
@@ -301,8 +309,8 @@ public class ConsoleManager {
     /**
      * 执行查询并根据处理器打印结果。
      *
-     * @param sql           SQL 查询语句
-     * @param rowProcessor  处理每一行数据的函数
+     * @param sql          SQL 查询语句
+     * @param rowProcessor 处理每一行数据的函数
      */
     private static void executeQueryAndPrint(String sql, RowProcessor rowProcessor) {
         executeQueryAndPrint(sql, rowProcessor, "\n");
@@ -311,9 +319,9 @@ public class ConsoleManager {
     /**
      * 执行查询并根据处理器打印结果。
      *
-     * @param sql           SQL 查询语句
-     * @param rowProcessor  处理每一行数据的函数
-     * @param separator     行之间的分隔符
+     * @param sql          SQL 查询语句
+     * @param rowProcessor 处理每一行数据的函数
+     * @param separator    行之间的分隔符
      */
     private static void executeQueryAndPrint(String sql, RowProcessor rowProcessor, String separator) {
         try (var conn = getConnection();

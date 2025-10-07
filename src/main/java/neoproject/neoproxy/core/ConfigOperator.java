@@ -1,9 +1,8 @@
 package neoproject.neoproxy.core;
 
 import neoproject.neoproxy.NeoProxyServer;
+import neoproject.neoproxy.core.management.TransferSocketAdapter;
 import neoproject.neoproxy.core.threads.Transformer;
-import neoproject.neoproxy.core.threads.management.CheckUpdateThread;
-import neoproject.neoproxy.core.threads.management.TransferSocketAdapter;
 import plethora.management.bufferedFile.BufferedFile;
 import plethora.utils.config.LineConfigReader;
 
@@ -33,7 +32,6 @@ public class ConfigOperator {
                 NeoProxyServer.HOST_CONNECT_PORT = Integer.parseInt(lineConfigReader.get("HOST_CONNECT_PORT"));
                 NeoProxyServer.START_PORT = Integer.parseInt(lineConfigReader.get("START_PORT"));
                 NeoProxyServer.END_PORT = Integer.parseInt(lineConfigReader.get("END_PORT"));
-                CheckUpdateThread.UPDATE_PORT = Integer.parseInt(lineConfigReader.get("UPDATE_PORT"));
                 HostClient.SAVE_DELAY = Integer.parseInt(lineConfigReader.get("SAVE_DELAY"));
                 HostClient.AES_KEY_SIZE = Integer.parseInt(lineConfigReader.get("AES_KEY_SIZE"));
                 Transformer.BUFFER_LEN = Integer.parseInt(lineConfigReader.get("BUFFER_LEN"));
@@ -91,9 +89,6 @@ public class ConfigOperator {
                     #外部接收数据包数组的长度
                     #The length of the external receive packet array
                     BUFFER_LEN=4096
-                    
-                    #设定更新服务器绑定的端口
-                    UPDATE_PORT=803
                     
                     #设置保存序列号文件的间隔，单位为毫秒
                     #Set the interval for saving the serial number file, in milliseconds

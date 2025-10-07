@@ -2,29 +2,26 @@ package neoproject.neoproxy;
 
 import neoproject.neoproxy.core.*;
 import neoproject.neoproxy.core.exceptions.*;
+import neoproject.neoproxy.core.management.TransferSocketAdapter;
+import neoproject.neoproxy.core.management.UpdateManager;
 import neoproject.neoproxy.core.threads.Transformer;
-import neoproject.neoproxy.core.threads.management.CheckUpdateThread;
-import neoproject.neoproxy.core.threads.management.TransferSocketAdapter;
 import plethora.net.SecureServerSocket;
 import plethora.net.SecureSocket;
 import plethora.utils.ArrayUtils;
 import plethora.utils.MyConsole;
 import plethora.utils.StringUtils;
 
-import java.io.File;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static neoproject.neoproxy.core.SequenceKey.initKeyDatabase;
-import static neoproject.neoproxy.core.threads.management.CheckUpdateThread.UPDATE_PORT;
 
 public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = System.getProperty("user.dir");
-    public static final File KEY_FILE_DIR = new File(CURRENT_DIR_PATH + File.separator + "keys");
 
-    public static String EXPECTED_CLIENT_VERSION = "3.2-RELEASE|3.3-RELEASE";
+    public static String EXPECTED_CLIENT_VERSION = "3.2-RELEASE|3.3-RELEASE";//从左到右从老到新版本
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.stringArrayToList(EXPECTED_CLIENT_VERSION.split("\\|"));
 
     public static int HOST_HOOK_PORT = 801;
@@ -47,6 +44,7 @@ public class NeoProxyServer {
 
         initConsole();//初始化日控制台系统
         initKeyDatabase();
+        UpdateManager.init();
 
         ConfigOperator.readAndSetValue();
 
@@ -58,13 +56,6 @@ public class NeoProxyServer {
             sayError("Can not blind the port , it's Occupied ?");
             System.exit(-1);
         }
-
-        if (!KEY_FILE_DIR.exists()) {
-            KEY_FILE_DIR.mkdirs();
-
-        }
-
-        CheckUpdateThread.startThread();
 
     }
 
@@ -100,7 +91,6 @@ public class NeoProxyServer {
         sayInfo("LOCAL_DOMAIN_NAME: " + LOCAL_DOMAIN_NAME);
         sayInfo("Listen HOST_CONNECT_PORT on " + HOST_CONNECT_PORT);
         sayInfo("Listen HOST_HOOK_PORT on " + HOST_HOOK_PORT);
-        sayInfo("Listen UPDATE_PORT on " + UPDATE_PORT);
         sayInfo("Support client versions: " + EXPECTED_CLIENT_VERSION);
 
 
@@ -116,13 +106,15 @@ public class NeoProxyServer {
                         //开始服务
                         NeoProxyServer.handleTransformerServiceWithNewThread(hostClient);
 
-                    } catch (UnSupportHostVersionException | IndexOutOfBoundsException | IOException |
+                    } catch (IndexOutOfBoundsException | IOException |
                              NoMorePortException |
                              AlreadyBlindPortException | UnRecognizedKeyException | OutDatedKeyException e) {
                         // exception class will auto say OTHER info ! Just do things.
 //                        e.printStackTrace();
                         InfoBox.sayHostClientDiscInfo(hostClient, "Main");
                         hostClient.close();
+                    } catch (UnSupportHostVersionException e) {
+                        UpdateManager.handle(hostClient);//it will close the hostclient
                     } catch (SlientException ignore) {
                     }
                 }, "监听 host client 连接的服务").start();
@@ -208,14 +200,6 @@ public class NeoProxyServer {
         myConsole.log(subject, str);
     }
 
-    public static void sayWarn(String str) {
-        myConsole.warn("Main", str);
-    }
-
-    public static void sayWarn(String subject, String str) {
-        myConsole.warn(subject, str);
-    }
-
     public static void sayError(String str) {
         myConsole.error("Main", str);
     }
@@ -244,7 +228,7 @@ public class NeoProxyServer {
         availableHostClient.add(hostClient);
 
         //generate them into pieces for use
-        hostClient.setVault((SequenceKey) obj[0]);
+        hostClient.setKey((SequenceKey) obj[0]);
         hostClient.setLangData((LanguageData) obj[1]);
 
         //arrange port if no specific , or give the chosen one
@@ -297,7 +281,7 @@ public class NeoProxyServer {
         boolean isAvailVersion = availableVersions.contains(info[1]);
         if (!isAvailVersion) {
             InternetOperator.sendStr(hostClient, languageData.UNSUPPORTED_VERSION_MSG + EXPECTED_CLIENT_VERSION);
-            hostClient.close();
+//            hostClient.close();改策略了，不踢，下载完新版本再踢
             UnSupportHostVersionException.throwException(info[1], hostClient);
         }
 

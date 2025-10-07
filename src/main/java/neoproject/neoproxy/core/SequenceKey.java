@@ -3,11 +3,7 @@ package neoproject.neoproxy.core;
 import neoproject.neoproxy.NeoProxyServer;
 import neoproject.neoproxy.core.exceptions.NoMoreNetworkFlowException;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.sql.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -76,16 +72,16 @@ public class SequenceKey {
             // 优化：直接在SQL中判断过期，避免全表扫描和Java日期解析
             // H2 的 PARSEDATETIME 函数可以解析字符串为时间戳
             String deleteSql = """
-                DELETE FROM sk 
-                WHERE PARSEDATETIME(expireTime, 'yyyy/MM/dd-HH:mm') < NOW()
-                """;
+                    DELETE FROM sk 
+                    WHERE PARSEDATETIME(expireTime, 'yyyy/MM/dd-HH:mm') < NOW()
+                    """;
 
             try (Connection conn = getConnection();
                  PreparedStatement deleteStmt = conn.prepareStatement(deleteSql)) {
 
                 int deletedCount = deleteStmt.executeUpdate();
 
-                if (deletedCount>0){
+                if (deletedCount > 0) {
                     myConsole.warn("SK-Manager", "Database cleanup completed. Deleted " + deletedCount + " expired key(s).");
                 }
             }
@@ -191,14 +187,14 @@ public class SequenceKey {
             }
 
             String sql = """
-                CREATE TABLE IF NOT EXISTS sk (
-                    name VARCHAR(50) PRIMARY KEY,
-                    balance DOUBLE NOT NULL,
-                    expireTime VARCHAR(50) NOT NULL,
-                    port INT NOT NULL,
-                    rate DOUBLE NOT NULL
-                )
-                """;
+                    CREATE TABLE IF NOT EXISTS sk (
+                        name VARCHAR(50) PRIMARY KEY,
+                        balance DOUBLE NOT NULL,
+                        expireTime VARCHAR(50) NOT NULL,
+                        port INT NOT NULL,
+                        rate DOUBLE NOT NULL
+                    )
+                    """;
             try (Connection conn = getConnection();
                  PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.execute();
@@ -217,7 +213,7 @@ public class SequenceKey {
                         CLEANUP_INTERVAL_MINUTES, // 周期
                         TimeUnit.MINUTES
                 );
-                myConsole.warn("SK-Manager","Background cleanup task started. Interval: " + CLEANUP_INTERVAL_MINUTES + " minutes.");
+//                myConsole.warn("SK-Manager", "Background cleanup task started. Interval: " + CLEANUP_INTERVAL_MINUTES + " minutes.");
             }
         } catch (Exception e) {
             debugOperation(e);
@@ -276,7 +272,7 @@ public class SequenceKey {
         }
     }
 
-    public static boolean saveToDB(SequenceKey sequenceKey) {
+    public static synchronized boolean saveToDB(SequenceKey sequenceKey) {
         try {
             if (sequenceKey == null) {
                 debugOperation(new IllegalArgumentException("sequenceKey must not be null"));
@@ -287,10 +283,10 @@ public class SequenceKey {
                 return false;
             }
             String sql = """
-                UPDATE sk 
-                SET balance = ?, expireTime = ?, port = ?, rate = ?
-                WHERE name = ?
-                """;
+                    UPDATE sk 
+                    SET balance = ?, expireTime = ?, port = ?, rate = ?
+                    WHERE name = ?
+                    """;
             try (Connection conn = getConnection();
                  PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.setDouble(1, sequenceKey.getBalance());
@@ -386,15 +382,12 @@ public class SequenceKey {
     }
 
     public void addMib(double mib) {
-        try {
-            if (mib < 0) {
-                debugOperation(new IllegalArgumentException("mib must be non-negative"));
-                return;
-            }
-            this.balance += mib;
-        } catch (Exception e) {
-            debugOperation(e);
+        if (mib < 0) {
+            debugOperation(new IllegalArgumentException("mib must be non-negative"));
+            return;
         }
+        this.balance += mib;
+
     }
 
     public synchronized void mineMib(double mib) throws NoMoreNetworkFlowException {
@@ -416,9 +409,6 @@ public class SequenceKey {
         } catch (NoMoreNetworkFlowException e) {
             debugOperation(e);
             throw e;
-        } catch (Exception e) {
-            debugOperation(e);
-            NoMoreNetworkFlowException.throwException(name);
         }
     }
 

@@ -2,7 +2,6 @@ package neoproject.neoproxy.core;
 
 import neoproject.neoproxy.core.exceptions.IllegalConnectionException;
 import plethora.net.SecureSocket;
-import plethora.security.encryption.AESUtil;
 import plethora.utils.Sleeper;
 
 import java.io.Closeable;
@@ -23,7 +22,6 @@ public final class HostClient implements Closeable {
     private LanguageData languageData = new LanguageData();
     private int outPort = -1;
     public static int AES_KEY_SIZE = 128;
-    private final AESUtil aesUtil = new AESUtil(AES_KEY_SIZE);//AES-128
 
     public HostClient(SecureSocket hostServerHook) throws IOException, IllegalConnectionException {
         this.hostServerHook = hostServerHook;
@@ -117,7 +115,7 @@ public final class HostClient implements Closeable {
         return sequenceKey;
     }
 
-    public void setVault(SequenceKey sequenceKey) {
+    public void setKey(SequenceKey sequenceKey) {
         this.sequenceKey = sequenceKey;
     }
 
@@ -151,10 +149,6 @@ public final class HostClient implements Closeable {
 
     public void setOutPort(int outPort) {
         this.outPort = outPort;
-    }
-
-    public AESUtil getAESUtil() {
-        return aesUtil;
     }
 
 }

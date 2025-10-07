@@ -99,13 +99,13 @@ public class ConsoleManager {
         }
 
         // 3. 执行设置操作
-        SequenceKey sequenceKey=null;
+        SequenceKey sequenceKey = null;
         for (HostClient hostClient : availableHostClient) {//优先从当前正在使用的 key 中寻找
-            if (hostClient.getKey().getName().equals(name)){
-                sequenceKey=hostClient.getKey();
+            if (hostClient.getKey().getName().equals(name)) {
+                sequenceKey = hostClient.getKey();
             }
         }
-        if (sequenceKey==null){//如果 key 本身还没被使用，就从数据库找
+        if (sequenceKey == null) {//如果 key 本身还没被使用，就从数据库找
             sequenceKey = getKeyFromDB(name);
             if (sequenceKey == null) {//如果全都找不到
                 myConsole.warn("Admin", "Could not find the key in database.");

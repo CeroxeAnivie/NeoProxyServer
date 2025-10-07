@@ -37,6 +37,7 @@ public record Transformer(HostClient hostClient, Socket client, HostReply hostRe
                 hostClient.getKey().mineMib(SizeCalculator.byteToMib(enLength + 10));//real + 0.01kb
                 tellRestBalance(hostClient, aTenMibSize, enLength, hostClient.getLangData());//tell the host client the rest balance.
 
+                RateLimiter.setMaxMbps(limiter,hostClient.getKey().getRate());
                 limiter.onBytesTransferred(enLength);
             }
 
@@ -73,6 +74,7 @@ public record Transformer(HostClient hostClient, Socket client, HostReply hostRe
                 hostClient.getKey().mineMib(SizeCalculator.byteToMib(data.length));
                 tellRestBalance(hostClient, aTenMibSize, data.length, hostClient.getLangData());//tell the host client the rest balance.
 
+                RateLimiter.setMaxMbps(limiter,hostClient.getKey().getRate());
                 limiter.onBytesTransferred(data.length);
             }
 

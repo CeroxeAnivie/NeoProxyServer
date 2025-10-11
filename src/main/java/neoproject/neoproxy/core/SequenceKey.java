@@ -39,17 +39,19 @@ public class SequenceKey {
     protected String expireTime; // 格式：yyyy/MM/dd-HH:mm
     protected int port;
     protected double rate; // 单位：Mbps
+    protected boolean isEnable; // 新增的启用状态字段
 
     /**
      * 私有构造函数，用于从数据库或创建时初始化对象。
      * 此构造函数不进行空值检查，因为其调用者（如 {@link #getKeyFromDB}）已确保参数有效。
      */
-    private SequenceKey(String name, double balance, String expireTime, int port, double rate) {
+    private SequenceKey(String name, double balance, String expireTime, int port, double rate, boolean isEnable) {
         this.name = name;
         this.balance = balance;
         this.expireTime = expireTime;
         this.port = port;
         this.rate = rate;
+        this.isEnable = isEnable;
     }
 
     // ==================== 数据库连接管理 ====================
@@ -71,9 +73,10 @@ public class SequenceKey {
         try {
             // 优化：直接在SQL中判断过期，避免全表扫描和Java日期解析
             // H2 的 PARSEDATETIME 函数可以解析字符串为时间戳
+            // 只清理已启用的过期密钥
             String deleteSql = """
                     DELETE FROM sk 
-                    WHERE PARSEDATETIME(expireTime, 'yyyy/MM/dd-HH:mm') < NOW()
+                    WHERE isEnable = TRUE AND PARSEDATETIME(expireTime, 'yyyy/MM/dd-HH:mm') < NOW()
                     """;
 
             try (Connection conn = getConnection();
@@ -144,13 +147,16 @@ public class SequenceKey {
         }
     }
 
+    /**
+     * 从数据库获取密钥，不管是否启用，只要存在就返回。
+     */
     public static SequenceKey getKeyFromDB(String name) {
         try {
             if (name == null) {
                 debugOperation(new IllegalArgumentException("name must not be null"));
                 return null;
             }
-            String sql = "SELECT name, balance, expireTime, port, rate FROM sk WHERE name = ?";
+            String sql = "SELECT name, balance, expireTime, port, rate, isEnable FROM sk WHERE name = ?";
             try (Connection conn = getConnection();
                  PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, name);
@@ -161,7 +167,41 @@ public class SequenceKey {
                                 rs.getDouble("balance"),
                                 rs.getString("expireTime"),
                                 rs.getInt("port"),
-                                rs.getDouble("rate")
+                                rs.getDouble("rate"),
+                                rs.getBoolean("isEnable")
+                        );
+                    }
+                    return null;
+                }
+            }
+        } catch (Exception e) {
+            debugOperation(e);
+            return null;
+        }
+    }
+
+    /**
+     * 从数据库获取已启用的密钥，如果密钥不存在或已禁用则返回 null。
+     */
+    public static SequenceKey getEnabledKeyFromDB(String name) {
+        try {
+            if (name == null) {
+                debugOperation(new IllegalArgumentException("name must not be null"));
+                return null;
+            }
+            String sql = "SELECT name, balance, expireTime, port, rate, isEnable FROM sk WHERE name = ? AND isEnable = TRUE";
+            try (Connection conn = getConnection();
+                 PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, name);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        return new SequenceKey(
+                                rs.getString("name"),
+                                rs.getDouble("balance"),
+                                rs.getString("expireTime"),
+                                rs.getInt("port"),
+                                rs.getDouble("rate"),
+                                rs.getBoolean("isEnable")
                         );
                     }
                     return null;
@@ -186,17 +226,26 @@ public class SequenceKey {
                 shutdownHookRegistered = true;
             }
 
-            String sql = """
+            // 先创建基础表结构
+            String createTableSql = """
                     CREATE TABLE IF NOT EXISTS sk (
                         name VARCHAR(50) PRIMARY KEY,
                         balance DOUBLE NOT NULL,
                         expireTime VARCHAR(50) NOT NULL,
                         port INT NOT NULL,
-                        rate DOUBLE NOT NULL
+                        rate DOUBLE NOT NULL,
+                        isEnable BOOLEAN DEFAULT TRUE NOT NULL
                     )
                     """;
             try (Connection conn = getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
+                 PreparedStatement stmt = conn.prepareStatement(createTableSql)) {
+                stmt.execute();
+            }
+
+            // 确保 isEnable 列存在，如果不存在则添加（H2 支持 IF NOT EXISTS）
+            String addColumnSql = "ALTER TABLE sk ADD COLUMN IF NOT EXISTS isEnable BOOLEAN DEFAULT TRUE NOT NULL";
+            try (Connection conn = getConnection();
+                 PreparedStatement stmt = conn.prepareStatement(addColumnSql)) {
                 stmt.execute();
             }
 
@@ -213,7 +262,6 @@ public class SequenceKey {
                         CLEANUP_INTERVAL_MINUTES, // 周期
                         TimeUnit.MINUTES
                 );
-//                myConsole.warn("SK-Manager", "Background cleanup task started. Interval: " + CLEANUP_INTERVAL_MINUTES + " minutes.");
             }
         } catch (Exception e) {
             debugOperation(e);
@@ -236,7 +284,8 @@ public class SequenceKey {
             if (isKeyExistsByName(name)) {
                 return false;
             }
-            String sql = "INSERT INTO sk (name, balance, expireTime, port, rate) VALUES (?, ?, ?, ?, ?)";
+            // 创建时默认启用
+            String sql = "INSERT INTO sk (name, balance, expireTime, port, rate, isEnable) VALUES (?, ?, ?, ?, ?, TRUE)";
             try (Connection conn = getConnection();
                  PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, name);
@@ -272,6 +321,67 @@ public class SequenceKey {
         }
     }
 
+    /**
+     * 启用指定的密钥
+     */
+    public static boolean enableKey(String name) {
+        try {
+            if (name == null) {
+                debugOperation(new IllegalArgumentException("name must not be null"));
+                return false;
+            }
+            if (!isKeyExistsByName(name)) {
+                return false;
+            }
+            // 只更新数据库，不需要处理内存中的对象
+            String sql = "UPDATE sk SET isEnable = TRUE WHERE name = ?";
+            try (Connection conn = getConnection();
+                 PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, name);
+                int rows = stmt.executeUpdate();
+                return rows > 0;
+            }
+        } catch (Exception e) {
+            debugOperation(e);
+            return false;
+        }
+    }
+
+    /**
+     * 禁用指定的密钥
+     */
+    public static boolean disableKey(String name) {
+        try {
+            if (name == null) {
+                debugOperation(new IllegalArgumentException("name must not be null"));
+                return false;
+            }
+            if (!isKeyExistsByName(name)) {
+                return false;
+            }
+
+            // 1. 先更新内存中的活跃对象（如果存在）
+            for (HostClient hostClient : NeoProxyServer.availableHostClient) {
+                if (hostClient != null && hostClient.getKey() != null &&
+                        name.equals(hostClient.getKey().getName())) {
+                    hostClient.getKey().setEnable(false);
+                }
+            }
+
+            // 2. 再更新数据库
+            String sql = "UPDATE sk SET isEnable = FALSE WHERE name = ?";
+            try (Connection conn = getConnection();
+                 PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, name);
+                int rows = stmt.executeUpdate();
+                return rows > 0;
+            }
+        } catch (Exception e) {
+            debugOperation(e);
+            return false;
+        }
+    }
+
     public static synchronized boolean saveToDB(SequenceKey sequenceKey) {
         try {
             if (sequenceKey == null) {
@@ -284,7 +394,7 @@ public class SequenceKey {
             }
             String sql = """
                     UPDATE sk 
-                    SET balance = ?, expireTime = ?, port = ?, rate = ?
+                    SET balance = ?, expireTime = ?, port = ?, rate = ?, isEnable = ?
                     WHERE name = ?
                     """;
             try (Connection conn = getConnection();
@@ -293,7 +403,8 @@ public class SequenceKey {
                 stmt.setString(2, sequenceKey.getExpireTime());
                 stmt.setInt(3, sequenceKey.getPort());
                 stmt.setDouble(4, sequenceKey.getRate());
-                stmt.setString(5, name);
+                stmt.setBoolean(5, sequenceKey.isEnable);
+                stmt.setString(6, name);
                 int rows = stmt.executeUpdate();
                 return rows > 0;
             }
@@ -328,6 +439,14 @@ public class SequenceKey {
 
     public String getExpireTime() {
         return expireTime;
+    }
+
+    public boolean isEnable() {
+        return isEnable;
+    }
+
+    public void setEnable(boolean enable) {
+        isEnable = enable;
     }
 
     /**
@@ -387,7 +506,6 @@ public class SequenceKey {
             return;
         }
         this.balance += mib;
-
     }
 
     public synchronized void mineMib(double mib) throws NoMoreNetworkFlowException {
@@ -424,6 +542,7 @@ public class SequenceKey {
                 ", expireTime='" + expireTime + '\'' +
                 ", port=" + port +
                 ", rate=" + rate +
+                ", isEnable=" + isEnable +
                 '}';
     }
 }

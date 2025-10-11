@@ -32,6 +32,7 @@ public class ConfigOperator {
                 NeoProxyServer.HOST_CONNECT_PORT = Integer.parseInt(lineConfigReader.get("HOST_CONNECT_PORT"));
                 NeoProxyServer.START_PORT = Integer.parseInt(lineConfigReader.get("START_PORT"));
                 NeoProxyServer.END_PORT = Integer.parseInt(lineConfigReader.get("END_PORT"));
+                InfoBox.alert = Boolean.parseBoolean(lineConfigReader.get("ALERT"));
                 HostClient.SAVE_DELAY = Integer.parseInt(lineConfigReader.get("SAVE_DELAY"));
                 HostClient.AES_KEY_SIZE = Integer.parseInt(lineConfigReader.get("AES_KEY_SIZE"));
                 Transformer.BUFFER_LEN = Integer.parseInt(lineConfigReader.get("BUFFER_LEN"));
@@ -64,6 +65,10 @@ public class ConfigOperator {
                     #dynamic port end point
                     END_PORT=65535
                     
+                    #是否开启详细的连接通知
+                    #Whether to enable detailed connection notifications
+                    ALERT=true
+                    
                     #是否开启非法连接封禁
                     #Whether to enable illegal connection ban
                     ENABLE_BAN=true
@@ -76,11 +81,6 @@ public class ConfigOperator {
                     #When how much traffic is consumed, tell the client the remaining traffic
                     TELL_BALANCE_MIB=10
                     
-                    #AES加密的秘钥长度
-                    #AES encryption key length
-                    AES_KEY_SIZE=128
-                    
-                    
                     #如果你不知道以下设置是干什么的，请不要动它
                     #If you don't know what the following setting does, please don't touch it
                     HOST_HOOK_PORT=801
@@ -92,7 +92,11 @@ public class ConfigOperator {
                     
                     #设置保存序列号文件的间隔，单位为毫秒
                     #Set the interval for saving the serial number file, in milliseconds
-                    SAVE_DELAY=3000""");
+                    SAVE_DELAY=3000
+                    
+                    #AES加密的秘钥长度
+                    #AES encryption key length
+                    AES_KEY_SIZE=128""");
 
             bufferedWriter.flush();
             bufferedWriter.close();

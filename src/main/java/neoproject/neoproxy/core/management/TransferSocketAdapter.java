@@ -13,6 +13,7 @@ import java.net.SocketTimeoutException;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static neoproject.neoproxy.NeoProxyServer.debugOperation;
+import static neoproject.neoproxy.NeoProxyServer.isStopped;
 
 public class TransferSocketAdapter implements Runnable {
     public static final CopyOnWriteArrayList<HostReply> hostList = new CopyOnWriteArrayList<>();
@@ -32,11 +33,14 @@ public class TransferSocketAdapter implements Runnable {
             System.exit(-1);
         }
 
-        while (true) {
+        while (!isStopped) {
             SecureSocket host;
             try {
                 host = NeoProxyServer.hostServerTransferServerSocket.accept();
             } catch (IOException e) {//如果之间有任何io异常，则直接跳过。因为正常来说不应有任何异常。
+                if (isStopped) {
+                    break;
+                }
                 debugOperation(e);
                 continue;
             }

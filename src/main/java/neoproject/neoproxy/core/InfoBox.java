@@ -5,27 +5,45 @@ import java.net.Socket;
 import static neoproject.neoproxy.NeoProxyServer.sayInfo;
 
 public class InfoBox {
+    public static boolean alert = true;
+
     public static void sayHostClientDiscInfo(HostClient hostClient, String subject) {
         sayInfo(subject, "Detected hostClient on " + hostClient.getAddressAndPort() + " has been disconnected !");
     }
 
     public static void sayClientConnectBuildUpInfo(HostClient hostClient, Socket client) {
-        sayInfo("Connection: " + InternetOperator.getInternetAddressAndPort(client) + " -> " + hostClient.getAddressAndPort() + " build up !");
-    }
-
-    public static void sayClientConnectBuildUpInfo(HostClient hostClient, String addressAndPort) {
-        sayInfo("Connection: " + addressAndPort + " -> " + hostClient.getAddressAndPort() + " build up !");
+        if (alert) {
+            sayInfo("Connection: " + InternetOperator.getInternetAddressAndPort(client) + " -> " + hostClient.getAddressAndPort() + " build up !");
+        }
     }
 
     public static void sayClientConnectDestroyInfo(HostClient hostClient, Socket client) {
-        sayInfo("Connection: " + InternetOperator.getInternetAddressAndPort(client) + " -> " + hostClient.getAddressAndPort() + " destroyed !");
+        if (alert) {
+            sayInfo("Connection: " + InternetOperator.getInternetAddressAndPort(client) + " -> " + hostClient.getAddressAndPort() + " destroyed !");
+        }
     }
 
-    public static void sayClientConnectDestroyInfo(HostClient hostClient, String addressAndPort) {
-        sayInfo("Connection: " + addressAndPort + " -> " + hostClient.getAddressAndPort() + " destroyed !");
+    public static void sayClientSuccConnectToChaSerButHostClientTimeOut(HostClient hostClient) {
+        if (alert) {
+            sayInfo("A client successfully connect to the channel server but host client from " + hostClient.getAddressAndPort() + " time out.");
+        }
     }
 
-    public static void sayClientSuccConnecToChaSerButHostClientTimeOut(HostClient hostClient) {
-        sayInfo("A client successfully connect to the channel server but host client from " + hostClient.getAddressAndPort() + " time out.");
+    public static void sayKillingClientSideConnection(Socket client) {
+        if (alert) {
+            sayInfo("Killing client's side connection: " + InternetOperator.getInternetAddressAndPort(client));
+        }
+    }
+
+    public static void sayHostClientTryToConnect(String address, int port) {
+        if (alert) {
+            sayInfo("HostClient from " + address + ":" + port + " try to connect!");
+        }
+    }
+
+    public static void sayAHostClientTryToConnectButFail() {
+        if (alert) {
+            sayInfo("A host client try to connect but fail.");
+        }
     }
 }

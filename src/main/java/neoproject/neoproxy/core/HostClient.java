@@ -1,6 +1,5 @@
 package neoproject.neoproxy.core;
 
-import neoproject.neoproxy.core.exceptions.IllegalConnectionException;
 import plethora.net.SecureSocket;
 import plethora.utils.Sleeper;
 
@@ -23,7 +22,7 @@ public final class HostClient implements Closeable {
     private int outPort = -1;
     public static int AES_KEY_SIZE = 128;
 
-    public HostClient(SecureSocket hostServerHook) throws IOException, IllegalConnectionException {
+    public HostClient(SecureSocket hostServerHook) throws IOException {
         this.hostServerHook = hostServerHook;
 
         HostClient.enableAutoSaveThread(this);
@@ -63,6 +62,11 @@ public final class HostClient implements Closeable {
                 }
 
                 //不能通过判断 keyfile 是否存在来断定是否有效，因为 keyfile 刷新的时候会删除文件再创建
+
+                if (hostClient.getKey() != null && !hostClient.getKey().isEnable()) {
+                    hostClient.close();
+                    break;
+                }
 
                 if (hostClient.isStopped) {
                     break;

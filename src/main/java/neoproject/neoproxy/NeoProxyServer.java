@@ -12,6 +12,7 @@ import plethora.utils.MyConsole;
 import plethora.utils.StringUtils;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -21,7 +22,7 @@ import static neoproject.neoproxy.core.SequenceKey.initKeyDatabase;
 public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = System.getProperty("user.dir");
 
-    public static String EXPECTED_CLIENT_VERSION = "3.2-RELEASE|3.3-RELEASE";//从左到右从老到新版本
+    public static String EXPECTED_CLIENT_VERSION = "3.2-RELEASE|3.3-RELEASE|3.4-RELEASE";//从左到右从老到新版本
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.stringArrayToList(EXPECTED_CLIENT_VERSION.split("\\|"));
 
     public static int HOST_HOOK_PORT = 801;
@@ -36,42 +37,51 @@ public class NeoProxyServer {
     public static boolean IS_DEBUG_MODE = false;
     public static MyConsole myConsole;
 
+    public static boolean isStopped = false;
+
+    // 新增常量
+    public static final int DYNAMIC_PORT = -1;
+
     public static void initConsole() {
         ConsoleManager.init();
     }
 
     public static void initStructure() {
+        // 初始化顺序更清晰
+        initConsole();           // 1. 控制台系统
+        initKeyDatabase();       // 2. 数据库
+        ConfigOperator.readAndSetValue(); // 3. 配置
+        UpdateManager.init();    // 4. 更新管理器
 
-        initConsole();//初始化日控制台系统
-        initKeyDatabase();
-        UpdateManager.init();
-
-        ConfigOperator.readAndSetValue();
-
+        // 5. 网络服务
         try {
             hostServerHookServerSocket = new SecureServerSocket(HOST_HOOK_PORT);
             TransferSocketAdapter.startThread();
         } catch (IOException e) {
             debugOperation(e);
-            sayError("Can not blind the port , it's Occupied ?");
+            sayError("Can not bind the port, it's occupied?");
             System.exit(-1);
         }
-
     }
 
     private static void checkARGS(String[] args) {
         for (String arg : args) {
             switch (arg) {
                 case "--debug" -> IS_DEBUG_MODE = true;
+                // 可以继续添加其他参数，例如：
+                // case "--verbose" -> IS_VERBOSE = true;
+                default -> {
+                } // 忽略未知参数
             }
         }
     }
 
     public static void main(String[] args) {
+        // 注册优雅关闭钩子
+        Runtime.getRuntime().addShutdownHook(new Thread(NeoProxyServer::shutdown));
 
         NeoProxyServer.checkARGS(args);
         NeoProxyServer.initStructure();
-
 
         sayInfo("-----------------------------------------------------");
         sayInfo("""
@@ -86,110 +96,97 @@ public class NeoProxyServer {
                                                              \
                 """);
 
-
         sayInfo("Current log file : " + myConsole.getLogFile().getAbsolutePath());
         sayInfo("LOCAL_DOMAIN_NAME: " + LOCAL_DOMAIN_NAME);
         sayInfo("Listen HOST_CONNECT_PORT on " + HOST_CONNECT_PORT);
         sayInfo("Listen HOST_HOOK_PORT on " + HOST_HOOK_PORT);
         sayInfo("Support client versions: " + EXPECTED_CLIENT_VERSION);
 
-
-        while (true) {
+        while (!isStopped) {
             try {
-                HostClient hostClient = listenAndConfigureHostClient();//监听端口accept socket，并且检查是不是ban的ip，如果不是，则返回初始化的HostClient对象
-
-                new Thread(() -> {//这个子线程是监听 host client 连接的服务
-                    try {
-                        //检查host client合法性,并且打印相关信息到控制台和告诉host client相关要素
-                        NeoProxyServer.checkHostClientLegitimacyAndTellInfo(hostClient);
-
-                        //开始服务
-                        NeoProxyServer.handleTransformerServiceWithNewThread(hostClient);
-
-                    } catch (IndexOutOfBoundsException | IOException |
-                             NoMorePortException |
-                             AlreadyBlindPortException | UnRecognizedKeyException | OutDatedKeyException e) {
-                        // exception class will auto say OTHER info ! Just do things.
-//                        e.printStackTrace();
-                        InfoBox.sayHostClientDiscInfo(hostClient, "Main");
-                        hostClient.close();
-                    } catch (UnSupportHostVersionException e) {
-                        UpdateManager.handle(hostClient);//it will close the hostclient
-                    } catch (SlientException ignore) {
-                    }
-                }, "监听 host client 连接的服务").start();
+                HostClient hostClient = listenAndConfigureHostClient();
+                handleNewHostClient(hostClient);
             } catch (IOException e) {
-                sayInfo("A host client try to connect but fail .");
+                debugOperation(e);
+                if (!isStopped) {
+                    InfoBox.sayAHostClientTryToConnectButFail();
+                } else {
+                    break;
+                }
             } catch (SlientException ignored) {
+                // 静默异常，继续循环
             }
         }
+    }
 
+    // 新增方法：处理新连接的 HostClient
+    private static void handleNewHostClient(HostClient hostClient) {
+        new Thread(() -> {
+            try {
+                NeoProxyServer.checkHostClientLegitimacyAndTellInfo(hostClient);
+                NeoProxyServer.handleTransformerServiceWithNewThread(hostClient);
+            } catch (IndexOutOfBoundsException | IOException |
+                     NoMorePortException |
+                     AlreadyBlindPortException | UnRecognizedKeyException | OutDatedKeyException e) {
+                InfoBox.sayHostClientDiscInfo(hostClient, "Main");
+                hostClient.close();
+            } catch (UnSupportHostVersionException e) {
+                UpdateManager.handle(hostClient);
+            } catch (SlientException ignore) {
+                // 静默处理
+            }
+        }, "HostClient-Handler").start();
     }
 
     public static HostClient listenAndConfigureHostClient() throws SlientException, IOException {
-        //listen for host client,and check is ban and available
         SecureSocket hostServerHook = hostServerHookServerSocket.accept();
-        if (IPChecker.exec(hostServerHook.getInetAddress().getHostAddress(), IPChecker.CHECK_IS_BAN)) {
+        String clientAddress = hostServerHook.getInetAddress().getHostAddress();
+
+        if (IPChecker.exec(clientAddress, IPChecker.CHECK_IS_BAN)) {
             InternetOperator.close(hostServerHook);
-            SlientException.throwException();//skip while
+            SlientException.throwException();
         }
-        sayInfo("HostClient on " + hostServerHook.getInetAddress().getHostAddress() + ":" + hostServerHook.getPort() + " try to connect !");
-        HostClient hostClient = null;
-        try {
-            hostClient = new HostClient(hostServerHook);
-        } catch (IllegalConnectionException e) {
-            SlientException.throwException();//skip while
-        }
-        return hostClient;
+
+        InfoBox.sayHostClientTryToConnect(clientAddress, hostServerHook.getPort());
+
+        return new HostClient(hostServerHook);
+
     }
 
     public static void handleTransformerServiceWithNewThread(HostClient hostClient) {
-        new Thread(() -> {//这个子线程是对于连接成功的 host client 后续的服务
-            while (true) {
-
+        new Thread(() -> {
+            while (!hostClient.getClientServerSocket().isClosed()) {
                 Socket client;
-
-                //等待外网client连接
                 try {
-                    if (hostClient.getClientServerSocket().isClosed()) {
-                        break;//msg is print to the console at CheckAliveThread ! then it die
-                    } else {
-                        client = hostClient.getClientServerSocket().accept();//这里会发生阻塞等待
-                    }
+                    client = hostClient.getClientServerSocket().accept();
                 } catch (IOException e) {
                     debugOperation(e);
                     continue;
                 }
 
-
-                //外部client连接以后，提醒 host client 有客户端连接了。
-                try {//send ":>sendSocket;{clientAddr}" str to tell host client to connect
-                    //example ":>sendSocket;cha.ceron.fun:50001"
+                try {
                     InternetOperator.sendCommand(hostClient, "sendSocket" + ";" + InternetOperator.getInternetAddressAndPort(client));
                 } catch (Exception e) {
                     InfoBox.sayHostClientDiscInfo(hostClient, "Main");
                     hostClient.close();
                     InternetOperator.close(client);
-                    break;//break inner because host client is destroyed.
+                    break;
                 }
 
-                //获取host client发来的AES传输通道socket
                 HostReply hostReply;
                 try {
                     hostReply = TransferSocketAdapter.getThisHostClientHostSign(hostClient.getOutPort());
-                } catch (IOException e) {//if host client timeout
-                    InfoBox.sayClientSuccConnecToChaSerButHostClientTimeOut(hostClient);
-                    sayInfo("Killing client's side connection: " + InternetOperator.getInternetAddressAndPort(client));
+                } catch (IOException e) {
+                    InfoBox.sayClientSuccConnectToChaSerButHostClientTimeOut(hostClient);
+                    InfoBox.sayKillingClientSideConnection(client);
                     InternetOperator.close(client);
                     continue;
                 }
 
-                //立即服务
                 Transformer.startThread(hostClient, hostReply, client);
-
-                InfoBox.sayClientConnectBuildUpInfo(hostClient, client);//say connection build up info
+                InfoBox.sayClientConnectBuildUpInfo(hostClient, client);
             }
-        }, "这个子线程是对于连接成功的 host client 后续的服务").start();
+        }, "HostClient-Service").start();
     }
 
     public static void sayInfo(String str) {
@@ -208,32 +205,32 @@ public class NeoProxyServer {
         myConsole.error(subject, str);
     }
 
+    // 优化后的端口检查方法
     private static int getCurrentAvailableOutPort() {
         for (int i = START_PORT; i <= END_PORT; i++) {
-            try {
-                ServerSocket serverSocket = new ServerSocket(i);
-                serverSocket.close();
+            try (ServerSocket serverSocket = new ServerSocket()) {
+                serverSocket.bind(new InetSocketAddress(i), 0);
                 return i;
-            } catch (Exception ignore) {
+            } catch (IOException ignore) {
+                // 端口不可用，继续下一个
             }
         }
         return -1;
     }
 
     private static void checkHostClientLegitimacyAndTellInfo(HostClient hostClient) throws IOException, NoMorePortException, SlientException, UnRecognizedKeyException, AlreadyBlindPortException, UnSupportHostVersionException, OutDatedKeyException {
-        //get and check host client property
         Object[] obj = NeoProxyServer.checkHostClientVersionAndKeyAndLang(hostClient);
-        sayInfo("HostClient on " + InternetOperator.getInternetAddressAndPort(hostClient.getHostServerHook()) + " register successfully!");
+        String clientAddress = InternetOperator.getInternetAddressAndPort(hostClient.getHostServerHook());
+        sayInfo("HostClient on " + clientAddress + " register successfully!");
+
         hostClient.enableCheckAliveThread();
         availableHostClient.add(hostClient);
 
-        //generate them into pieces for use
         hostClient.setKey((SequenceKey) obj[0]);
         hostClient.setLangData((LanguageData) obj[1]);
 
-        //arrange port if no specific , or give the chosen one
         int port;
-        if (hostClient.getKey().getPort() != -1) {
+        if (hostClient.getKey().getPort() != DYNAMIC_PORT) {
             port = hostClient.getKey().getPort();
         } else {
             port = NeoProxyServer.getCurrentAvailableOutPort();
@@ -242,74 +239,64 @@ public class NeoProxyServer {
             }
         }
         hostClient.setOutPort(port);
-
         hostClient.setClientServerSocket(new ServerSocket(port));
 
-        InternetOperator.sendCommand(hostClient, String.valueOf(port));//tell the host client remote out port
-        //tell the message to the host client
-        InternetOperator.sendStr(hostClient, hostClient.getLangData().THIS_ACCESS_CODE_HAVE + hostClient.getKey().getBalance() + hostClient.getLangData().MB_OF_FLOW_LEFT);
-        InternetOperator.sendStr(hostClient, hostClient.getLangData().EXPIRE_AT + hostClient.getKey().getExpireTime());
+        InternetOperator.sendCommand(hostClient, String.valueOf(port));
+        InternetOperator.sendStr(hostClient, hostClient.getLangData().THIS_ACCESS_CODE_HAVE +
+                hostClient.getKey().getBalance() + hostClient.getLangData().MB_OF_FLOW_LEFT);
+        InternetOperator.sendStr(hostClient, hostClient.getLangData().EXPIRE_AT +
+                hostClient.getKey().getExpireTime());
+        InternetOperator.sendStr(hostClient, hostClient.getLangData().USE_THE_ADDRESS +
+                LOCAL_DOMAIN_NAME + ":" + port + hostClient.getLangData().TO_START_UP_CONNECTION);
 
-        InternetOperator.sendStr(hostClient, hostClient.getLangData().USE_THE_ADDRESS + LOCAL_DOMAIN_NAME + ":" + port + hostClient.getLangData().TO_START_UP_CONNECTION);//send remote connect address
-
-        //print the property into the console
         sayInfo("Assigned connection address: " + LOCAL_DOMAIN_NAME + ":" + port);
     }
 
-    private static Object[] checkHostClientVersionAndKeyAndLang(HostClient hostClient) throws IOException, UnSupportHostVersionException, UnRecognizedKeyException, AlreadyBlindPortException, IndexOutOfBoundsException, OutDatedKeyException {
-        String hostClientInfo = InternetOperator.receiveStr(hostClient);//host client property in one line
+    private static Object[] checkHostClientVersionAndKeyAndLang(HostClient hostClient)
+            throws IOException, UnSupportHostVersionException, UnRecognizedKeyException,
+            AlreadyBlindPortException, IndexOutOfBoundsException, OutDatedKeyException {
 
-        if (hostClientInfo == null) {
+        String hostClientInfo = InternetOperator.receiveStr(hostClient);
+        if (hostClientInfo == null || hostClientInfo.isEmpty()) {
             UnSupportHostVersionException.throwException("_NULL_", hostClient);
         }
 
         assert hostClientInfo != null;
-        String[] info = hostClientInfo.split(";");//make them into pieces for use
-
-        if (info.length != 3) {//只允许 3 的检查数组长度
+        String[] info = hostClientInfo.split(";");
+        if (info.length != 3) {
             UnSupportHostVersionException.throwException("_NULL_", hostClient);
         }
 
-        // zh;version;key
-        LanguageData languageData;
-        if (info[0].equals("zh")) {
-            languageData = LanguageData.getChineseLanguage();
-        } else {
-            languageData = new LanguageData();
-        }
+        LanguageData languageData = "zh".equals(info[0]) ?
+                LanguageData.getChineseLanguage() : new LanguageData();
 
-        boolean isAvailVersion = availableVersions.contains(info[1]);
-        if (!isAvailVersion) {
+        if (!availableVersions.contains(info[1])) {
             InternetOperator.sendStr(hostClient, languageData.UNSUPPORTED_VERSION_MSG + EXPECTED_CLIENT_VERSION);
-//            hostClient.close();改策略了，不踢，下载完新版本再踢
             UnSupportHostVersionException.throwException(info[1], hostClient);
         }
 
-        SequenceKey currentSequenceKey = SequenceKey.getKeyFromDB(info[2]);
-        if (currentSequenceKey == null) {//在数据库里找不到序列号,踢掉
+        SequenceKey currentSequenceKey = SequenceKey.getEnabledKeyFromDB(info[2]);
+        if (currentSequenceKey == null) {
             InternetOperator.sendStr(hostClient, languageData.ACCESS_DENIED_FORCE_EXITING);
             hostClient.close();
             UnRecognizedKeyException.throwException(info[2]);
         }
 
-        assert currentSequenceKey != null;//找到了
-        if (currentSequenceKey.getPort() != -1) {//check port on key file!
-            try {
-
-                ServerSocket serverSocket = new ServerSocket(currentSequenceKey.getPort());//check is not occupied
-                serverSocket.close();
-
-            } catch (IOException e) {// if is blind
+        assert currentSequenceKey != null;
+        if (currentSequenceKey.getPort() != DYNAMIC_PORT) {
+            try (ServerSocket testSocket = new ServerSocket()) {
+                testSocket.bind(new InetSocketAddress(currentSequenceKey.getPort()), 0);
+            } catch (IOException e) {
                 InternetOperator.sendStr(hostClient, languageData.THE_PORT_HAS_ALREADY_BLIND);
                 AlreadyBlindPortException.throwException(currentSequenceKey.getPort());
             }
         }
+
         if (currentSequenceKey.isOutOfDate()) {
             InternetOperator.sendStr(hostClient, languageData.KEY + info[2] + languageData.ARE_OUT_OF_DATE);
             OutDatedKeyException.throwException(currentSequenceKey);
         }
 
-        //if nothing is bad,complete checking
         InternetOperator.sendStr(hostClient, languageData.CONNECTION_BUILD_UP_SUCCESSFULLY);
         return new Object[]{currentSequenceKey, languageData};
     }
@@ -321,4 +308,38 @@ public class NeoProxyServer {
         }
     }
 
+    // 新增：优雅关闭方法
+    private static void shutdown() {
+        sayInfo("Shutting down the NeoProxyServer...");
+
+        isStopped = true;
+        // 关闭所有 HostClient 连接
+        for (HostClient hostClient : availableHostClient) {
+            try {
+                hostClient.close();
+            } catch (Exception e) {
+                debugOperation(e);
+            }
+        }
+        availableHostClient.clear();
+
+        // 关闭服务器套接字
+        try {
+            if (hostServerHookServerSocket != null && !hostServerHookServerSocket.isClosed()) {
+                hostServerHookServerSocket.close();
+            }
+        } catch (IOException e) {
+            debugOperation(e);
+        }
+
+        try {
+            if (hostServerTransferServerSocket != null && !hostServerTransferServerSocket.isClosed()) {
+                hostServerTransferServerSocket.close();
+            }
+        } catch (IOException e) {
+            debugOperation(e);
+        }
+
+        sayInfo("NeoProxyServer shutdown completed.");
+    }
 }

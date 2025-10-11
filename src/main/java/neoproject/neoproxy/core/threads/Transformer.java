@@ -1,6 +1,5 @@
 package neoproject.neoproxy.core.threads;
 
-import neoproject.neoproxy.NeoProxyServer;
 import neoproject.neoproxy.core.*;
 import neoproject.neoproxy.core.exceptions.NoMoreNetworkFlowException;
 import plethora.management.bufferedFile.SizeCalculator;
@@ -13,6 +12,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.net.Socket;
 
+import static neoproject.neoproxy.NeoProxyServer.debugOperation;
 import static neoproject.neoproxy.core.InternetOperator.close;
 import static neoproject.neoproxy.core.SequenceKey.removeKey;
 
@@ -37,7 +37,7 @@ public record Transformer(HostClient hostClient, Socket client, HostReply hostRe
                 hostClient.getKey().mineMib(SizeCalculator.byteToMib(enLength + 10));//real + 0.01kb
                 tellRestBalance(hostClient, aTenMibSize, enLength, hostClient.getLangData());//tell the host client the rest balance.
 
-                RateLimiter.setMaxMbps(limiter,hostClient.getKey().getRate());
+                RateLimiter.setMaxMbps(limiter, hostClient.getKey().getRate());
                 limiter.onBytesTransferred(enLength);
             }
 
@@ -46,7 +46,7 @@ public record Transformer(HostClient hostClient, Socket client, HostReply hostRe
             client.shutdownInput();
 
         } catch (IOException e) {
-            NeoProxyServer.debugOperation(e);
+            debugOperation(e);
 
             try {
 
@@ -74,7 +74,7 @@ public record Transformer(HostClient hostClient, Socket client, HostReply hostRe
                 hostClient.getKey().mineMib(SizeCalculator.byteToMib(data.length));
                 tellRestBalance(hostClient, aTenMibSize, data.length, hostClient.getLangData());//tell the host client the rest balance.
 
-                RateLimiter.setMaxMbps(limiter,hostClient.getKey().getRate());
+                RateLimiter.setMaxMbps(limiter, hostClient.getKey().getRate());
                 limiter.onBytesTransferred(data.length);
             }
 
@@ -82,7 +82,7 @@ public record Transformer(HostClient hostClient, Socket client, HostReply hostRe
             client.shutdownOutput();
 
         } catch (IOException e) {
-            NeoProxyServer.debugOperation(e);
+            debugOperation(e);
 
             try {
 

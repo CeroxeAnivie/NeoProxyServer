@@ -18,7 +18,7 @@ public class LanguageData implements Serializable {
     public String FAIL_TO_BUILD_A_CHANNEL_FROM = "Fail to build a channel from ";
     public String DESTROY = " destroyed";
     public String FAIL_TO_CONNECT_LOCALHOST = "Fail to connect to 127.0.0.1:";
-    public String THE_KEY = "The vault ";
+    public String THE_KEY = "The key ";
     public String KEY = "Key ";
     public String ARE_OUT_OF_DATE = " are out of date.";
     public String THIS_ACCESS_CODE_HAVE = "This access code have ";

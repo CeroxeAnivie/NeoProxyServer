@@ -7,8 +7,8 @@ public class UnRecognizedKeyException extends Exception {
         super(msg);
     }
 
-    public static void throwException(String vaultCode) throws UnRecognizedKeyException {
-        String str = "The access code " + vaultCode + " could not find in vault dir.";
+    public static void throwException(String keyCode) throws UnRecognizedKeyException {
+        String str = "The access code " + keyCode + " could not find in DB , or it's disabled.";
         NeoProxyServer.sayInfo(str);
         throw new UnRecognizedKeyException(str);
     }

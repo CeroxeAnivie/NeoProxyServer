@@ -53,9 +53,9 @@ public class ConfigOperator {
             BufferedWriter bufferedWriter = new BufferedWriter(new FileWriter(CONFIG_FILE, StandardCharsets.UTF_8));
 
             bufferedWriter.write("""
-                    #把你的公网ip或域名放在这里，如果你只是本地测试，请用127.0.0.1
-                    #Put your public network ip or domain name here, if you are testing locally, please use 127.0.0.1
-                    LOCAL_DOMAIN_NAME=127.0.0.1
+                    #把你的公网ip或域名放在这里，如果你只是本地测试，请用 localhost
+                    #Put your public network ip or domain name here, if you are testing locally, please use localhost
+                    LOCAL_DOMAIN_NAME=localhost
                     
                     #是否开启详细的连接通知
                     #Whether to enable detailed connection notifications

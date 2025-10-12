@@ -1,6 +1,7 @@
 package neoproject.neoproxy.core;
 
 import neoproject.neoproxy.NeoProxyServer;
+import neoproject.neoproxy.core.management.IPChecker;
 import neoproject.neoproxy.core.management.TransferSocketAdapter;
 import neoproject.neoproxy.core.threads.Transformer;
 import plethora.management.bufferedFile.BufferedFile;
@@ -30,8 +31,6 @@ public class ConfigOperator {
                 NeoProxyServer.LOCAL_DOMAIN_NAME = lineConfigReader.get("LOCAL_DOMAIN_NAME");
                 NeoProxyServer.HOST_HOOK_PORT = Integer.parseInt(lineConfigReader.get("HOST_HOOK_PORT"));
                 NeoProxyServer.HOST_CONNECT_PORT = Integer.parseInt(lineConfigReader.get("HOST_CONNECT_PORT"));
-                NeoProxyServer.START_PORT = Integer.parseInt(lineConfigReader.get("START_PORT"));
-                NeoProxyServer.END_PORT = Integer.parseInt(lineConfigReader.get("END_PORT"));
                 InfoBox.alert = Boolean.parseBoolean(lineConfigReader.get("ALERT"));
                 HostClient.SAVE_DELAY = Integer.parseInt(lineConfigReader.get("SAVE_DELAY"));
                 HostClient.AES_KEY_SIZE = Integer.parseInt(lineConfigReader.get("AES_KEY_SIZE"));
@@ -57,13 +56,6 @@ public class ConfigOperator {
                     #把你的公网ip或域名放在这里，如果你只是本地测试，请用127.0.0.1
                     #Put your public network ip or domain name here, if you are testing locally, please use 127.0.0.1
                     LOCAL_DOMAIN_NAME=127.0.0.1
-                    
-                    #动态端口起始点
-                    #dynamic port origin
-                    START_PORT=50000
-                    #动态端口结束点
-                    #dynamic port end point
-                    END_PORT=65535
                     
                     #是否开启详细的连接通知
                     #Whether to enable detailed connection notifications

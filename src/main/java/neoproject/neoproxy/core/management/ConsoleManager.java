@@ -1,5 +1,7 @@
-package neoproject.neoproxy.core;
+package neoproject.neoproxy.core.management;
 
+import neoproject.neoproxy.core.HostClient;
+import neoproject.neoproxy.core.InfoBox;
 import plethora.utils.MyConsole;
 
 import java.util.ArrayList;
@@ -8,7 +10,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static neoproject.neoproxy.NeoProxyServer.*;
-import static neoproject.neoproxy.core.SequenceKey.*;
+import static neoproject.neoproxy.core.management.SequenceKey.*;
 
 /**
  * 控制台管理器，负责注册和处理所有控制台命令。
@@ -20,6 +22,9 @@ public class ConsoleManager {
 
     private static final String TIME_FORMAT_PATTERN = "^(\\d{4})/(\\d{1,2})/(\\d{1,2})-(\\d{1,2}):(\\d{1,2})$";
     private static final Pattern TIME_PATTERN = Pattern.compile(TIME_FORMAT_PATTERN);
+    // 新增正则表达式，用于验证端口输入：支持单个端口 (1-65535) 或端口范围 (如 3344-3350)
+    private static final String PORT_INPUT_PATTERN = "^(\\d+)(?:-(\\d+))?$";
+    private static final Pattern PORT_INPUT_REGEX = Pattern.compile(PORT_INPUT_PATTERN);
 
     /**
      * 初始化控制台并注册所有命令。
@@ -120,12 +125,13 @@ public class ConsoleManager {
         }
     }
 
-    // ==================== 命令处理方法 ====================
+// ==================== 命令处理方法 ====================
 
     private static void handleSetCommand(List<String> params) {
         if (params.size() < 2) {
             myConsole.warn("Admin", "Usage: key set <name> [b=<balance>] [r=<rate>] [p=<port>] [t=<expireTime>]");
             myConsole.warn("Admin", "Example: key set mykey b=1000 r=15 p=8080 t=2025/12/31-23:59");
+            myConsole.warn("Admin", "Example (Dynamic Port): key set mykey p=3344-3350");
             return;
         }
 
@@ -137,49 +143,78 @@ public class ConsoleManager {
             return;
         }
 
-        // 获取当前密钥对象（优先从内存，再从数据库）
-        SequenceKey sequenceKey = null;
+        // === 关键修改开始 ===
+        // 1. 收集所有内存中与该名称匹配的 HostClient 及其 SequenceKey 实例
+        List<HostClient> hostClientsToUpdate = new ArrayList<>();
+        List<SequenceKey> inMemoryKeysToUpdate = new ArrayList<>();
+        SequenceKey dbKeySnapshot = null; // 用于从数据库获取初始状态的快照
+
         for (HostClient hostClient : availableHostClient) {
             if (hostClient != null && hostClient.getKey() != null &&
                     name.equals(hostClient.getKey().getName())) {
-                sequenceKey = hostClient.getKey();
-                break;
+                hostClientsToUpdate.add(hostClient);
+                inMemoryKeysToUpdate.add(hostClient.getKey());
             }
         }
-        if (sequenceKey == null) {
-            sequenceKey = getKeyFromDB(name);
-            if (sequenceKey == null) {
+
+        // 2. 如果内存中没有，从数据库加载一个快照用于更新
+        if (inMemoryKeysToUpdate.isEmpty()) {
+            dbKeySnapshot = getKeyFromDB(name);
+            if (dbKeySnapshot == null) {
                 myConsole.warn("Admin", "Could not find the key in database.");
                 return;
             }
         }
+        // === 关键修改结束 ===
 
         // 解析参数并更新对应字段
         boolean hasUpdate = false;
+        // === 新增：用于记录新的端口策略 ===
+        String newPortStr = null;
+        // === 新增结束 ===
+
         for (int i = 2; i < params.size(); i++) {
             String param = params.get(i);
             if (param.startsWith("b=")) {
                 String balanceStr = param.substring(2);
                 Double balance = parseDoubleSafely(balanceStr, "balance");
                 if (balance != null) {
-                    sequenceKey.balance = balance;
+                    for (SequenceKey key : inMemoryKeysToUpdate) {
+                        key.balance = balance;
+                    }
+                    if (dbKeySnapshot != null) {
+                        dbKeySnapshot.balance = balance;
+                    }
                     hasUpdate = true;
                 }
             } else if (param.startsWith("r=")) {
                 String rateStr = param.substring(2);
                 Double rate = parseDoubleSafely(rateStr, "rate");
                 if (rate != null) {
-                    sequenceKey.rate = rate;
+                    for (SequenceKey key : inMemoryKeysToUpdate) {
+                        key.rate = rate;
+                    }
+                    if (dbKeySnapshot != null) {
+                        dbKeySnapshot.rate = rate;
+                    }
                     hasUpdate = true;
                 }
             } else if (param.startsWith("p=")) {
                 String portStr = param.substring(2);
-                Integer port = parseIntegerSafely(portStr, "port");
-                if (port != null && port > 0 && port <= 65535) {
-                    sequenceKey.port = port;
+                String validatedPortStr = validateAndFormatPortInput(portStr);
+                if (validatedPortStr != null) {
+                    for (SequenceKey key : inMemoryKeysToUpdate) {
+                        key.port = validatedPortStr;
+                    }
+                    if (dbKeySnapshot != null) {
+                        dbKeySnapshot.port = validatedPortStr;
+                    }
                     hasUpdate = true;
-                } else if (port != null) {
-                    myConsole.warn("Admin", "Invalid port value: " + portStr + " (must be 1-65535)");
+                    // === 新增：记录新的端口策略 ===
+                    newPortStr = validatedPortStr;
+                    // === 新增结束 ===
+                } else {
+                    myConsole.warn("Admin", "Invalid port value: '" + portStr + "'. Must be a number (1-65535) or a range (e.g., 3344-3350).");
                 }
             } else if (param.startsWith("t=")) {
                 String expireTimeInput = param.substring(2);
@@ -189,7 +224,12 @@ public class ConsoleManager {
                 } else if (isOutOfDate(expireTime)) {
                     myConsole.warn("Admin", "The entered time cannot be earlier than the current time: " + expireTime);
                 } else {
-                    sequenceKey.expireTime = expireTime;
+                    for (SequenceKey key : inMemoryKeysToUpdate) {
+                        key.expireTime = expireTime;
+                    }
+                    if (dbKeySnapshot != null) {
+                        dbKeySnapshot.expireTime = expireTime;
+                    }
                     hasUpdate = true;
                 }
             } else {
@@ -202,12 +242,76 @@ public class ConsoleManager {
             return;
         }
 
+        // === 关键修改开始：端口策略变更后的连接验证与清理 ===
+        if (newPortStr != null) {
+            myConsole.log("Admin", "Port policy changed to: '" + newPortStr + "'. Validating active connections...");
+            int disconnectedCount = 0;
+
+            // 验证所有相关的 HostClient
+            for (HostClient client : hostClientsToUpdate) {
+                int currentExternalPort = client.getOutPort();
+                if (!isPortInRange(currentExternalPort, newPortStr)) {
+                    myConsole.log("Admin", "Disconnecting client (Key: " + name +
+                            ", Current Port: " + currentExternalPort +
+                            ") as it no longer complies with the new port policy.");
+                    client.close(); // 主动断开连接
+                    disconnectedCount++;
+                }
+            }
+
+            if (disconnectedCount > 0) {
+                myConsole.warn("Admin", "Disconnected " + disconnectedCount + " client(s) due to port policy change.");
+            }
+        }
+        // === 关键修改结束 ===
+
         // 保存到数据库
-        boolean isSuccess = saveToDB(sequenceKey);
+        SequenceKey keyToSave = (dbKeySnapshot != null) ? dbKeySnapshot : inMemoryKeysToUpdate.getFirst();
+        boolean isSuccess = saveToDB(keyToSave);
+
         if (isSuccess) {
             myConsole.log("Admin", "Operation complete!");
         } else {
             myConsole.warn("Admin", "Fail to set the key.");
+        }
+    }
+
+    // ==================== 新增的辅助方法 ====================
+
+    /**
+     * 检查给定的端口号是否在指定的端口策略范围内。
+     *
+     * @param port      要检查的端口号
+     * @param portRange 端口策略字符串，可以是单个端口（如 "8080"）或范围（如 "3344-3350"）
+     * @return 如果端口在范围内返回 true，否则返回 false
+     */
+    private static boolean isPortInRange(int port, String portRange) {
+        if (portRange == null || portRange.isEmpty()) {
+            return false;
+        }
+
+        // 尝试分割范围
+        String[] parts = portRange.split("-", -1);
+        if (parts.length == 1) {
+            // 单个端口
+            try {
+                int singlePort = Integer.parseInt(parts[0].trim());
+                return port == singlePort;
+            } catch (NumberFormatException e) {
+                return false;
+            }
+        } else if (parts.length == 2) {
+            // 端口范围
+            try {
+                int start = Integer.parseInt(parts[0].trim());
+                int end = Integer.parseInt(parts[1].trim());
+                return port >= start && port <= end;
+            } catch (NumberFormatException e) {
+                return false;
+            }
+        } else {
+            // 格式无效
+            return false;
         }
     }
 
@@ -263,6 +367,7 @@ public class ConsoleManager {
     private static void handleAddCommand(List<String> params) {
         if (params.size() != 6) {
             myConsole.warn("Admin", "Usage: key add <name> <balance> <expireTime> <port> <rate>");
+            myConsole.warn("Admin", "Note: <port> can be a single number (e.g., 8080) or a range (e.g., 3344-3350).");
             return;
         }
 
@@ -285,14 +390,20 @@ public class ConsoleManager {
 
         // 2. 校验并解析数字
         Double balance = parseDoubleSafely(balanceStr, "balance");
-        Integer port = parseIntegerSafely(portStr, "port");
         Double rate = parseDoubleSafely(rateStr, "rate");
-        if (balance == null || port == null || rate == null) {
+        if (balance == null || rate == null) {
             return; // 错误信息已在解析方法中打印
         }
 
-        // 3. 执行创建操作
-        boolean isCreated = createNewKey(name, balance, expireTime, port, rate);
+        // 3. **关键改动**：使用新的端口验证方法
+        String validatedPortStr = validateAndFormatPortInput(portStr);
+        if (validatedPortStr == null) {
+            myConsole.warn("Admin", "Invalid port value: '" + portStr + "'. Must be a number (1-65535) or a range (e.g., 3344-3350).");
+            return;
+        }
+
+        // 4. 执行创建操作 (注意：createNewKey 内部会处理 String)
+        boolean isCreated = createNewKey(name, balance, expireTime, validatedPortStr, rate);
         if (isCreated) {
             myConsole.log("Admin", "Key " + name + " has been created!");
         } else {
@@ -315,7 +426,8 @@ public class ConsoleManager {
                 String name = rs.getString("name");
                 double balance = rs.getDouble("balance");
                 String expireTime = rs.getString("expireTime");
-                int port = rs.getInt("port");
+                // **关键改动**：直接从数据库读取 port 字符串，不再尝试转为 int
+                String portStr = rs.getString("port");
                 double rate = rs.getDouble("rate");
                 boolean isEnable = rs.getBoolean("isEnable");
                 int clientNum = findKeyClientNum(name);
@@ -325,7 +437,7 @@ public class ConsoleManager {
                         name,
                         String.format("%.2f", balance),
                         expireTime,
-                        String.valueOf(port),
+                        portStr, // 直接使用字符串
                         formattedRate + "mbps",
                         enableStatus,
                         String.valueOf(clientNum)
@@ -466,7 +578,59 @@ public class ConsoleManager {
                 key disable <name>
                 key list
                 key list <name | balance | rate | expire-time | enable>
-                key lp <name>""");
+                key lp <name>
+                
+                Note: <port> can be a single number (e.g., 8080) or a range (e.g., 3344-3350).""");
+    }
+
+    /**
+     * 验证并格式化端口输入字符串。
+     * <p>
+     * 支持两种格式：
+     * 1. 单个端口号: "8080"
+     * 2. 端口范围: "3344-3350"
+     * <p>
+     * 验证规则：
+     * - 单个端口必须在 1-65535 范围内。
+     * - 端口范围的起始和结束端口都必须在 1-65535 范围内，且起始 <= 结束。
+     *
+     * @param portInput 用户输入的端口字符串
+     * @return 验证通过的格式化字符串，或 null（如果无效）
+     */
+    private static String validateAndFormatPortInput(String portInput) {
+        if (portInput == null || portInput.trim().isEmpty()) {
+            return null;
+        }
+
+        Matcher matcher = PORT_INPUT_REGEX.matcher(portInput.trim());
+        if (!matcher.matches()) {
+            return null;
+        }
+
+        try {
+            String startPortStr = matcher.group(1);
+            String endPortStr = matcher.group(2);
+
+            int startPort = Integer.parseInt(startPortStr);
+            if (startPort < 1 || startPort > 65535) {
+                return null;
+            }
+
+            if (endPortStr == null) {
+                // 单个端口
+                return String.valueOf(startPort);
+            } else {
+                // 端口范围
+                int endPort = Integer.parseInt(endPortStr);
+                if (endPort < 1 || endPort > 65535 || endPort < startPort) {
+                    return null;
+                }
+                return startPort + "-" + endPort;
+            }
+        } catch (NumberFormatException e) {
+            // 端口号过大导致溢出
+            return null;
+        }
     }
 
     /**
@@ -475,18 +639,6 @@ public class ConsoleManager {
     private static Double parseDoubleSafely(String str, String fieldName) {
         try {
             return Double.parseDouble(str);
-        } catch (NumberFormatException e) {
-            myConsole.warn("Admin", "Invalid value for " + fieldName + ": '" + str + "'");
-            return null;
-        }
-    }
-
-    /**
-     * 安全地解析 Integer，捕获 NumberFormatException 并输出友好错误。
-     */
-    private static Integer parseIntegerSafely(String str, String fieldName) {
-        try {
-            return Integer.parseInt(str);
         } catch (NumberFormatException e) {
             myConsole.warn("Admin", "Invalid value for " + fieldName + ": '" + str + "'");
             return null;
@@ -543,7 +695,8 @@ public class ConsoleManager {
             String name = sequenceKey.getName();
             double balance = sequenceKey.getBalance();
             String expireTime = sequenceKey.getExpireTime();
-            int port = sequenceKey.getPort();
+            // **关键改动**：直接使用内部存储的 port 字符串
+            String portStr = sequenceKey.port;
             double rate = sequenceKey.getRate();
             boolean isEnable = sequenceKey.isEnable();
             int clientNum = findKeyClientNum(name);
@@ -556,7 +709,7 @@ public class ConsoleManager {
                     name,
                     String.format("%.2f", balance),
                     expireTime,
-                    String.valueOf(port),
+                    portStr, // 直接使用字符串
                     formattedRate + "mbps",
                     enableStatus,
                     String.valueOf(clientNum)
@@ -619,13 +772,6 @@ public class ConsoleManager {
         }
     }
 
-    @FunctionalInterface
-    private interface RowProcessor {
-        String process(java.sql.ResultSet rs) throws java.sql.SQLException;
-    }
-
-    // ==================== 以下方法直接委托给 SequenceKey，保持一致性 ====================
-
     private static int findKeyClientNum(String name) {
         int num = 0;
         for (HostClient hostClient : availableHostClient) {
@@ -636,6 +782,8 @@ public class ConsoleManager {
         }
         return num;
     }
+
+    // ==================== 以下方法直接委托给 SequenceKey，保持一致性 ====================
 
     private static String killDoubleEndZero(double d) {
         if (d == (long) d) {
@@ -669,5 +817,10 @@ public class ConsoleManager {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    @FunctionalInterface
+    private interface RowProcessor {
+        String process(java.sql.ResultSet rs) throws java.sql.SQLException;
     }
 }

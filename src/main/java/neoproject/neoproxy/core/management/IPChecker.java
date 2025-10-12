@@ -1,13 +1,15 @@
-package neoproject.neoproxy.core;
+package neoproject.neoproxy.core.management;
+
+import neoproject.neoproxy.core.InternetOperator;
 
 import java.io.*;
 import java.net.Socket;
 
 public class IPChecker {
-    private static final File bannedIPList = new File(System.getProperty("user.dir") + File.separator + "banList.txt");
-    public static boolean ENABLE_BAN = true;
     public static final int DO_BAN = 0;
     public static final int CHECK_IS_BAN = 1;
+    private static final File bannedIPList = new File(System.getProperty("user.dir") + File.separator + "banList.txt");
+    public static boolean ENABLE_BAN = true;
 
     static {
 

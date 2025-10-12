@@ -23,6 +23,19 @@ public class TransferSocketAdapter implements Runnable {
         new Thread(new TransferSocketAdapter()).start();
     }
 
+    public static HostReply getThisHostClientHostSign(int port) throws SocketTimeoutException {
+        for (int i = 0; i < SO_TIMEOUT / 10; i++) {
+            for (HostReply hostReply : hostList) {
+                if (hostReply.port() == port) {
+                    hostList.remove(hostReply);
+                    return hostReply;
+                }
+            }
+            Sleeper.sleep(10);
+        }
+        throw new SocketTimeoutException();
+    }
+
     @Override
     public void run() {
         try {
@@ -67,18 +80,5 @@ public class TransferSocketAdapter implements Runnable {
             }).start();
         }
 
-    }
-
-    public static HostReply getThisHostClientHostSign(int port) throws SocketTimeoutException {
-        for (int i = 0; i < SO_TIMEOUT / 10; i++) {
-            for (HostReply hostReply : hostList) {
-                if (hostReply.port() == port) {
-                    hostList.remove(hostReply);
-                    return hostReply;
-                }
-            }
-            Sleeper.sleep(10);
-        }
-        throw new SocketTimeoutException();
     }
 }

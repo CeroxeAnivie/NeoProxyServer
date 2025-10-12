@@ -2,8 +2,7 @@ package neoproject.neoproxy;
 
 import neoproject.neoproxy.core.*;
 import neoproject.neoproxy.core.exceptions.*;
-import neoproject.neoproxy.core.management.TransferSocketAdapter;
-import neoproject.neoproxy.core.management.UpdateManager;
+import neoproject.neoproxy.core.management.*;
 import neoproject.neoproxy.core.threads.Transformer;
 import plethora.net.SecureServerSocket;
 import plethora.net.SecureSocket;
@@ -17,30 +16,23 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-import static neoproject.neoproxy.core.SequenceKey.initKeyDatabase;
+import static neoproject.neoproxy.core.management.SequenceKey.DYNAMIC_PORT;
+import static neoproject.neoproxy.core.management.SequenceKey.initKeyDatabase;
 
 public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = System.getProperty("user.dir");
-
+    public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
     public static String EXPECTED_CLIENT_VERSION = "3.2-RELEASE|3.3-RELEASE|3.4-RELEASE|3.5-RELEASE";//从左到右从老到新版本
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.stringArrayToList(EXPECTED_CLIENT_VERSION.split("\\|"));
-
     public static int HOST_HOOK_PORT = 801;
     public static int HOST_CONNECT_PORT = 802;
-
     public static String LOCAL_DOMAIN_NAME = "127.0.0.1";
     public static SecureServerSocket hostServerTransferServerSocket = null;
     public static SecureServerSocket hostServerHookServerSocket = null;
-    public static int START_PORT = 50000;
-    public static int END_PORT = 65535;
-    public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
     public static boolean IS_DEBUG_MODE = false;
     public static MyConsole myConsole;
 
     public static boolean isStopped = false;
-
-    // 新增常量
-    public static final int DYNAMIC_PORT = -1;
 
     public static void initConsole() {
         ConsoleManager.init();
@@ -206,8 +198,8 @@ public class NeoProxyServer {
     }
 
     // 优化后的端口检查方法
-    private static int getCurrentAvailableOutPort() {
-        for (int i = START_PORT; i <= END_PORT; i++) {
+    private static int getCurrentAvailableOutPort(SequenceKey sequenceKey) {
+        for (int i = sequenceKey.getDyStart(); i <= sequenceKey.getDyEnd(); i++) {
             try (ServerSocket serverSocket = new ServerSocket()) {
                 serverSocket.bind(new InetSocketAddress(i), 0);
                 return i;
@@ -220,26 +212,28 @@ public class NeoProxyServer {
 
     private static void checkHostClientLegitimacyAndTellInfo(HostClient hostClient) throws IOException, NoMorePortException, SlientException, UnRecognizedKeyException, AlreadyBlindPortException, UnSupportHostVersionException, OutDatedKeyException {
         Object[] obj = NeoProxyServer.checkHostClientVersionAndKeyAndLang(hostClient);
-        String clientAddress = InternetOperator.getInternetAddressAndPort(hostClient.getHostServerHook());
-        sayInfo("HostClient on " + clientAddress + " register successfully!");
 
         hostClient.enableCheckAliveThread();
         availableHostClient.add(hostClient);
 
-        hostClient.setKey((SequenceKey) obj[0]);
+        SequenceKey key = (SequenceKey) obj[0];
+        hostClient.setKey(key);
         hostClient.setLangData((LanguageData) obj[1]);
 
         int port;
         if (hostClient.getKey().getPort() != DYNAMIC_PORT) {
             port = hostClient.getKey().getPort();
         } else {
-            port = NeoProxyServer.getCurrentAvailableOutPort();
+            port = NeoProxyServer.getCurrentAvailableOutPort(key);
             if (port == -1) {
                 NoMorePortException.throwException();
             }
         }
         hostClient.setOutPort(port);
         hostClient.setClientServerSocket(new ServerSocket(port));
+
+        String clientAddress = InternetOperator.getInternetAddressAndPort(hostClient.getHostServerHook());
+        sayInfo("HostClient on " + clientAddress + " register successfully!");
 
         InternetOperator.sendCommand(hostClient, String.valueOf(port));
         InternetOperator.sendStr(hostClient, hostClient.getLangData().THIS_ACCESS_CODE_HAVE +
@@ -289,6 +283,12 @@ public class NeoProxyServer {
             } catch (IOException e) {
                 InternetOperator.sendStr(hostClient, languageData.THE_PORT_HAS_ALREADY_BLIND);
                 AlreadyBlindPortException.throwException(currentSequenceKey.getPort());
+            }
+        } else {
+            int i = getCurrentAvailableOutPort(currentSequenceKey);
+            if (i == -1) {
+                InternetOperator.sendStr(hostClient, languageData.THE_PORT_HAS_ALREADY_BLIND);
+                AlreadyBlindPortException.throwException(currentSequenceKey.getDyStart(), currentSequenceKey.getDyEnd());
             }
         }
 

@@ -1,6 +1,6 @@
 package neoproject.neoproxy.core.exceptions;
 
-import neoproject.neoproxy.core.SequenceKey;
+import neoproject.neoproxy.core.management.SequenceKey;
 
 public class OutDatedKeyException extends Exception {
     private OutDatedKeyException(String msg) {

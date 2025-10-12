@@ -1,5 +1,6 @@
 package neoproject.neoproxy.core;
 
+import neoproject.neoproxy.core.management.SequenceKey;
 import plethora.net.SecureSocket;
 import plethora.utils.Sleeper;
 
@@ -9,18 +10,18 @@ import java.net.ServerSocket;
 
 import static neoproject.neoproxy.NeoProxyServer.availableHostClient;
 import static neoproject.neoproxy.NeoProxyServer.sayInfo;
-import static neoproject.neoproxy.core.SequenceKey.saveToDB;
+import static neoproject.neoproxy.core.management.SequenceKey.saveToDB;
 
 public final class HostClient implements Closeable {
     public static int SAVE_DELAY = 3000;//3s
     public static int DETECTION_DELAY = 1000;
+    public static int AES_KEY_SIZE = 128;
+    private final SecureSocket hostServerHook;
     private boolean isStopped = false;
     private SequenceKey sequenceKey = null;
-    private final SecureSocket hostServerHook;
     private ServerSocket clientServerSocket = null;
     private LanguageData languageData = new LanguageData();
     private int outPort = -1;
-    public static int AES_KEY_SIZE = 128;
 
     public HostClient(SecureSocket hostServerHook) throws IOException {
         this.hostServerHook = hostServerHook;

@@ -3,9 +3,13 @@ package neoproject.neoproxy.core.threads;
 import static neoproject.neoproxy.NeoProxyServer.debugOperation;
 
 public class RateLimiter {
-    private long totalBytes = 0;
     private final long startTime = System.nanoTime();
+    private long totalBytes = 0;
     private double maxBytesPerSec;
+
+    protected RateLimiter(double maxMbps) {
+        setMaxMbps(this, maxMbps);
+    }
 
     protected static void setMaxMbps(RateLimiter rateLimiter, double maxMbps) {
         // 👇 新增：速率限制（单位：Mbps），设为 0 表示不限速
@@ -16,10 +20,6 @@ public class RateLimiter {
             // 1 Mbps = 1,000,000 bits per second = 125,000 bytes per second
             rateLimiter.maxBytesPerSec = maxMbps * 125_000.0;// 内部转换：Mbps → bytes per second
         }
-    }
-
-    protected RateLimiter(double maxMbps) {
-        setMaxMbps(this, maxMbps);
     }
 
     protected void onBytesTransferred(int bytes) {

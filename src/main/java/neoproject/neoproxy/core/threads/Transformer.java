@@ -14,7 +14,7 @@ import java.net.Socket;
 
 import static neoproject.neoproxy.NeoProxyServer.debugOperation;
 import static neoproject.neoproxy.core.InternetOperator.close;
-import static neoproject.neoproxy.core.SequenceKey.removeKey;
+import static neoproject.neoproxy.core.management.SequenceKey.removeKey;
 
 public record Transformer(HostClient hostClient, Socket client, HostReply hostReply) implements Runnable {
     public static int BUFFER_LEN = 1024;

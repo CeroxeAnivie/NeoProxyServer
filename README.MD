@@ -25,6 +25,7 @@
 
 - Java 21+
 - Maven（用于构建）
+- 必须：需要配合 [NeoLink](https://github.com/NeoLinkProxy/NeoLink) 客户端使用
 - 必须（除非本地测试）：公网 IP 或域名（用于外网访问）
 
 ### 构建项目

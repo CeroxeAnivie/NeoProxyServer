@@ -26,7 +26,7 @@ public class NeoProxyServer {
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.stringArrayToList(EXPECTED_CLIENT_VERSION.split("\\|"));
     public static int HOST_HOOK_PORT = 801;
     public static int HOST_CONNECT_PORT = 802;
-    public static String LOCAL_DOMAIN_NAME = "127.0.0.1";
+    public static String LOCAL_DOMAIN_NAME = "localhost";
     public static SecureServerSocket hostServerTransferServerSocket = null;
     public static SecureServerSocket hostServerHookServerSocket = null;
     public static boolean IS_DEBUG_MODE = false;

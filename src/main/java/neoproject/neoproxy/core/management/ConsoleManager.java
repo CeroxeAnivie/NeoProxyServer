@@ -4,12 +4,16 @@ import neoproject.neoproxy.core.HostClient;
 import neoproject.neoproxy.core.InfoBox;
 import plethora.utils.MyConsole;
 
+import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static neoproject.neoproxy.NeoProxyServer.*;
+import static neoproject.neoproxy.core.management.IPChecker.*;
 import static neoproject.neoproxy.core.management.SequenceKey.*;
 
 /**
@@ -60,6 +64,46 @@ public class ConsoleManager {
             }
         });
 
+        // --- 新增 IP 封禁相关命令 ---
+        myConsole.registerCommand("ban", "封禁指定 IP 地址", (List<String> params) -> {
+            if (params.size() != 1) {
+                myConsole.warn("Admin", "Usage: ban <ip_address>");
+                return;
+            }
+            String ipToBan = params.getFirst();
+            if (isValidIP(ipToBan)) {
+                if (IPChecker.exec(ipToBan, IPChecker.DO_BAN)) {
+                    myConsole.log("Admin", "IP address " + ipToBan + " has been banned.");
+                } else {
+                    myConsole.warn("Admin", "Failed to ban IP address " + ipToBan + " .");
+                }
+            } else {
+                myConsole.warn("Admin", "Invalid IP address format: " + ipToBan);
+            }
+        });
+
+        myConsole.registerCommand("unban", "解封指定 IP 地址", (List<String> params) -> {
+            if (params.size() != 1) {
+                myConsole.warn("Admin", "Usage: unban <ip_address>");
+                return;
+            }
+            String ipToUnban = params.getFirst();
+            if (isValidIP(ipToUnban)) {
+                if (IPChecker.exec(ipToUnban, UNBAN)) {
+                    myConsole.log("Admin", "IP address " + ipToUnban + " has been unbanned.");
+                } else {
+                    myConsole.warn("Admin", "IP address " + ipToUnban + " was not found in the ban list or failed to remove.");
+                }
+            } else {
+                myConsole.warn("Admin", "Invalid IP address format: " + ipToUnban);
+            }
+        });
+
+        myConsole.registerCommand("listbans", "列出所有被封禁的 IP 地址", (List<String> params) -> {
+            listBannedIPs();
+        });
+        // --- 结束新增 ---
+
         myConsole.registerCommand("key", "序列号管理", (List<String> params) -> {
             try {
                 if (params.isEmpty()) {
@@ -84,8 +128,6 @@ public class ConsoleManager {
             }
         });
     }
-
-    // ==================== 新增的启用/禁用命令 ====================
 
     private static void handleEnableCommand(List<String> params) {
         if (params.size() != 2) {
@@ -136,7 +178,6 @@ public class ConsoleManager {
         }
 
         String name = params.get(1);
-
         // 检查密钥是否存在
         if (!isKeyExistsByName(name)) {
             myConsole.warn("Admin", "No such key: " + name);
@@ -148,7 +189,6 @@ public class ConsoleManager {
         List<HostClient> hostClientsToUpdate = new ArrayList<>();
         List<SequenceKey> inMemoryKeysToUpdate = new ArrayList<>();
         SequenceKey dbKeySnapshot = null; // 用于从数据库获取初始状态的快照
-
         for (HostClient hostClient : availableHostClient) {
             if (hostClient != null && hostClient.getKey() != null &&
                     name.equals(hostClient.getKey().getName())) {
@@ -156,7 +196,6 @@ public class ConsoleManager {
                 inMemoryKeysToUpdate.add(hostClient.getKey());
             }
         }
-
         // 2. 如果内存中没有，从数据库加载一个快照用于更新
         if (inMemoryKeysToUpdate.isEmpty()) {
             dbKeySnapshot = getKeyFromDB(name);
@@ -172,7 +211,6 @@ public class ConsoleManager {
         // === 新增：用于记录新的端口策略 ===
         String newPortStr = null;
         // === 新增结束 ===
-
         for (int i = 2; i < params.size(); i++) {
             String param = params.get(i);
             if (param.startsWith("b=")) {
@@ -246,7 +284,6 @@ public class ConsoleManager {
         if (newPortStr != null) {
             myConsole.log("Admin", "Port policy changed to: '" + newPortStr + "'. Validating active connections...");
             int disconnectedCount = 0;
-
             // 验证所有相关的 HostClient
             for (HostClient client : hostClientsToUpdate) {
                 int currentExternalPort = client.getOutPort();
@@ -258,7 +295,6 @@ public class ConsoleManager {
                     disconnectedCount++;
                 }
             }
-
             if (disconnectedCount > 0) {
                 myConsole.warn("Admin", "Disconnected " + disconnectedCount + " client(s) due to port policy change.");
             }
@@ -268,7 +304,6 @@ public class ConsoleManager {
         // 保存到数据库
         SequenceKey keyToSave = (dbKeySnapshot != null) ? dbKeySnapshot : inMemoryKeysToUpdate.getFirst();
         boolean isSuccess = saveToDB(keyToSave);
-
         if (isSuccess) {
             myConsole.log("Admin", "Operation complete!");
         } else {
@@ -289,7 +324,6 @@ public class ConsoleManager {
         if (portRange == null || portRange.isEmpty()) {
             return false;
         }
-
         // 尝试分割范围
         String[] parts = portRange.split("-", -1);
         if (parts.length == 1) {
@@ -419,7 +453,6 @@ public class ConsoleManager {
         try (var conn = getConnection();
              var stmt = conn.prepareStatement(sql);
              var rs = stmt.executeQuery()) {
-
             // 收集所有数据
             List<String[]> rows = new ArrayList<>();
             while (rs.next()) {
@@ -433,6 +466,7 @@ public class ConsoleManager {
                 int clientNum = findKeyClientNum(name);
                 String formattedRate = killDoubleEndZero(rate);
                 String enableStatus = isEnable ? "✓" : "✗";
+
                 rows.add(new String[]{
                         name,
                         String.format("%.2f", balance),
@@ -443,7 +477,6 @@ public class ConsoleManager {
                         String.valueOf(clientNum)
                 });
             }
-
             if (rows.isEmpty()) {
                 myConsole.warn("Admin", "No key found.");
                 return;
@@ -451,13 +484,11 @@ public class ConsoleManager {
 
             // 定义表头
             String[] headers = {"Name", "Balance", "ExpireTime", "Port", "Rate", "Enable", "Clients"};
-
             // 计算每列的最大宽度
             int[] widths = new int[headers.length];
             for (int i = 0; i < headers.length; i++) {
                 widths[i] = headers[i].length();
             }
-
             for (String[] row : rows) {
                 for (int i = 0; i < row.length; i++) {
                     widths[i] = Math.max(widths[i], row[i].length());
@@ -466,32 +497,28 @@ public class ConsoleManager {
 
             // 构建输出
             StringBuilder output = new StringBuilder();
-            output.append("\n");
-
+            output.append("\n"); // Use \n
             // 添加表头分隔线
             output.append("┌");
             for (int i = 0; i < widths.length; i++) {
                 output.append("─".repeat(widths[i] + 2));
                 if (i < widths.length - 1) output.append("┬");
             }
-            output.append("┐\n");
-
+            output.append("┐\n"); // Use \n
             // 添加表头
             output.append("│");
             for (int i = 0; i < headers.length; i++) {
                 output.append(" ").append(String.format("%-" + widths[i] + "s", headers[i])).append(" ");
                 output.append("│");
             }
-            output.append("\n");
-
+            output.append("\n"); // Use \n
             // 添加表头和数据分隔线
             output.append("├");
             for (int i = 0; i < widths.length; i++) {
                 output.append("─".repeat(widths[i] + 2));
                 if (i < widths.length - 1) output.append("┼");
             }
-            output.append("┤\n");
-
+            output.append("┤\n"); // Use \n
             // 添加数据行
             for (String[] row : rows) {
                 output.append("│");
@@ -499,16 +526,15 @@ public class ConsoleManager {
                     output.append(" ").append(String.format("%-" + widths[i] + "s", row[i])).append(" ");
                     output.append("│");
                 }
-                output.append("\n");
+                output.append("\n"); // Use \n
             }
-
             // 添加底部边框
             output.append("└");
             for (int i = 0; i < widths.length; i++) {
                 output.append("─".repeat(widths[i] + 2));
                 if (i < widths.length - 1) output.append("┴");
             }
-            output.append("┘");
+            output.append("┘"); // No \n at the very end if not desired
 
             myConsole.log("Admin", output.toString());
         } catch (Exception e) {
@@ -534,7 +560,7 @@ public class ConsoleManager {
             boolean isEnable = rs.getBoolean("isEnable");
             String status = isEnable ? "" : "(disabled)";
             return String.format("%s%s(%.2f)", name, status, balance);
-        }, "\n");
+        }, "\n"); // Use \n
     }
 
     private static void listKeyRates() {
@@ -555,7 +581,7 @@ public class ConsoleManager {
             boolean isEnable = rs.getBoolean("isEnable");
             String status = isEnable ? "" : "(disabled)";
             return String.format("%s%s( %s )", name, status, expireTime);
-        }, "\n");
+        }, "\n"); // Use \n
     }
 
     private static void listKeyEnableStatus() {
@@ -563,7 +589,7 @@ public class ConsoleManager {
             String name = rs.getString("name");
             boolean isEnable = rs.getBoolean("isEnable");
             return String.format("%s: %s", name, isEnable ? "enabled" : "disabled");
-        }, "\n");
+        }, "\n"); // Use \n
     }
 
     // ==================== 辅助方法 ====================
@@ -579,7 +605,9 @@ public class ConsoleManager {
                 key list
                 key list <name | balance | rate | expire-time | enable>
                 key lp <name>
-                
+                ban <ip_address>
+                unban <ip_address>
+                listbans
                 Note: <port> can be a single number (e.g., 8080) or a range (e.g., 3344-3350).""");
     }
 
@@ -601,7 +629,6 @@ public class ConsoleManager {
         if (portInput == null || portInput.trim().isEmpty()) {
             return null;
         }
-
         Matcher matcher = PORT_INPUT_REGEX.matcher(portInput.trim());
         if (!matcher.matches()) {
             return null;
@@ -610,7 +637,6 @@ public class ConsoleManager {
         try {
             String startPortStr = matcher.group(1);
             String endPortStr = matcher.group(2);
-
             int startPort = Integer.parseInt(startPortStr);
             if (startPort < 1 || startPort > 65535) {
                 return null;
@@ -652,7 +678,7 @@ public class ConsoleManager {
      * @param rowProcessor 处理每一行数据的函数
      */
     private static void executeQueryAndPrint(String sql, RowProcessor rowProcessor) {
-        executeQueryAndPrint(sql, rowProcessor, "\n");
+        executeQueryAndPrint(sql, rowProcessor, "\n"); // Use \n
     }
 
     /**
@@ -666,14 +692,12 @@ public class ConsoleManager {
         try (var conn = getConnection();
              var stmt = conn.prepareStatement(sql);
              var rs = stmt.executeQuery()) {
-
             StringBuilder output = new StringBuilder();
             boolean hasData = false;
             while (rs.next()) {
                 hasData = true;
                 output.append(rowProcessor.process(rs)).append(separator);
             }
-
             if (hasData) {
                 // 移除末尾多余的分隔符
                 if (!output.isEmpty()) {
@@ -723,47 +747,42 @@ public class ConsoleManager {
 
             // 构建输出
             StringBuilder output = new StringBuilder();
-            output.append("\n");
-
+            output.append("\n"); // Use \n
             // 添加表头分隔线
             output.append("┌");
             for (int i = 0; i < widths.length; i++) {
                 output.append("─".repeat(widths[i] + 2));
                 if (i < widths.length - 1) output.append("┬");
             }
-            output.append("┐\n");
-
+            output.append("┐\n"); // Use \n
             // 添加表头
             output.append("│");
             for (int i = 0; i < headers.length; i++) {
                 output.append(" ").append(String.format("%-" + widths[i] + "s", headers[i])).append(" ");
                 output.append("│");
             }
-            output.append("\n");
-
+            output.append("\n"); // Use \n
             // 添加数据分隔线
             output.append("├");
             for (int i = 0; i < widths.length; i++) {
                 output.append("─".repeat(widths[i] + 2));
                 if (i < widths.length - 1) output.append("┼");
             }
-            output.append("┤\n");
-
+            output.append("┤\n"); // Use \n
             // 添加数据行
             output.append("│");
             for (int i = 0; i < data.length; i++) {
                 output.append(" ").append(String.format("%-" + widths[i] + "s", data[i])).append(" ");
                 output.append("│");
             }
-            output.append("\n");
-
+            output.append("\n"); // Use \n
             // 添加底部边框
             output.append("└");
             for (int i = 0; i < widths.length; i++) {
                 output.append("─".repeat(widths[i] + 2));
                 if (i < widths.length - 1) output.append("┴");
             }
-            output.append("┘");
+            output.append("┘"); // No \n at the very end if not desired
 
             myConsole.log("Admin", output.toString());
         } catch (Exception e) {
@@ -795,7 +814,6 @@ public class ConsoleManager {
 
     private static String correctInputTime(String time) {
         if (time == null) return null;
-
         Matcher matcher = TIME_PATTERN.matcher(time);
         if (!matcher.matches()) {
             return null;
@@ -812,7 +830,6 @@ public class ConsoleManager {
                     hour < 0 || hour > 23 || minute < 0 || minute > 59) {
                 return null;
             }
-
             return String.format("%04d/%02d/%02d-%02d:%02d", year, month, day, hour, minute);
         } catch (NumberFormatException e) {
             return null;

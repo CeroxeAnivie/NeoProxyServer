@@ -13,8 +13,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
-import static neoproject.neoproxy.NeoProxyServer.debugOperation;
-import static neoproject.neoproxy.NeoProxyServer.myConsole;
+import static neoproject.neoproxy.NeoProxyServer.*;
 
 /**
  * 表示一个序列密钥（Sequence Key），用于流量控制和授权。
@@ -378,6 +377,11 @@ public class SequenceKey {
             if (name == null) {
                 debugOperation(new IllegalArgumentException("name must not be null"));
                 return false;
+            }
+            for (HostClient hostClient : availableHostClient) {//先断开所有的连接
+                if (hostClient.getKey().getName().equals(name)){
+                    hostClient.close();
+                }
             }
             String sql = "DELETE FROM sk WHERE name = ?";
             try (Connection conn = getConnection();

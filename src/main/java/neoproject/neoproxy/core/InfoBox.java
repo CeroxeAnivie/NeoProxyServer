@@ -46,4 +46,10 @@ public class InfoBox {
             sayInfo("A host client try to connect but fail.");
         }
     }
+
+    public static void sayBanConnectInfo(String clientAddress) {
+        if (alert) {
+            sayInfo("Connection from the banned IP: "+clientAddress+" has been rejected");
+        }
+    }
 }

@@ -1,28 +1,35 @@
 package neoproject.neoproxy;
 
+import com.maxmind.geoip2.DatabaseReader;
+import com.maxmind.geoip2.exception.GeoIp2Exception;
+import com.maxmind.geoip2.model.CityResponse;
 import neoproject.neoproxy.core.*;
 import neoproject.neoproxy.core.exceptions.*;
 import neoproject.neoproxy.core.management.*;
 import neoproject.neoproxy.core.threads.Transformer;
+import plethora.management.bufferedFile.SizeCalculator;
 import plethora.net.SecureServerSocket;
 import plethora.net.SecureSocket;
 import plethora.utils.ArrayUtils;
 import plethora.utils.MyConsole;
 import plethora.utils.StringUtils;
 
+import java.io.File;
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import static neoproject.neoproxy.core.management.IPChecker.loadBannedIPs;
 import static neoproject.neoproxy.core.management.SequenceKey.DYNAMIC_PORT;
 import static neoproject.neoproxy.core.management.SequenceKey.initKeyDatabase;
 
 public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = System.getProperty("user.dir");
     public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
-    public static String EXPECTED_CLIENT_VERSION = "3.2-RELEASE|3.3-RELEASE|3.4-RELEASE|3.5-RELEASE|3.6-RELEASE";//从左到右从老到新版本
+    public static String EXPECTED_CLIENT_VERSION = "3.2-RELEASE|3.3-RELEASE|3.4-RELEASE|3.5-RELEASE|3.6-RELEASE|3.7-RELEASE";//从左到右从老到新版本
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.stringArrayToList(EXPECTED_CLIENT_VERSION.split("\\|"));
     public static int HOST_HOOK_PORT = 801;
     public static int HOST_CONNECT_PORT = 802;
@@ -34,6 +41,8 @@ public class NeoProxyServer {
 
     public static boolean isStopped = false;
 
+    private static DatabaseReader dbReader; // 添加这行
+
     public static void initConsole() {
         ConsoleManager.init();
     }
@@ -41,9 +50,24 @@ public class NeoProxyServer {
     public static void initStructure() {
         // 初始化顺序更清晰
         initConsole();           // 1. 控制台系统
+        printLogo();
         initKeyDatabase();       // 2. 数据库
         ConfigOperator.readAndSetValue(); // 3. 配置
         UpdateManager.init();    // 4. 更新管理器
+        SecureSocket.setMaxAllowedPacketSize((int) SizeCalculator.mibToByte(200)); // 5. 设置单次数据包最大大小为 200m
+        loadBannedIPs();
+
+        // --- 新增：初始化 GeoIP2 DatabaseReader ---
+        try {
+            File database = new File("GeoLite2-City.mmdb"); // 请将 .mmdb 文件放在项目根目录或指定路径
+            dbReader = new DatabaseReader.Builder(database).build();
+            sayInfo("GeoIP2 database loaded successfully.");
+        } catch (IOException e) {
+            debugOperation(e);
+            sayError("Could not load GeoIP2 database, location lookup will be disabled.");
+            // dbReader 保持为 null
+        }
+        // --- 结束新增 ---
 
         // 5. 网络服务
         try {
@@ -68,13 +92,7 @@ public class NeoProxyServer {
         }
     }
 
-    public static void main(String[] args) {
-        // 注册优雅关闭钩子
-        Runtime.getRuntime().addShutdownHook(new Thread(NeoProxyServer::shutdown));
-
-        NeoProxyServer.checkARGS(args);
-        NeoProxyServer.initStructure();
-
+    private static void printLogo(){
         sayInfo("-----------------------------------------------------");
         sayInfo("""
                 
@@ -87,6 +105,14 @@ public class NeoProxyServer {
                                                             \s
                                                              \
                 """);
+    }
+
+    public static void main(String[] args) {
+        // 注册优雅关闭钩子
+        Runtime.getRuntime().addShutdownHook(new Thread(NeoProxyServer::shutdown));
+
+        NeoProxyServer.checkARGS(args);
+        NeoProxyServer.initStructure();
 
         sayInfo("Current log file : " + myConsole.getLogFile().getAbsolutePath());
         sayInfo("LOCAL_DOMAIN_NAME: " + LOCAL_DOMAIN_NAME);
@@ -136,6 +162,7 @@ public class NeoProxyServer {
 
         if (IPChecker.exec(clientAddress, IPChecker.CHECK_IS_BAN)) {
             InternetOperator.close(hostServerHook);
+            InfoBox.sayBanConnectInfo(clientAddress);
             SlientException.throwException();
         }
 
@@ -212,14 +239,11 @@ public class NeoProxyServer {
 
     private static void checkHostClientLegitimacyAndTellInfo(HostClient hostClient) throws IOException, NoMorePortException, SlientException, UnRecognizedKeyException, AlreadyBlindPortException, UnSupportHostVersionException, OutDatedKeyException {
         Object[] obj = NeoProxyServer.checkHostClientVersionAndKeyAndLang(hostClient);
-
         hostClient.enableCheckAliveThread();
         availableHostClient.add(hostClient);
-
         SequenceKey key = (SequenceKey) obj[0];
         hostClient.setKey(key);
         hostClient.setLangData((LanguageData) obj[1]);
-
         int port;
         if (hostClient.getKey().getPort() != DYNAMIC_PORT) {
             port = hostClient.getKey().getPort();
@@ -231,10 +255,11 @@ public class NeoProxyServer {
         }
         hostClient.setOutPort(port);
         hostClient.setClientServerSocket(new ServerSocket(port));
-
         String clientAddress = InternetOperator.getInternetAddressAndPort(hostClient.getHostServerHook());
         sayInfo("HostClient on " + clientAddress + " register successfully!");
-
+        // --- 调用新方法 ---
+        printClientRegistrationInfo(hostClient);
+        // --- 结束调用 ---
         InternetOperator.sendCommand(hostClient, String.valueOf(port));
         InternetOperator.sendStr(hostClient, hostClient.getLangData().THIS_ACCESS_CODE_HAVE +
                 hostClient.getKey().getBalance() + hostClient.getLangData().MB_OF_FLOW_LEFT);
@@ -242,8 +267,89 @@ public class NeoProxyServer {
                 hostClient.getKey().getExpireTime());
         InternetOperator.sendStr(hostClient, hostClient.getLangData().USE_THE_ADDRESS +
                 LOCAL_DOMAIN_NAME + ":" + port + hostClient.getLangData().TO_START_UP_CONNECTION);
-
         sayInfo("Assigned connection address: " + LOCAL_DOMAIN_NAME + ":" + port);
+    }
+
+    private static void printClientRegistrationInfo(HostClient hostClient) {
+        String ip = hostClient.getHostServerHook().getInetAddress().getHostAddress();
+        String accessCode = hostClient.getKey().getName();
+
+        // --- 新增：获取位置信息 ---
+        String location = "N/A";
+        if (dbReader != null) {
+            try {
+                InetAddress ipAddress = InetAddress.getByName(ip);
+                CityResponse response = dbReader.city(ipAddress);
+                String country = response.getCountry().getName();
+                String city = response.getCity().getName();
+                // 组合国家和城市，如果城市为空则只显示国家
+                if (city != null && !city.isEmpty()) {
+                    location = country + ", " + city;
+                } else {
+                    location = country; // 如果没有城市信息，只显示国家
+                }
+            } catch (IOException | GeoIp2Exception e) {
+                // debugOperation(e); // 可选：记录查询失败
+                location = "Lookup failed";
+            }
+        }
+        // --- 结束新增 ---
+
+        // 定义表头和数据
+        String[] headers = {"Access Code", "IP Address", "Location"};
+        String[] data = {accessCode, ip, location};
+
+        // 计算每列的最大宽度
+        int[] widths = new int[headers.length];
+        for (int i = 0; i < headers.length; i++) {
+            widths[i] = Math.max(headers[i].length(), data[i].length());
+        }
+
+        // 构建输出
+        StringBuilder output = new StringBuilder();
+        output.append("\n"); // Use \n
+
+        // 添加表头分隔线 (┌─┬─┬─┐)
+        output.append("┌");
+        for (int i = 0; i < widths.length; i++) {
+            output.append("─".repeat(widths[i] + 2)); // +2 for padding spaces
+            if (i < widths.length - 1) output.append("┬");
+        }
+        output.append("┐\n"); // Use \n
+
+        // 添加表头 (│ Name │ Balance │ ... │)
+        output.append("│");
+        for (int i = 0; i < headers.length; i++) {
+            output.append(" ").append(String.format("%-" + widths[i] + "s", headers[i])).append(" ");
+            output.append("│");
+        }
+        output.append("\n"); // Use \n
+
+        // 添加表头和数据分隔线 (├─┼─┼─┤)
+        output.append("├");
+        for (int i = 0; i < widths.length; i++) {
+            output.append("─".repeat(widths[i] + 2));
+            if (i < widths.length - 1) output.append("┼");
+        }
+        output.append("┤\n"); // Use \n
+
+        // 添加数据行 (│ value1 │ value2 │ ... │)
+        output.append("│");
+        for (int i = 0; i < data.length; i++) {
+            output.append(" ").append(String.format("%-" + widths[i] + "s", data[i])).append(" ");
+            output.append("│");
+        }
+        output.append("\n"); // Use \n
+
+        // 添加底部边框 (└─┴─┴─┘)
+        output.append("└");
+        for (int i = 0; i < widths.length; i++) {
+            output.append("─".repeat(widths[i] + 2));
+            if (i < widths.length - 1) output.append("┴");
+        }
+        output.append("┘"); // No \n at the very end if not desired
+
+        sayInfo(output.toString()); // Output the formatted table
     }
 
     private static Object[] checkHostClientVersionAndKeyAndLang(HostClient hostClient)
@@ -308,9 +414,19 @@ public class NeoProxyServer {
         }
     }
 
-    // 新增：优雅关闭方法
+    //关闭方法
     private static void shutdown() {
         sayInfo("Shutting down the NeoProxyServer...");
+
+        // --- 新增：关闭 GeoIP2 DatabaseReader ---
+        if (dbReader != null) {
+            try {
+                dbReader.close();
+            } catch (IOException e) {
+                debugOperation(e);
+            }
+        }
+        // --- 结束新增 ---
 
         isStopped = true;
         // 关闭所有 HostClient 连接
@@ -322,7 +438,6 @@ public class NeoProxyServer {
             }
         }
         availableHostClient.clear();
-
         // 关闭服务器套接字
         try {
             if (hostServerHookServerSocket != null && !hostServerHookServerSocket.isClosed()) {
@@ -331,7 +446,6 @@ public class NeoProxyServer {
         } catch (IOException e) {
             debugOperation(e);
         }
-
         try {
             if (hostServerTransferServerSocket != null && !hostServerTransferServerSocket.isClosed()) {
                 hostServerTransferServerSocket.close();
@@ -339,7 +453,6 @@ public class NeoProxyServer {
         } catch (IOException e) {
             debugOperation(e);
         }
-
         sayInfo("NeoProxyServer shutdown completed.");
     }
 }

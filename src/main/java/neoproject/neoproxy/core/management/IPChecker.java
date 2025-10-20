@@ -46,8 +46,8 @@ public class IPChecker {
                 // 将 IP 添加到内存集合
                 bannedIPSet.add(ip);
                 for (HostClient hostClient : availableHostClient) {//先踢出所有跟这个 ip 相关的 host client
-                    String hostAddress=hostClient.getHostServerHook().getInetAddress().getHostAddress();
-                    if (hostAddress.equals(ip)){
+                    String hostAddress = hostClient.getHostServerHook().getInetAddress().getHostAddress();
+                    if (hostAddress.equals(ip)) {
                         hostClient.close();
                     }
                 }

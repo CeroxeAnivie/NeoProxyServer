@@ -379,7 +379,7 @@ public class SequenceKey {
                 return false;
             }
             for (HostClient hostClient : availableHostClient) {//先断开所有的连接
-                if (hostClient.getKey().getName().equals(name)){
+                if (hostClient.getKey().getName().equals(name)) {
                     hostClient.close();
                 }
             }

@@ -29,7 +29,7 @@ import static neoproject.neoproxy.core.management.SequenceKey.initKeyDatabase;
 public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = System.getProperty("user.dir");
     public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
-    public static String EXPECTED_CLIENT_VERSION = "3.2-RELEASE|3.3-RELEASE|3.4-RELEASE|3.5-RELEASE|3.6-RELEASE|3.7-RELEASE";//从左到右从老到新版本
+    public static String EXPECTED_CLIENT_VERSION = "3.2-RELEASE|3.3-RELEASE|3.4-RELEASE|3.5-RELEASE|3.6-RELEASE|3.7.0";//从左到右从老到新版本
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.stringArrayToList(EXPECTED_CLIENT_VERSION.split("\\|"));
     public static int HOST_HOOK_PORT = 801;
     public static int HOST_CONNECT_PORT = 802;
@@ -92,7 +92,7 @@ public class NeoProxyServer {
         }
     }
 
-    private static void printLogo(){
+    private static void printLogo() {
         sayInfo("-----------------------------------------------------");
         sayInfo("""
                 

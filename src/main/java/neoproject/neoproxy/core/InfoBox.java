@@ -49,7 +49,7 @@ public class InfoBox {
 
     public static void sayBanConnectInfo(String clientAddress) {
         if (alert) {
-            sayInfo("Connection from the banned IP: "+clientAddress+" has been rejected");
+            sayInfo("Connection from the banned IP: " + clientAddress + " has been rejected");
         }
     }
 }

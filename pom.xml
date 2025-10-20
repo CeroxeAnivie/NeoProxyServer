@@ -6,7 +6,7 @@
 
     <groupId>neoproject</groupId>
     <artifactId>NeoProxyServer</artifactId>
-    <version>3.7-RELEASE</version>
+    <version>3.7.0</version>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>

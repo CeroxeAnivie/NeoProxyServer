@@ -1,8 +1,5 @@
 package neoproject.neoproxy;
 
-import com.maxmind.geoip2.DatabaseReader;
-import com.maxmind.geoip2.exception.GeoIp2Exception;
-import com.maxmind.geoip2.model.CityResponse;
 import neoproject.neoproxy.core.*;
 import neoproject.neoproxy.core.exceptions.*;
 import neoproject.neoproxy.core.management.*;
@@ -16,7 +13,6 @@ import plethora.utils.StringUtils;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -41,8 +37,6 @@ public class NeoProxyServer {
 
     public static boolean isStopped = false;
 
-    private static DatabaseReader dbReader; // 添加这行
-
     public static void initConsole() {
         ConsoleManager.init();
     }
@@ -56,18 +50,6 @@ public class NeoProxyServer {
         UpdateManager.init();    // 4. 更新管理器
         SecureSocket.setMaxAllowedPacketSize((int) SizeCalculator.mibToByte(200)); // 5. 设置单次数据包最大大小为 200m
         loadBannedIPs();
-
-        // --- 新增：初始化 GeoIP2 DatabaseReader ---
-        try {
-            File database = new File("GeoLite2-City.mmdb"); // 请将 .mmdb 文件放在项目根目录或指定路径
-            dbReader = new DatabaseReader.Builder(database).build();
-            sayInfo("GeoIP2 database loaded successfully.");
-        } catch (IOException e) {
-            debugOperation(e);
-            sayError("Could not load GeoIP2 database, location lookup will be disabled.");
-            // dbReader 保持为 null
-        }
-        // --- 结束新增 ---
 
         // 5. 网络服务
         try {
@@ -274,30 +256,15 @@ public class NeoProxyServer {
         String ip = hostClient.getHostServerHook().getInetAddress().getHostAddress();
         String accessCode = hostClient.getKey().getName();
 
-        // --- 新增：获取位置信息 ---
-        String location = "N/A";
-        if (dbReader != null) {
-            try {
-                InetAddress ipAddress = InetAddress.getByName(ip);
-                CityResponse response = dbReader.city(ipAddress);
-                String country = response.getCountry().getName();
-                String city = response.getCity().getName();
-                // 组合国家和城市，如果城市为空则只显示国家
-                if (city != null && !city.isEmpty()) {
-                    location = country + ", " + city;
-                } else {
-                    location = country; // 如果没有城市信息，只显示国家
-                }
-            } catch (IOException | GeoIp2Exception e) {
-                // debugOperation(e); // 可选：记录查询失败
-                location = "Lookup failed";
-            }
-        }
-        // --- 结束新增 ---
+        // --- 调用 IPGeolocationHelper 获取位置和 ISP 信息 ---
+        IPGeolocationHelper.LocationInfo locInfo = IPGeolocationHelper.getLocationInfo(ip);
+        String location = locInfo.location;
+        String isp = locInfo.isp;
+        // --- 结束调用 ---
 
         // 定义表头和数据
-        String[] headers = {"Access Code", "IP Address", "Location"};
-        String[] data = {accessCode, ip, location};
+        String[] headers = {"Access Code", "IP Address", "Location", "ISP"};
+        String[] data = {accessCode, ip, location, isp};
 
         // 计算每列的最大宽度
         int[] widths = new int[headers.length];
@@ -417,16 +384,6 @@ public class NeoProxyServer {
     //关闭方法
     private static void shutdown() {
         sayInfo("Shutting down the NeoProxyServer...");
-
-        // --- 新增：关闭 GeoIP2 DatabaseReader ---
-        if (dbReader != null) {
-            try {
-                dbReader.close();
-            } catch (IOException e) {
-                debugOperation(e);
-            }
-        }
-        // --- 结束新增 ---
 
         isStopped = true;
         // 关闭所有 HostClient 连接

@@ -102,30 +102,6 @@ AES_KEY_SIZE=128                     # 加密密钥长度
 | `ban <ip_address>`   | 封禁指定的 IP 地址。被封禁的 IP 将无法连接到服务端。 |
 | `unban <ip_address>` | 解封指定的 IP 地址。                   |
 | `listbans`           | 列出所有当前被封禁的 IP 地址。              |
-
----
-
-## 🌍 IP 地理位置查询（可选功能）
-
-服务端支持在客户端成功注册时，查询其 IP 地址的地理位置（国家/城市）。
-
-**功能说明:**
-- 当客户端连接成功时，控制台会输出一个包含 `Access Code`、`IP Address` 和 `Location` 的表格。
-- 位置信息依赖于 MaxMind 的 GeoLite2 City 数据库。
-
-**启用步骤:**
-1.  **下载数据库:**
-    - 访问 [MaxMind GeoLite2 页面](https://dev.maxmind.com/geoip/geolite2/)。
-    - 注册一个免费账户。
-    - 下载 `GeoLite2-City.mmdb` 文件。
-2.  **放置文件:**
-    - 将下载的 `GeoLite2-City.mmdb` 文件放置在 **NeoProxyServer JAR 的同一级目录下**
-3.  **启动服务:**
-    - 重新启动 `NeoProxyServer`。如果文件放置正确，服务端启动时会加载数据库并启用位置查询功能。如果未找到文件，位置信息将显示为 "N/A" 或 "Lookup failed"。
-
-**许可证:**
-GeoLite2 数据包含由 MaxMind 创建的数据，可在 [https://www.maxmind.com](https://www.maxmind.com) 获取。使用此功能需遵守其 [Creative Commons Attribution-ShareAlike 4.0 International License](https://creativecommons.org/licenses/by-sa/4.0/)。
-
 ---
 
 ## 📄 许可证

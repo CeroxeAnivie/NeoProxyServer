@@ -31,6 +31,8 @@ public class SequenceKey {
     private static final String DB_USER = "sa";
     private static final String DB_PASSWORD = "";
     private static final long CLEANUP_INTERVAL_MINUTES = 1; // 每 1 分钟清理一次过期的 key
+    // 正则表达式，用于高效判断字符串是否为纯数字
+    private static final Pattern PURE_NUMBER_PATTERN = Pattern.compile("^\\d+$");
     private static volatile boolean shutdownHookRegistered = false;
     // 后台清理任务
     private static ScheduledExecutorService cleanupScheduler;
@@ -41,9 +43,6 @@ public class SequenceKey {
     protected String port; // 已从 int 改为 String 以支持动态端口范围
     protected double rate; // 单位：Mbps
     protected boolean isEnable; // 新增的启用状态字段
-
-    // 正则表达式，用于高效判断字符串是否为纯数字
-    private static final Pattern PURE_NUMBER_PATTERN = Pattern.compile("^\\d+$");
 
     /**
      * 私有构造函数，用于从数据库或创建时初始化对象。
@@ -71,25 +70,26 @@ public class SequenceKey {
     }
 
     /**
-     * 执行数据库清理任务：扫描所有密钥，删除已过期的。
+     * 执行数据库清理任务：扫描所有密钥，禁用已过期的。
      */
     private static void performDatabaseCleanup() {
         try {
             // 优化：直接在SQL中判断过期，避免全表扫描和Java日期解析
             // H2 的 PARSEDATETIME 函数可以解析字符串为时间戳
-            // 只清理已启用的过期密钥
-            String deleteSql = """
-                    DELETE FROM sk 
+            // 只禁用已启用的过期密钥，而不是删除
+            String updateSql = """
+                    UPDATE sk 
+                    SET isEnable = FALSE 
                     WHERE isEnable = TRUE AND PARSEDATETIME(expireTime, 'yyyy/MM/dd-HH:mm') < NOW()
                     """;
 
             try (Connection conn = getConnection();
-                 PreparedStatement deleteStmt = conn.prepareStatement(deleteSql)) {
+                 PreparedStatement updateStmt = conn.prepareStatement(updateSql)) {
 
-                int deletedCount = deleteStmt.executeUpdate();
+                int disabledCount = updateStmt.executeUpdate();
 
-                if (deletedCount > 0) {
-                    myConsole.warn("SK-Manager", "Database cleanup completed. Deleted " + deletedCount + " expired key(s).");
+                if (disabledCount > 0) {
+                    myConsole.warn("SK-Manager", "Database cleanup completed. Disabled " + disabledCount + " expired key(s).");
                 }
             }
         } catch (Exception e) {
@@ -529,7 +529,7 @@ public class SequenceKey {
      * <p>
      * 此方法是核心业务逻辑：
      * 1. 每次调用都会读取对象当前的 {@code expireTime} 字符串。
-     * 2. 如果已过期，会自动从数据库中删除该密钥。
+     * 2. 如果已过期，会自动禁用该密钥而不是删除。
      * 3. 返回最新的过期状态。
      *
      * @return {@code true} 如果已过期，{@code false} 如果未过期或格式无效。
@@ -539,18 +539,18 @@ public class SequenceKey {
             String currentExpireTime = this.expireTime;
             if (currentExpireTime == null) {
                 debugOperation(new IllegalStateException("expireTime is null for key: " + this.name));
-                removeKey(this.name);
+                disableKey(this.name);
                 return true;
             }
 
             boolean isExpired = SequenceKey.isOutOfDate(currentExpireTime);
             if (isExpired) {
-                removeKey(this.name);
+                disableKey(this.name);
             }
             return isExpired;
         } catch (Exception e) {
             debugOperation(e);
-            removeKey(this.name);
+            disableKey(this.name);
             return true;
         }
     }
@@ -620,17 +620,17 @@ public class SequenceKey {
         this.balance += mib;
     }
 
-    public synchronized void mineMib(double mib) throws NoMoreNetworkFlowException {
+    public synchronized void mineMib(String sourceSubject, double mib) throws NoMoreNetworkFlowException {
         try {
             if (mib < 0) {
                 debugOperation(new IllegalArgumentException("mib must be non-negative"));
-                NoMoreNetworkFlowException.throwException("Invalid mib value for key: " + name);
+                NoMoreNetworkFlowException.throwException("SK-Manager", "Invalid mib value for key: " + name);
             }
             if (this.isOutOfDate()) {
-                NoMoreNetworkFlowException.throwException(name);
+                NoMoreNetworkFlowException.throwException("SK-Manager", name);
             }
             if (balance <= 0) {
-                NoMoreNetworkFlowException.throwException(name);
+                NoMoreNetworkFlowException.throwException(sourceSubject, name);
             }
             this.balance -= mib;
             if (this.balance < 0) {
@@ -638,6 +638,7 @@ public class SequenceKey {
             }
         } catch (NoMoreNetworkFlowException e) {
             debugOperation(e);
+            disableKey(this.name);
             throw e;
         }
     }

@@ -3,7 +3,7 @@ package neoproject.neoproxy.core;
 import neoproject.neoproxy.NeoProxyServer;
 import neoproject.neoproxy.core.management.IPChecker;
 import neoproject.neoproxy.core.management.TransferSocketAdapter;
-import neoproject.neoproxy.core.threads.Transformer;
+import neoproject.neoproxy.core.threads.TCPTransformer;
 import plethora.management.bufferedFile.BufferedFile;
 import plethora.utils.config.LineConfigReader;
 
@@ -34,8 +34,8 @@ public class ConfigOperator {
                 InfoBox.alert = Boolean.parseBoolean(lineConfigReader.get("ALERT"));
                 HostClient.SAVE_DELAY = Integer.parseInt(lineConfigReader.get("SAVE_DELAY"));
                 HostClient.AES_KEY_SIZE = Integer.parseInt(lineConfigReader.get("AES_KEY_SIZE"));
-                Transformer.BUFFER_LEN = Integer.parseInt(lineConfigReader.get("BUFFER_LEN"));
-                Transformer.TELL_BALANCE_MIB = Integer.parseInt(lineConfigReader.get("TELL_BALANCE_MIB"));
+                TCPTransformer.BUFFER_LEN = Integer.parseInt(lineConfigReader.get("BUFFER_LEN"));
+                TCPTransformer.TELL_BALANCE_MIB = Integer.parseInt(lineConfigReader.get("TELL_BALANCE_MIB"));
                 IPChecker.ENABLE_BAN = Boolean.parseBoolean(lineConfigReader.get("ENABLE_BAN"));
                 TransferSocketAdapter.SO_TIMEOUT = Integer.parseInt(lineConfigReader.get("SO_TIMEOUT"));
 

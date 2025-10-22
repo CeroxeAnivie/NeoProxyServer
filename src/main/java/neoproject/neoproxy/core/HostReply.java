@@ -2,5 +2,5 @@ package neoproject.neoproxy.core;
 
 import plethora.net.SecureSocket;
 
-public record HostReply(int port, SecureSocket host) {
+public record HostReply(int outPort, SecureSocket host) {
 }

@@ -6,7 +6,10 @@ import plethora.utils.Sleeper;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.net.DatagramSocket;
 import java.net.ServerSocket;
+import java.net.Socket;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import static neoproject.neoproxy.NeoProxyServer.availableHostClient;
 import static neoproject.neoproxy.NeoProxyServer.sayInfo;
@@ -17,11 +20,16 @@ public final class HostClient implements Closeable {
     public static int DETECTION_DELAY = 1000;
     public static int AES_KEY_SIZE = 128;
     private final SecureSocket hostServerHook;
+    // 用于跟踪所有由该 HostClien t创建的活跃TCP连接
+    private final CopyOnWriteArrayList<Socket> activeTcpSockets = new CopyOnWriteArrayList<>();
     private boolean isStopped = false;
     private SequenceKey sequenceKey = null;
     private ServerSocket clientServerSocket = null;
+    private DatagramSocket clientDatagramSocket = null;
     private LanguageData languageData = new LanguageData();
     private int outPort = -1;
+
+    // ... (HostClient 的构造函数和其他现有方法保持不变)
 
     public HostClient(SecureSocket hostServerHook) throws IOException {
         this.hostServerHook = hostServerHook;
@@ -50,9 +58,9 @@ public final class HostClient implements Closeable {
                     try {
                         InternetOperator.sendStr(hostClient, hostClient.getLangData().THE_KEY + hostClient.getKey().getName() + hostClient.getLangData().ARE_OUT_OF_DATE);
                         InternetOperator.sendCommand(hostClient, "exit");
-                        InfoBox.sayHostClientDiscInfo(hostClient, "VaultDetectionTread");
+                        InfoBox.sayHostClientDiscInfo(hostClient, "KeyDetectionTread");
                     } catch (Exception e2) {
-                        InfoBox.sayHostClientDiscInfo(hostClient, "VaultDetectionTread");
+                        InfoBox.sayHostClientDiscInfo(hostClient, "KeyDetectionTread");
                     }
 
 //                    removeKey(hostClient.getVault());
@@ -79,10 +87,41 @@ public final class HostClient implements Closeable {
         a.start();
     }
 
-    public void close() {
-        availableHostClient.remove(this);
+    /**
+     * 【新增】注册一个新的TCP连接。
+     * 当一个新的TCP连接被接受时，TCPTransformer应调用此方法。
+     *
+     * @param socket 新建立的TCP连接Socket。
+     */
+    public void registerTcpSocket(Socket socket) {
+        activeTcpSockets.add(socket);
+    }
 
+    /**
+     * 【新增】注销一个TCP连接。
+     * 当一个TCP连接的转发线程结束时，TCPTransformer应调用此方法。
+     *
+     * @param socket 已结束的TCP连接Socket。
+     */
+    public void unregisterTcpSocket(Socket socket) {
+        activeTcpSockets.remove(socket);
+    }
+
+    /**
+     * 【修改】重写close方法，在关闭自身时，也关闭所有由它管理的TCP连接。
+     */
+    @Override
+    public void close() {
+        // 先关闭所有活跃的TCP连接
+        for (Socket socket : activeTcpSockets) {
+            InternetOperator.close(socket);
+        }
+        activeTcpSockets.clear();
+
+        // 然后执行原有的关闭逻辑
+        availableHostClient.remove(this);
         InternetOperator.close(hostServerHook);
+        InternetOperator.close(clientDatagramSocket);
 
         if (clientServerSocket != null) {
             try {
@@ -134,6 +173,14 @@ public final class HostClient implements Closeable {
 
     public void setClientServerSocket(ServerSocket clientServerSocket) {
         this.clientServerSocket = clientServerSocket;
+    }
+
+    public DatagramSocket getClientDatagramSocket() {
+        return clientDatagramSocket;
+    }
+
+    public void setClientDatagramSocket(DatagramSocket clientDatagramSocket) {
+        this.clientDatagramSocket = clientDatagramSocket;
     }
 
     public String getAddressAndPort() {

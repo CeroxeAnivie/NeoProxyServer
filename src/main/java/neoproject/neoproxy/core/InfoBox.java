@@ -1,5 +1,6 @@
 package neoproject.neoproxy.core;
 
+import java.net.DatagramPacket;
 import java.net.Socket;
 
 import static neoproject.neoproxy.NeoProxyServer.sayInfo;
@@ -11,15 +12,27 @@ public class InfoBox {
         sayInfo(subject, "Detected hostClient on " + hostClient.getAddressAndPort() + " has been disconnected !");
     }
 
-    public static void sayClientConnectBuildUpInfo(HostClient hostClient, Socket client) {
+    public static void sayClientTCPConnectBuildUpInfo(HostClient hostClient, Socket client) {
         if (alert) {
-            sayInfo("Connection: " + InternetOperator.getInternetAddressAndPort(client) + " -> " + hostClient.getAddressAndPort() + " build up !");
+            sayInfo("TCP connection: " + InternetOperator.getInternetAddressAndPort(client) + " -> " + hostClient.getAddressAndPort() + " build up !");
         }
     }
 
-    public static void sayClientConnectDestroyInfo(HostClient hostClient, Socket client) {
+    public static void sayClientUDPConnectBuildUpInfo(HostClient hostClient, DatagramPacket datagramPacket) {
         if (alert) {
-            sayInfo("Connection: " + InternetOperator.getInternetAddressAndPort(client) + " -> " + hostClient.getAddressAndPort() + " destroyed !");
+            sayInfo("Connection: " + InternetOperator.getInternetAddressAndPort(datagramPacket) + " -> " + hostClient.getAddressAndPort() + " set up as UDP channel !");
+        }
+    }
+
+    public static void sayClientTCPConnectDestroyInfo(HostClient hostClient, Socket client) {
+        if (alert) {
+            sayInfo("TCP connection: " + InternetOperator.getInternetAddressAndPort(client) + " -> " + hostClient.getAddressAndPort() + " destroyed !");
+        }
+    }
+
+    public static void sayClientUDPConnectDestroyInfo(HostClient hostClient, String ipAndPort) {
+        if (alert) {
+            sayInfo("UDP connection: " + ipAndPort + " -> " + hostClient.getAddressAndPort() + " destroyed !");
         }
     }
 

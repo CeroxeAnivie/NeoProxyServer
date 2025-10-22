@@ -168,7 +168,7 @@ public class ConsoleManager {
 
     private static void handleSetCommand(List<String> params) {
         if (params.size() < 2) {
-            myConsole.warn("Admin", "Usage: key set <name> [b=<balance>] [r=<rate>] [p=<port>] [t=<expireTime>]");
+            myConsole.warn("Admin", "Usage: key set <name> [b=<balance>] [r=<rate>] [p=<outPort>] [t=<expireTime>]");
             myConsole.warn("Admin", "Example: key set mykey b=1000 r=15 p=8080 t=2025/12/31-23:59");
             myConsole.warn("Admin", "Example (Dynamic Port): key set mykey p=3344-3350");
             return;
@@ -249,7 +249,7 @@ public class ConsoleManager {
                     newPortStr = validatedPortStr;
                     // === 新增结束 ===
                 } else {
-                    myConsole.warn("Admin", "Invalid port value: '" + portStr + "'. Must be a number (1-65535) or a range (e.g., 3344-3350).");
+                    myConsole.warn("Admin", "Invalid outPort value: '" + portStr + "'. Must be a number (1-65535) or a range (e.g., 3344-3350).");
                 }
             } else if (param.startsWith("t=")) {
                 String expireTimeInput = param.substring(2);
@@ -273,7 +273,7 @@ public class ConsoleManager {
         }
 
         if (!hasUpdate) {
-            myConsole.warn("Admin", "No valid parameters provided. Use b=<balance>, r=<rate>, p=<port>, t=<expireTime>");
+            myConsole.warn("Admin", "No valid parameters provided. Use b=<balance>, r=<rate>, p=<outPort>, t=<expireTime>");
             return;
         }
 
@@ -287,13 +287,13 @@ public class ConsoleManager {
                 if (!isPortInRange(currentExternalPort, newPortStr)) {
                     myConsole.log("Admin", "Disconnecting client (Key: " + name +
                             ", Current Port: " + currentExternalPort +
-                            ") as it no longer complies with the new port policy.");
+                            ") as it no longer complies with the new outPort policy.");
                     client.close(); // 主动断开连接
                     disconnectedCount++;
                 }
             }
             if (disconnectedCount > 0) {
-                myConsole.warn("Admin", "Disconnected " + disconnectedCount + " client(s) due to port policy change.");
+                myConsole.warn("Admin", "Disconnected " + disconnectedCount + " client(s) due to outPort policy change.");
             }
         }
         // === 关键修改结束 ===

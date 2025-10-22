@@ -6,7 +6,7 @@
 
     <groupId>neoproject</groupId>
     <artifactId>NeoProxyServer</artifactId>
-    <version>3.7.1</version>
+    <version>4.7.1</version>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>
@@ -17,7 +17,7 @@
         <dependency>
             <groupId>fun.ceroxe</groupId>
             <artifactId>plethora-api</artifactId>
-            <version>0.1.1</version>
+            <version>0.2.1</version>
         </dependency>
         <dependency>
             <groupId>com.h2database</groupId>

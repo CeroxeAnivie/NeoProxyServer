@@ -3,7 +3,7 @@ package neoproject.neoproxy.core;
 import java.io.Serializable;
 
 public class LanguageData implements Serializable {
-    public String THE_PORT_HAS_ALREADY_BLIND = "This port is already occupied.";
+    public String THE_PORT_HAS_ALREADY_BLIND = "This outPort is already occupied.";
     public String IF_YOU_SEE_EULA = "If you use this software, you understand and agree with eula .";
     public String VERSION = "Version : ";
     public String PLEASE_ENTER_ACCESS_CODE = "Please enter the access code:";
@@ -11,7 +11,7 @@ public class LanguageData implements Serializable {
     public String OMITTED = " ...";
     public String A_CONNECTION = "A connection to ";
     public String BUILD_UP = " build up";
-    public String ENTER_PORT_MSG = "Enter the port for which you want to penetrate the intranet:";
+    public String ENTER_PORT_MSG = "Enter the outPort for which you want to penetrate the intranet:";
     public String USE_THE_ADDRESS = "Use the address: ";
     public String TO_START_UP_CONNECTION = " to start up connections.";
     public String CONNECTION_BUILD_UP_SUCCESSFULLY = "Connection build up successfully";

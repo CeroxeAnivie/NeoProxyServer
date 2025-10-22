@@ -3,29 +3,31 @@ package neoproject.neoproxy;
 import neoproject.neoproxy.core.*;
 import neoproject.neoproxy.core.exceptions.*;
 import neoproject.neoproxy.core.management.*;
-import neoproject.neoproxy.core.threads.Transformer;
+import neoproject.neoproxy.core.threads.TCPTransformer;
+import neoproject.neoproxy.core.threads.UDPTransformer;
 import plethora.management.bufferedFile.SizeCalculator;
 import plethora.net.SecureServerSocket;
 import plethora.net.SecureSocket;
 import plethora.utils.ArrayUtils;
 import plethora.utils.MyConsole;
+import plethora.utils.Sleeper;
 import plethora.utils.StringUtils;
 
-import java.io.File;
 import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.net.ServerSocket;
-import java.net.Socket;
+import java.net.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import static neoproject.neoproxy.core.InternetOperator.close;
 import static neoproject.neoproxy.core.management.IPChecker.loadBannedIPs;
 import static neoproject.neoproxy.core.management.SequenceKey.DYNAMIC_PORT;
 import static neoproject.neoproxy.core.management.SequenceKey.initKeyDatabase;
+import static neoproject.neoproxy.core.management.TransferSocketAdapter.SO_TIMEOUT;
+import static neoproject.neoproxy.core.threads.TCPTransformer.BUFFER_LEN;
 
 public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = System.getProperty("user.dir");
     public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
-    public static String EXPECTED_CLIENT_VERSION = "3.2-RELEASE|3.3-RELEASE|3.4-RELEASE|3.5-RELEASE|3.6-RELEASE|3.7.0";//从左到右从老到新版本
+    public static String EXPECTED_CLIENT_VERSION = "4.7.0";//从左到右从老到新版本
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.stringArrayToList(EXPECTED_CLIENT_VERSION.split("\\|"));
     public static int HOST_HOOK_PORT = 801;
     public static int HOST_CONNECT_PORT = 802;
@@ -54,10 +56,11 @@ public class NeoProxyServer {
         // 5. 网络服务
         try {
             hostServerHookServerSocket = new SecureServerSocket(HOST_HOOK_PORT);
+            // 启动统一的TransferSocketAdapter，它能同时处理TCP和UDP
             TransferSocketAdapter.startThread();
         } catch (IOException e) {
             debugOperation(e);
-            sayError("Can not bind the port, it's occupied?");
+            myConsole.error("Main", "Can not bind the outPort, it's occupied?");
             System.exit(-1);
         }
     }
@@ -90,7 +93,7 @@ public class NeoProxyServer {
     }
 
     public static void main(String[] args) {
-        // 注册优雅关闭钩子
+        // 注册关闭钩子
         Runtime.getRuntime().addShutdownHook(new Thread(NeoProxyServer::shutdown));
 
         NeoProxyServer.checkARGS(args);
@@ -143,7 +146,7 @@ public class NeoProxyServer {
         String clientAddress = hostServerHook.getInetAddress().getHostAddress();
 
         if (IPChecker.exec(clientAddress, IPChecker.CHECK_IS_BAN)) {
-            InternetOperator.close(hostServerHook);
+            close(hostServerHook);
             InfoBox.sayBanConnectInfo(clientAddress);
             SlientException.throwException();
         }
@@ -170,24 +173,100 @@ public class NeoProxyServer {
                 } catch (Exception e) {
                     InfoBox.sayHostClientDiscInfo(hostClient, "Main");
                     hostClient.close();
-                    InternetOperator.close(client);
+                    close(client);
                     break;
                 }
 
                 HostReply hostReply;
                 try {
-                    hostReply = TransferSocketAdapter.getThisHostClientHostSign(hostClient.getOutPort());
+                    hostReply = TransferSocketAdapter.getThisHostClientHostReply(hostClient.getOutPort());
                 } catch (IOException e) {
                     InfoBox.sayClientSuccConnectToChaSerButHostClientTimeOut(hostClient);
                     InfoBox.sayKillingClientSideConnection(client);
-                    InternetOperator.close(client);
+                    close(client);
                     continue;
                 }
 
-                Transformer.startThread(hostClient, hostReply, client);
-                InfoBox.sayClientConnectBuildUpInfo(hostClient, client);
+                TCPTransformer.startThread(hostClient, hostReply, client);
+                InfoBox.sayClientTCPConnectBuildUpInfo(hostClient, client);
             }
-        }, "HostClient-Service").start();
+        }, "HostClient-TCP-Service").start();
+        // --- UDP服务线程 (最终架构修复版) ---
+        // --- UDP服务线程 (最终架构修复版) ---
+        new Thread(() -> {
+            DatagramSocket datagramSocket = hostClient.getClientDatagramSocket();
+            while (!datagramSocket.isClosed()) {
+                byte[] buffer = new byte[BUFFER_LEN];
+                DatagramPacket datagramPacket = new DatagramPacket(buffer, buffer.length);
+                try {
+                    datagramSocket.receive(datagramPacket); // 【唯一的 receive 点】
+                } catch (IOException e) {
+                    debugOperation(e);
+                    continue;
+                }
+
+                final String clientIP = datagramPacket.getAddress().getHostAddress();
+                final int clientOutPort = datagramPacket.getPort();
+
+                // 使用同步块来防止并发问题
+                synchronized (UDPTransformer.udpClientConnections) {
+                    // 检查是否已经存在该客户端IP和端口的转发通道
+                    UDPTransformer existingReply = null;
+                    for (UDPTransformer reply : UDPTransformer.udpClientConnections) {
+                        if (reply.getClientOutPort() == clientOutPort && reply.getClientIP().equals(clientIP) && reply.isRunning()) {
+                            existingReply = reply;
+                            break;
+                        }
+                    }
+
+                    if (existingReply != null) {
+                        // 如果已存在，序列化数据包并加入它的发送队列
+                        byte[] serializedData = UDPTransformer.serializeDatagramPacket(datagramPacket);
+                        existingReply.addPacketToSend(serializedData);
+                    } else {
+                        // 如果不存在，创建一个新的转发通道
+                        new Thread(() -> {
+                            try {
+                                // 1. 通知客户端A创建新的UDP连接
+                                InternetOperator.sendCommand(hostClient, "sendSocketUDP;" + InternetOperator.getInternetAddressAndPort(datagramPacket));
+
+                                // 2. 非阻塞地、带超时重试地获取HostReply
+                                HostReply hostReply = null;
+                                final int retryCount = SO_TIMEOUT / 10;
+                                for (int i = 0; i < retryCount; i++) {
+                                    hostReply = TransferSocketAdapter.getUdpHostReply(hostClient.getOutPort());
+                                    if (hostReply != null) {
+                                        break;
+                                    }
+                                    Sleeper.sleep(10);
+                                }
+
+                                // 3. 检查是否超时
+                                if (hostReply == null) {
+                                    InfoBox.sayClientSuccConnectToChaSerButHostClientTimeOut(hostClient);
+                                    return;
+                                }
+
+                                // 4. 【关键修复】直接在这里创建实例，以便获取引用
+                                UDPTransformer newUdpTransformer = new UDPTransformer(hostClient, hostReply, datagramSocket, clientIP, clientOutPort);
+                                UDPTransformer.udpClientConnections.add(newUdpTransformer);
+                                new Thread(newUdpTransformer, "UDP-Transformer-" + clientOutPort).start();
+
+                                // 5. 【关键】将触发创建的第一个包加入它的发送队列
+                                byte[] firstData = UDPTransformer.serializeDatagramPacket(datagramPacket);
+                                newUdpTransformer.addPacketToSend(firstData);
+
+                                // 6. 记录连接建立成功
+                                InfoBox.sayClientUDPConnectBuildUpInfo(hostClient, datagramPacket);
+
+                            } catch (Exception e) {
+                                debugOperation(e);
+                            }
+                        }, "UDP-Create-New-" + clientOutPort).start();
+                    }
+                } // end synchronized block
+            }
+        }, "HostClient-UDP-Service").start();
     }
 
     public static void sayInfo(String str) {
@@ -236,7 +315,8 @@ public class NeoProxyServer {
             }
         }
         hostClient.setOutPort(port);
-        hostClient.setClientServerSocket(new ServerSocket(port));
+        hostClient.setClientServerSocket(new ServerSocket(port));//tcp
+        hostClient.setClientDatagramSocket(new DatagramSocket(port));//udp
         String clientAddress = InternetOperator.getInternetAddressAndPort(hostClient.getHostServerHook());
         sayInfo("HostClient on " + clientAddress + " register successfully!");
         // --- 调用新方法 ---
@@ -258,8 +338,8 @@ public class NeoProxyServer {
 
         // --- 调用 IPGeolocationHelper 获取位置和 ISP 信息 ---
         IPGeolocationHelper.LocationInfo locInfo = IPGeolocationHelper.getLocationInfo(ip);
-        String location = locInfo.location;
-        String isp = locInfo.isp;
+        String location = locInfo.location();
+        String isp = locInfo.isp();
         // --- 结束调用 ---
 
         // 定义表头和数据

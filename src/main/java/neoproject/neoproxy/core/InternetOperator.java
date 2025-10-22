@@ -6,6 +6,7 @@ import plethora.net.SecureSocket;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.net.DatagramPacket;
 import java.net.Socket;
 
 import static neoproject.neoproxy.NeoProxyServer.debugOperation;
@@ -21,7 +22,7 @@ public final class InternetOperator {
 
         if (hostClient.getKey() != null) {
             try {
-                hostClient.getKey().mineMib(SizeCalculator.byteToMib(length));
+                hostClient.getKey().mineMib("InternetOperator", SizeCalculator.byteToMib(length));
             } catch (NoMoreNetworkFlowException e) {
                 hostClient.close();
             }
@@ -48,6 +49,35 @@ public final class InternetOperator {
 
     }
 
+    public static void shutdownOutput(SecureSocket secureSocket) {
+        try {
+            secureSocket.shutdownOutput();
+        } catch (Exception ignore) {
+        }
+    }
+
+    public static void shutdownInput(SecureSocket secureSocket) {
+        try {
+            secureSocket.shutdownInput();
+        } catch (Exception ignore) {
+        }
+    }
+
+    public static void shutdownOutput(Socket socket) {
+        try {
+            socket.shutdownOutput();
+        } catch (Exception ignore) {
+        }
+    }
+
+    public static void shutdownInput(Socket socket) {
+        try {
+            socket.shutdownInput();
+        } catch (Exception ignore) {
+        }
+    }
+
+
     public static void sendCommand(HostClient hostClient, String command) {
         try {
             sendStr(hostClient, COMMAND_PREFIX + command);
@@ -61,6 +91,10 @@ public final class InternetOperator {
 
     public static String getInternetAddressAndPort(SecureSocket socket) {
         return socket.getInetAddress().getHostAddress() + ":" + socket.getPort();
+    }
+
+    public static String getInternetAddressAndPort(DatagramPacket packet) {
+        return packet.getAddress().getHostAddress() + ":" + packet.getPort();
     }
 
     public static String getIP(Socket socket) {

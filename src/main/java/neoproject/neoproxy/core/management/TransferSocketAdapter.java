@@ -10,24 +10,31 @@ import plethora.utils.Sleeper;
 
 import java.io.IOException;
 import java.net.SocketTimeoutException;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static neoproject.neoproxy.NeoProxyServer.debugOperation;
 import static neoproject.neoproxy.NeoProxyServer.isStopped;
 
 public class TransferSocketAdapter implements Runnable {
-    public static final CopyOnWriteArrayList<HostReply> hostList = new CopyOnWriteArrayList<>();
-    public static int SO_TIMEOUT = 500;
+    // TCP部分保持不变
+    public static final CopyOnWriteArrayList<HostReply> tcpHostReply = new CopyOnWriteArrayList<>();
+    // UDP部分：使用ConcurrentHashMap进行非阻塞匹配
+    private static final Map<Integer, HostReply> udpHostReply = new ConcurrentHashMap<>();
+
+    public static int SO_TIMEOUT = 1000;
 
     public static void startThread() {
         new Thread(new TransferSocketAdapter()).start();
     }
 
-    public static HostReply getThisHostClientHostSign(int port) throws SocketTimeoutException {
-        for (int i = 0; i < SO_TIMEOUT / 10; i++) {
-            for (HostReply hostReply : hostList) {
-                if (hostReply.port() == port) {
-                    hostList.remove(hostReply);
+    // TCP的旧方法保持不变，仅为TCP服务
+    public static HostReply getThisHostClientHostReply(int port) throws SocketTimeoutException {
+        for (int i = 0; i < SO_TIMEOUT / 10; i++) {//维持 SO_TIMEOUT 的时间
+            for (HostReply hostReply : tcpHostReply) {
+                if (hostReply.outPort() == port) {
+                    tcpHostReply.remove(hostReply);
                     return hostReply;
                 }
             }
@@ -36,13 +43,19 @@ public class TransferSocketAdapter implements Runnable {
         throw new SocketTimeoutException();
     }
 
+    // UDP的非阻塞方法
+    public static HostReply getUdpHostReply(int outPort) {
+        return udpHostReply.remove(outPort); // 获取后立即移除，确保一对一
+    }
+
     @Override
     public void run() {
         try {
+            // 只绑定一个端口！
             NeoProxyServer.hostServerTransferServerSocket = new SecureServerSocket(NeoProxyServer.HOST_CONNECT_PORT);
         } catch (IOException e) {
             debugOperation(e);
-            NeoProxyServer.sayError("TransferSocketAdapter", "Can not blind the port , it's Occupied ?");
+            NeoProxyServer.sayError("TransferSocketAdapter", "Can not bind the outPort , it's Occupied ?");
             System.exit(-1);
         }
 
@@ -50,35 +63,44 @@ public class TransferSocketAdapter implements Runnable {
             SecureSocket host;
             try {
                 host = NeoProxyServer.hostServerTransferServerSocket.accept();
-            } catch (IOException e) {//如果之间有任何io异常，则直接跳过。因为正常来说不应有任何异常。
-                if (isStopped) {
-                    break;
-                }
+            } catch (IOException e) {
+                if (isStopped) break;
                 debugOperation(e);
                 continue;
             }
+
             new Thread(() -> {
                 try {
-                    //host client告诉该连接socket的对应外网端口，服务端在连接上的 host client 列表中验证是否存在这个分配了的外网端口的 host client
+                    // 客户端A会先发送一个标识符，告诉我们这是TCP还是UDP连接
+                    String connectionType = host.receiveStr();
                     int pretendedPort = host.receiveInt();
 
-                    boolean isHas = false;
-                    for (HostClient hostClient : NeoProxyServer.availableHostClient) {
-                        if (hostClient.getOutPort() == pretendedPort) {
-                            hostList.add(new HostReply(pretendedPort, host));
-                            isHas = true;
-                            break;//如果有，代码到这里结束，跳出循环
+                    // 根据标识符进行不同的处理
+                    if ("TCP".equals(connectionType)) {
+                        // TCP逻辑：与原来完全相同
+                        boolean isHas = false;
+                        for (HostClient hostClient : NeoProxyServer.availableHostClient) {//检验是否有host client 请求的
+                            if (hostClient.getOutPort() == pretendedPort) {
+                                tcpHostReply.add(new HostReply(pretendedPort, host));
+                                isHas = true;
+                                break;
+                            }
                         }
-                    }
-                    if (!isHas) {
-                        InternetOperator.close(host);//如果没有，关闭连接
+                        if (!isHas) {//没有
+                            InternetOperator.close(host);
+                        }
+                    } else if ("UDP".equals(connectionType)) {
+                        // UDP逻辑：直接放入map，不阻塞
+                        udpHostReply.put(pretendedPort, new HostReply(pretendedPort, host));
+                    } else {
+                        // 未知类型，关闭连接
+                        InternetOperator.close(host);
                     }
                 } catch (Exception e) {
                     debugOperation(e);
-                    InternetOperator.close(host);//如果之间有任何io异常，则直接关闭连接。因为正常来说不应有任何异常。
+                    InternetOperator.close(host);
                 }
             }).start();
         }
-
     }
 }

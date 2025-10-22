@@ -1,15 +1,15 @@
 package neoproject.neoproxy.core.exceptions;
 
-import neoproject.neoproxy.NeoProxyServer;
+import static neoproject.neoproxy.NeoProxyServer.myConsole;
 
 public class NoMoreNetworkFlowException extends Exception {
     private NoMoreNetworkFlowException(String msg) {
         super(msg);
     }
 
-    public static void throwException(String accessCode) throws NoMoreNetworkFlowException {
+    public static void throwException(String subject, String accessCode) throws NoMoreNetworkFlowException {
         String str = "The access code " + accessCode + " network flow now is zero !";
-        NeoProxyServer.sayInfo(str);
+        myConsole.log(subject, str);
         throw new NoMoreNetworkFlowException(str);
     }
 }

@@ -158,6 +158,7 @@ public class NeoProxyServer {
     }
 
     public static void handleTransformerServiceWithNewThread(HostClient hostClient) {
+        //tcp
         new Thread(() -> {
             while (!hostClient.getClientServerSocket().isClosed()) {
                 Socket client;
@@ -169,7 +170,7 @@ public class NeoProxyServer {
                 }
 
                 try {
-                    InternetOperator.sendCommand(hostClient, "sendSocket" + ";" + InternetOperator.getInternetAddressAndPort(client));
+                    InternetOperator.sendCommand(hostClient, "sendSocket;"+InternetOperator.getInternetAddressAndPort(client));
                 } catch (Exception e) {
                     InfoBox.sayHostClientDiscInfo(hostClient, "Main");
                     hostClient.close();
@@ -179,8 +180,8 @@ public class NeoProxyServer {
 
                 HostReply hostReply;
                 try {
-                    hostReply = TransferSocketAdapter.getThisHostClientHostReply(hostClient.getOutPort());
-                } catch (IOException e) {
+                    hostReply = TransferSocketAdapter.getHostReply(hostClient.getOutPort(), TransferSocketAdapter.CONN_TYPE.TCP);
+                } catch (SocketTimeoutException e) {
                     InfoBox.sayClientSuccConnectToChaSerButHostClientTimeOut(hostClient);
                     InfoBox.sayKillingClientSideConnection(client);
                     close(client);
@@ -191,8 +192,7 @@ public class NeoProxyServer {
                 InfoBox.sayClientTCPConnectBuildUpInfo(hostClient, client);
             }
         }, "HostClient-TCP-Service").start();
-        // --- UDP服务线程 (最终架构修复版) ---
-        // --- UDP服务线程 (最终架构修复版) ---
+        //udp
         new Thread(() -> {
             DatagramSocket datagramSocket = hostClient.getClientDatagramSocket();
             while (!datagramSocket.isClosed()) {
@@ -230,24 +230,16 @@ public class NeoProxyServer {
                                 // 1. 通知客户端A创建新的UDP连接
                                 InternetOperator.sendCommand(hostClient, "sendSocketUDP;" + InternetOperator.getInternetAddressAndPort(datagramPacket));
 
-                                // 2. 非阻塞地、带超时重试地获取HostReply
-                                HostReply hostReply = null;
-                                final int retryCount = SO_TIMEOUT / 10;
-                                for (int i = 0; i < retryCount; i++) {
-                                    hostReply = TransferSocketAdapter.getUdpHostReply(hostClient.getOutPort());
-                                    if (hostReply != null) {
-                                        break;
-                                    }
-                                    Sleeper.sleep(10);
-                                }
-
-                                // 3. 检查是否超时
-                                if (hostReply == null) {
+                                // 超时会抛出异常 SocketTimeoutException
+                                HostReply hostReply;
+                                try {
+                                     hostReply = TransferSocketAdapter.getHostReply(hostClient.getOutPort(),TransferSocketAdapter.CONN_TYPE.UDP);
+                                }catch (SocketTimeoutException e) {// 此时后端S离线，A没有发 SecureSocket 给B
                                     InfoBox.sayClientSuccConnectToChaSerButHostClientTimeOut(hostClient);
+                                    //直接丢弃 UDP 包，什么也不管
                                     return;
                                 }
 
-                                // 4. 【关键修复】直接在这里创建实例，以便获取引用
                                 UDPTransformer newUdpTransformer = new UDPTransformer(hostClient, hostReply, datagramSocket, clientIP, clientOutPort);
                                 UDPTransformer.udpClientConnections.add(newUdpTransformer);
                                 new Thread(newUdpTransformer, "UDP-Transformer-" + clientOutPort).start();

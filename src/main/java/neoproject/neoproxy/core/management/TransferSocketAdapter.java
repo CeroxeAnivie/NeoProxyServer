@@ -3,25 +3,23 @@ package neoproject.neoproxy.core.management;
 import neoproject.neoproxy.NeoProxyServer;
 import neoproject.neoproxy.core.HostClient;
 import neoproject.neoproxy.core.HostReply;
-import neoproject.neoproxy.core.InternetOperator;
 import plethora.net.SecureServerSocket;
 import plethora.net.SecureSocket;
 import plethora.utils.Sleeper;
 
 import java.io.IOException;
 import java.net.SocketTimeoutException;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static neoproject.neoproxy.NeoProxyServer.debugOperation;
 import static neoproject.neoproxy.NeoProxyServer.isStopped;
+import static neoproject.neoproxy.core.InternetOperator.close;
 
 public class TransferSocketAdapter implements Runnable {
     // TCP部分保持不变
     public static final CopyOnWriteArrayList<HostReply> tcpHostReply = new CopyOnWriteArrayList<>();
     // UDP部分：使用ConcurrentHashMap进行非阻塞匹配
-    private static final Map<Integer, HostReply> udpHostReply = new ConcurrentHashMap<>();
+    private static final CopyOnWriteArrayList<HostReply> udpHostReply = new CopyOnWriteArrayList<>();
 
     public static int SO_TIMEOUT = 1000;
 
@@ -29,23 +27,28 @@ public class TransferSocketAdapter implements Runnable {
         new Thread(new TransferSocketAdapter()).start();
     }
 
-    // TCP的旧方法保持不变，仅为TCP服务
-    public static HostReply getThisHostClientHostReply(int port) throws SocketTimeoutException {
+    public static HostReply getHostReply(int port,int CONN_TYPE) throws SocketTimeoutException {
         for (int i = 0; i < SO_TIMEOUT / 10; i++) {//维持 SO_TIMEOUT 的时间
-            for (HostReply hostReply : tcpHostReply) {
-                if (hostReply.outPort() == port) {
-                    tcpHostReply.remove(hostReply);
-                    return hostReply;
+            if (CONN_TYPE==TransferSocketAdapter.CONN_TYPE.TCP){
+                for (HostReply hostReply : tcpHostReply) {
+                    if (hostReply.outPort() == port) {
+                        tcpHostReply.remove(hostReply);
+                        return hostReply;
+                    }
                 }
+            }else if (CONN_TYPE==TransferSocketAdapter.CONN_TYPE.UDP){
+                for (HostReply hostReply : udpHostReply) {
+                    if (hostReply.outPort() == port) {
+                        udpHostReply.remove(hostReply);
+                        return hostReply;
+                    }
+                }
+            }else {//实际上不可能返回 null ，反正我会严格按照规范写代码
+                return null;
             }
             Sleeper.sleep(10);
         }
         throw new SocketTimeoutException();
-    }
-
-    // UDP的非阻塞方法
-    public static HostReply getUdpHostReply(int outPort) {
-        return udpHostReply.remove(outPort); // 获取后立即移除，确保一对一
     }
 
     @Override
@@ -76,31 +79,33 @@ public class TransferSocketAdapter implements Runnable {
                     int pretendedPort = host.receiveInt();
 
                     // 根据标识符进行不同的处理
-                    if ("TCP".equals(connectionType)) {
-                        // TCP逻辑：与原来完全相同
                         boolean isHas = false;
                         for (HostClient hostClient : NeoProxyServer.availableHostClient) {//检验是否有host client 请求的
                             if (hostClient.getOutPort() == pretendedPort) {
-                                tcpHostReply.add(new HostReply(pretendedPort, host));
+                                if (connectionType.equals("TCP")){
+                                    tcpHostReply.add(new HostReply(pretendedPort, host));
+                                }else if (connectionType.equals("UDP")){
+                                    udpHostReply.add(new HostReply(pretendedPort, host));
+                                }else {//标识符无效
+                                    close(host);
+                                    break;
+                                }
                                 isHas = true;
                                 break;
                             }
                         }
                         if (!isHas) {//没有
-                            InternetOperator.close(host);
+                            close(host);
                         }
-                    } else if ("UDP".equals(connectionType)) {
-                        // UDP逻辑：直接放入map，不阻塞
-                        udpHostReply.put(pretendedPort, new HostReply(pretendedPort, host));
-                    } else {
-                        // 未知类型，关闭连接
-                        InternetOperator.close(host);
-                    }
                 } catch (Exception e) {
                     debugOperation(e);
-                    InternetOperator.close(host);
+                    close(host);
                 }
             }).start();
         }
+    }
+    public static class CONN_TYPE{
+        public static final int TCP=0;
+        public static final int UDP=1;
     }
 }

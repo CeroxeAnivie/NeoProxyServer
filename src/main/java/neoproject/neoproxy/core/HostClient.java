@@ -1,6 +1,7 @@
 package neoproject.neoproxy.core;
 
 import neoproject.neoproxy.core.management.SequenceKey;
+import neoproject.neoproxy.core.threads.UDPTransformer;
 import plethora.net.SecureSocket;
 import plethora.utils.Sleeper;
 
@@ -9,6 +10,7 @@ import java.io.IOException;
 import java.net.DatagramSocket;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static neoproject.neoproxy.NeoProxyServer.availableHostClient;
@@ -20,7 +22,7 @@ public final class HostClient implements Closeable {
     public static int DETECTION_DELAY = 1000;
     public static int AES_KEY_SIZE = 128;
     private final SecureSocket hostServerHook;
-    // 用于跟踪所有由该 HostClien t创建的活跃TCP连接
+    // 用于跟踪所有由该 HostClient创建的活跃TCP连接
     private final CopyOnWriteArrayList<Socket> activeTcpSockets = new CopyOnWriteArrayList<>();
     private boolean isStopped = false;
     private SequenceKey sequenceKey = null;
@@ -29,7 +31,9 @@ public final class HostClient implements Closeable {
     private LanguageData languageData = new LanguageData();
     private int outPort = -1;
 
-    // ... (HostClient 的构造函数和其他现有方法保持不变)
+    // 【新增】用于缓存地理位置信息的字段
+    private String cachedLocation;
+    private String cachedISP;
 
     public HostClient(SecureSocket hostServerHook) throws IOException {
         this.hostServerHook = hostServerHook;
@@ -63,14 +67,10 @@ public final class HostClient implements Closeable {
                         InfoBox.sayHostClientDiscInfo(hostClient, "KeyDetectionTread");
                     }
 
-//                    removeKey(hostClient.getVault());
-//                    hostClient.getVault().getFile().delete();
-                    //改策略了，不删 Key 了
                     hostClient.close();
                     break;
                 }
 
-                //不能通过判断 keyfile 是否存在来断定是否有效，因为 keyfile 刷新的时候会删除文件再创建
 
                 if (hostClient.getKey() != null && !hostClient.getKey().isEnable()) {
                     hostClient.close();
@@ -108,8 +108,93 @@ public final class HostClient implements Closeable {
     }
 
     /**
-     * 【修改】重写close方法，在关闭自身时，也关闭所有由它管理的TCP连接。
+     * 【新增】获取活跃的TCP连接列表，用于list命令。
+     *
+     * @return 活跃TCP连接的列表
      */
+    public CopyOnWriteArrayList<Socket> getActiveTcpSockets() {
+        return activeTcpSockets;
+    }
+
+    /**
+     * 【新增】格式化HostClient信息为表格行数组，用于list命令。
+     *
+     * @param accessCodeCounts            Access Code计数映射，用于显示相同Access Code的数量
+     * @param isRepresentative            是否为该Access Code的代表实例
+     * @param allHostClientsForAccessCode 该Access Code的所有HostClient实例
+     * @return 包含格式化信息的字符串数组
+     */
+    public String[] formatAsTableRow(Map<String, Integer> accessCodeCounts, boolean isRepresentative, List<HostClient> allHostClientsForAccessCode) {
+        String hostClientIP = this.getHostServerHook().getInetAddress().getHostAddress();
+
+        // 【新增】获取Access Code
+        String accessCode = this.getKey() != null ? this.getKey().getName() : "Unknown";
+
+        // 【修正】只对代表实例显示括号数字
+        String displayHostClientIP = hostClientIP;
+        if (isRepresentative) {
+            int count = accessCodeCounts.getOrDefault(accessCode, 0);
+            if (count > 1) {
+                displayHostClientIP += " (" + count + ")";
+            }
+        }
+
+        // 获取或使用缓存的位置和ISP信息
+        String location = this.getCachedLocation() != null ? this.getCachedLocation() : "Unknown";
+        String isp = this.getCachedISP() != null ? this.getCachedISP() : "Unknown";
+
+        // 【修正】统计该Access Code所有实例的外部连接信息
+        Map<String, Integer> tcpCounts = new HashMap<>();
+        Map<String, Integer> udpCounts = new HashMap<>();
+
+        // 收集该Access Code所有实例的外部客户端IP并计数
+        for (HostClient hc : allHostClientsForAccessCode) {
+            for (Socket socket : hc.activeTcpSockets) {
+                String clientIP = socket.getInetAddress().getHostAddress();
+                tcpCounts.put(clientIP, tcpCounts.getOrDefault(clientIP, 0) + 1);
+            }
+        }
+
+        // 收集该Access Code所有实例的UDP连接
+        try {
+            for (UDPTransformer udp : UDPTransformer.udpClientConnections) {
+                if (allHostClientsForAccessCode.contains(udp.getHostClient())) {
+                    String clientIP = udp.getClientIP();
+                    udpCounts.put(clientIP, udpCounts.getOrDefault(clientIP, 0) + 1);
+                }
+            }
+        } catch (Exception e) {
+            // 忽略异常
+        }
+
+        // 合并所有IP地址
+        Set<String> allIPs = new HashSet<>();
+        allIPs.addAll(tcpCounts.keySet());
+        allIPs.addAll(udpCounts.keySet());
+
+        // 格式化外部客户端IP显示，使用换行符分隔
+        StringBuilder sb = new StringBuilder();
+        for (String ip : allIPs) {
+            if (sb.length() > 0) sb.append("\n");
+            int tcpCount = tcpCounts.getOrDefault(ip, 0);
+            int udpCount = udpCounts.getOrDefault(ip, 0);
+            sb.append(ip).append(" (T:").append(tcpCount).append(" U:").append(udpCount).append(")");
+        }
+        String externalClientIPs = sb.toString();
+        if (externalClientIPs.isEmpty()) {
+            externalClientIPs = "None";
+        }
+
+        // 【修正】去掉序列号列
+        return new String[]{
+                displayHostClientIP,
+                accessCode,  // Access Code列
+                location,
+                isp,
+                externalClientIPs
+        };
+    }
+
     @Override
     public void close() {
         // 先关闭所有活跃的TCP连接
@@ -203,4 +288,20 @@ public final class HostClient implements Closeable {
         this.outPort = outPort;
     }
 
+    // 【新增】缓存位置和ISP信息的getter和setter
+    public String getCachedLocation() {
+        return cachedLocation;
+    }
+
+    public void setCachedLocation(String cachedLocation) {
+        this.cachedLocation = cachedLocation;
+    }
+
+    public String getCachedISP() {
+        return cachedISP;
+    }
+
+    public void setCachedISP(String cachedISP) {
+        this.cachedISP = cachedISP;
+    }
 }

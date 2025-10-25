@@ -24,7 +24,6 @@ import static neoproject.neoproxy.core.threads.TCPTransformer.TELL_BALANCE_MIB;
 public class UDPTransformer implements Runnable {
     // 存储所有活跃的UDP连接实例
     public static final CopyOnWriteArrayList<UDPTransformer> udpClientConnections = new CopyOnWriteArrayList<>();
-
     // 实例字段
     private final HostClient hostClient;
     private final HostReply hostReply;
@@ -150,6 +149,10 @@ public class UDPTransformer implements Runnable {
             InfoBox.sayHostClientDiscInfo(hostClient, "UDPTransformer");
         }
         close(hostClient);
+    }
+
+    public HostClient getHostClient() {
+        return hostClient;
     }
 
     // --- 实例方法 ---

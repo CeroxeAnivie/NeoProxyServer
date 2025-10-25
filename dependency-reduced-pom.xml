@@ -3,7 +3,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>neoproject</groupId>
   <artifactId>NeoProxyServer</artifactId>
-  <version>4.7.2</version>
+  <version>4.8.2</version>
   <build>
     <plugins>
       <plugin>

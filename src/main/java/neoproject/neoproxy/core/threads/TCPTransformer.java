@@ -1,6 +1,9 @@
 package neoproject.neoproxy.core.threads;
 
-import neoproject.neoproxy.core.*;
+import neoproject.neoproxy.core.HostClient;
+import neoproject.neoproxy.core.HostReply;
+import neoproject.neoproxy.core.InfoBox;
+import neoproject.neoproxy.core.LanguageData;
 import neoproject.neoproxy.core.exceptions.NoMoreNetworkFlowException;
 import plethora.management.bufferedFile.SizeCalculator;
 import plethora.net.SecureSocket;

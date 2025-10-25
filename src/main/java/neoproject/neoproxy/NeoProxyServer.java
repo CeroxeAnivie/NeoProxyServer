@@ -10,7 +10,6 @@ import plethora.net.SecureServerSocket;
 import plethora.net.SecureSocket;
 import plethora.utils.ArrayUtils;
 import plethora.utils.MyConsole;
-import plethora.utils.Sleeper;
 import plethora.utils.StringUtils;
 
 import java.io.IOException;
@@ -21,13 +20,12 @@ import static neoproject.neoproxy.core.InternetOperator.close;
 import static neoproject.neoproxy.core.management.IPChecker.loadBannedIPs;
 import static neoproject.neoproxy.core.management.SequenceKey.DYNAMIC_PORT;
 import static neoproject.neoproxy.core.management.SequenceKey.initKeyDatabase;
-import static neoproject.neoproxy.core.management.TransferSocketAdapter.SO_TIMEOUT;
 import static neoproject.neoproxy.core.threads.TCPTransformer.BUFFER_LEN;
 
 public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = System.getProperty("user.dir");
     public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
-    public static String EXPECTED_CLIENT_VERSION = "4.7.0";//从左到右从老到新版本
+    public static String EXPECTED_CLIENT_VERSION = "4.7.0";//from old to new versions
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.stringArrayToList(EXPECTED_CLIENT_VERSION.split("\\|"));
     public static int HOST_HOOK_PORT = 801;
     public static int HOST_CONNECT_PORT = 802;
@@ -44,19 +42,19 @@ public class NeoProxyServer {
     }
 
     public static void initStructure() {
-        // 初始化顺序更清晰
-        initConsole();           // 1. 控制台系统
+        // Initialization order is clearer
+        initConsole();           // 1. Console system
         printLogo();
-        initKeyDatabase();       // 2. 数据库
-        ConfigOperator.readAndSetValue(); // 3. 配置
-        UpdateManager.init();    // 4. 更新管理器
-        SecureSocket.setMaxAllowedPacketSize((int) SizeCalculator.mibToByte(200)); // 5. 设置单次数据包最大大小为 200m
+        initKeyDatabase();       // 2. Database
+        ConfigOperator.readAndSetValue(); // 3. Configuration
+        UpdateManager.init();    // 4. Update manager
+        SecureSocket.setMaxAllowedPacketSize((int) SizeCalculator.mibToByte(200)); // 5. Set max packet size to 200m
         loadBannedIPs();
 
-        // 5. 网络服务
+        // 5. Network services
         try {
             hostServerHookServerSocket = new SecureServerSocket(HOST_HOOK_PORT);
-            // 启动统一的TransferSocketAdapter，它能同时处理TCP和UDP
+            // Start the unified TransferSocketAdapter, which can handle both TCP and UDP
             TransferSocketAdapter.startThread();
         } catch (IOException e) {
             debugOperation(e);
@@ -69,10 +67,10 @@ public class NeoProxyServer {
         for (String arg : args) {
             switch (arg) {
                 case "--debug" -> IS_DEBUG_MODE = true;
-                // 可以继续添加其他参数，例如：
+                // You can continue to add other parameters, for example:
                 // case "--verbose" -> IS_VERBOSE = true;
                 default -> {
-                } // 忽略未知参数
+                } // Ignore unknown parameters
             }
         }
     }
@@ -93,7 +91,7 @@ public class NeoProxyServer {
     }
 
     public static void main(String[] args) {
-        // 注册关闭钩子
+        // Register shutdown hook
         Runtime.getRuntime().addShutdownHook(new Thread(NeoProxyServer::shutdown));
 
         NeoProxyServer.checkARGS(args);
@@ -117,12 +115,12 @@ public class NeoProxyServer {
                     break;
                 }
             } catch (SlientException ignored) {
-                // 静默异常，继续循环
+                // Silent exception, continue loop
             }
         }
     }
 
-    // 新增方法：处理新连接的 HostClient
+    // New method: handle new connected HostClient
     private static void handleNewHostClient(HostClient hostClient) {
         new Thread(() -> {
             try {
@@ -136,7 +134,7 @@ public class NeoProxyServer {
             } catch (UnSupportHostVersionException e) {
                 UpdateManager.handle(hostClient);
             } catch (SlientException ignore) {
-                // 静默处理
+                // Silent handling
             }
         }, "HostClient-Handler").start();
     }
@@ -170,7 +168,7 @@ public class NeoProxyServer {
                 }
 
                 try {
-                    InternetOperator.sendCommand(hostClient, "sendSocket;"+InternetOperator.getInternetAddressAndPort(client));
+                    InternetOperator.sendCommand(hostClient, "sendSocket;" + InternetOperator.getInternetAddressAndPort(client));
                 } catch (Exception e) {
                     InfoBox.sayHostClientDiscInfo(hostClient, "Main");
                     hostClient.close();
@@ -208,9 +206,9 @@ public class NeoProxyServer {
                 final String clientIP = datagramPacket.getAddress().getHostAddress();
                 final int clientOutPort = datagramPacket.getPort();
 
-                // 使用同步块来防止并发问题
+                // Use synchronized block to prevent concurrency issues
                 synchronized (UDPTransformer.udpClientConnections) {
-                    // 检查是否已经存在该客户端IP和端口的转发通道
+                    // Check if a forwarding channel for this clientIP and port already exists
                     UDPTransformer existingReply = null;
                     for (UDPTransformer reply : UDPTransformer.udpClientConnections) {
                         if (reply.getClientOutPort() == clientOutPort && reply.getClientIP().equals(clientIP) && reply.isRunning()) {
@@ -220,21 +218,21 @@ public class NeoProxyServer {
                     }
 
                     if (existingReply != null) {
-                        // 如果已存在，序列化数据包并加入它的发送队列
+                        // If it exists, serialize the packet and add it to its send queue
                         byte[] serializedData = UDPTransformer.serializeDatagramPacket(datagramPacket);
                         existingReply.addPacketToSend(serializedData);
                     } else {
-                        // 如果不存在，创建一个新的转发通道
+                        // If it does not exist, create a new forwarding channel
                         new Thread(() -> {
                             try {
-                                // 1. 通知客户端A创建新的UDP连接
+                                // 1. Notify client A to create a new UDP connection
                                 InternetOperator.sendCommand(hostClient, "sendSocketUDP;" + InternetOperator.getInternetAddressAndPort(datagramPacket));
 
-                                // 超时会抛出异常 SocketTimeoutException
+                                // Timeout will throw an exception SocketTimeoutException
                                 HostReply hostReply;
                                 try {
-                                     hostReply = TransferSocketAdapter.getHostReply(hostClient.getOutPort(),TransferSocketAdapter.CONN_TYPE.UDP);
-                                }catch (SocketTimeoutException e) {// 此时后端S离线，A没有发 SecureSocket 给B
+                                    hostReply = TransferSocketAdapter.getHostReply(hostClient.getOutPort(), TransferSocketAdapter.CONN_TYPE.UDP);
+                                } catch (SocketTimeoutException e) {// 此时后端S离线，A没有发 SecureSocket 给B
                                     InfoBox.sayClientSuccConnectToChaSerButHostClientTimeOut(hostClient);
                                     //直接丢弃 UDP 包，什么也不管
                                     return;
@@ -248,7 +246,7 @@ public class NeoProxyServer {
                                 byte[] firstData = UDPTransformer.serializeDatagramPacket(datagramPacket);
                                 newUdpTransformer.addPacketToSend(firstData);
 
-                                // 6. 记录连接建立成功
+                                // 6. Record successful connection establishment
                                 InfoBox.sayClientUDPConnectBuildUpInfo(hostClient, datagramPacket);
 
                             } catch (Exception e) {
@@ -277,14 +275,14 @@ public class NeoProxyServer {
         myConsole.error(subject, str);
     }
 
-    // 优化后的端口检查方法
+    // Optimized port checking method
     private static int getCurrentAvailableOutPort(SequenceKey sequenceKey) {
         for (int i = sequenceKey.getDyStart(); i <= sequenceKey.getDyEnd(); i++) {
             try (ServerSocket serverSocket = new ServerSocket()) {
                 serverSocket.bind(new InetSocketAddress(i), 0);
                 return i;
             } catch (IOException ignore) {
-                // 端口不可用，继续下一个
+                // Port is not available, continue to the next one
             }
         }
         return -1;
@@ -324,6 +322,11 @@ public class NeoProxyServer {
         sayInfo("Assigned connection address: " + LOCAL_DOMAIN_NAME + ":" + port);
     }
 
+    /**
+     * 打印客户端注册信息，并缓存地理位置信息。
+     *
+     * @param hostClient 新注册的HostClient
+     */
     private static void printClientRegistrationInfo(HostClient hostClient) {
         String ip = hostClient.getHostServerHook().getInetAddress().getHostAddress();
         String accessCode = hostClient.getKey().getName();
@@ -334,61 +337,12 @@ public class NeoProxyServer {
         String isp = locInfo.isp();
         // --- 结束调用 ---
 
-        // 定义表头和数据
-        String[] headers = {"Access Code", "IP Address", "Location", "ISP"};
-        String[] data = {accessCode, ip, location, isp};
+        // 【修改】缓存位置和ISP信息到HostClient对象中
+        hostClient.setCachedLocation(location);
+        hostClient.setCachedISP(isp);
 
-        // 计算每列的最大宽度
-        int[] widths = new int[headers.length];
-        for (int i = 0; i < headers.length; i++) {
-            widths[i] = Math.max(headers[i].length(), data[i].length());
-        }
-
-        // 构建输出
-        StringBuilder output = new StringBuilder();
-        output.append("\n"); // Use \n
-
-        // 添加表头分隔线 (┌─┬─┬─┐)
-        output.append("┌");
-        for (int i = 0; i < widths.length; i++) {
-            output.append("─".repeat(widths[i] + 2)); // +2 for padding spaces
-            if (i < widths.length - 1) output.append("┬");
-        }
-        output.append("┐\n"); // Use \n
-
-        // 添加表头 (│ Name │ Balance │ ... │)
-        output.append("│");
-        for (int i = 0; i < headers.length; i++) {
-            output.append(" ").append(String.format("%-" + widths[i] + "s", headers[i])).append(" ");
-            output.append("│");
-        }
-        output.append("\n"); // Use \n
-
-        // 添加表头和数据分隔线 (├─┼─┼─┤)
-        output.append("├");
-        for (int i = 0; i < widths.length; i++) {
-            output.append("─".repeat(widths[i] + 2));
-            if (i < widths.length - 1) output.append("┼");
-        }
-        output.append("┤\n"); // Use \n
-
-        // 添加数据行 (│ value1 │ value2 │ ... │)
-        output.append("│");
-        for (int i = 0; i < data.length; i++) {
-            output.append(" ").append(String.format("%-" + widths[i] + "s", data[i])).append(" ");
-            output.append("│");
-        }
-        output.append("\n"); // Use \n
-
-        // 添加底部边框 (└─┴─┴─┘)
-        output.append("└");
-        for (int i = 0; i < widths.length; i++) {
-            output.append("─".repeat(widths[i] + 2));
-            if (i < widths.length - 1) output.append("┴");
-        }
-        output.append("┘"); // No \n at the very end if not desired
-
-        sayInfo(output.toString()); // Output the formatted table
+        // 【修改】调用ConsoleManager中的通用表格打印方法
+        ConsoleManager.printClientRegistrationTable(accessCode, ip, location, isp);
     }
 
     private static Object[] checkHostClientVersionAndKeyAndLang(HostClient hostClient)

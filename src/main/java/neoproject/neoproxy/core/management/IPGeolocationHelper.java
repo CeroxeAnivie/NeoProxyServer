@@ -2,7 +2,10 @@ package neoproject.neoproxy.core.management;
 
 import com.google.gson.Gson;
 import com.google.gson.annotations.SerializedName;
-import java.net.*;
+
+import java.net.InetAddress;
+import java.net.URI;
+import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -163,7 +166,9 @@ public class IPGeolocationHelper {
                 String location = locBuilder.length() > 2 ? locBuilder.substring(0, locBuilder.length() - 2) : "N/A";
                 return new LocationInfo(location, isp, true);
             }
-        } catch (Exception e) { sayError("IPGeolocationHelper: Failed to parse IP-API response: " + e.getMessage()); }
+        } catch (Exception e) {
+            sayError("IPGeolocationHelper: Failed to parse IP-API response: " + e.getMessage());
+        }
         return LocationInfo.failed();
     }
 
@@ -182,7 +187,9 @@ public class IPGeolocationHelper {
                 String location = locBuilder.length() > 2 ? locBuilder.substring(0, locBuilder.length() - 2) : "N/A";
                 return new LocationInfo(location, isp, true);
             }
-        } catch (Exception e) { sayError("IPGeolocationHelper: Failed to parse IPAPI.co response: " + e.getMessage()); }
+        } catch (Exception e) {
+            sayError("IPGeolocationHelper: Failed to parse IPAPI.co response: " + e.getMessage());
+        }
         return LocationInfo.failed();
     }
 
@@ -197,14 +204,28 @@ public class IPGeolocationHelper {
     }
 
     public record LocationInfo(String location, String isp, boolean success, String source) {
-        public LocationInfo(String location, String isp, boolean success) { this(location, isp, success, "Unknown"); }
-        public static LocationInfo failed() { return new LocationInfo("N/A", "N/A", false, "Failed"); }
+        public LocationInfo(String location, String isp, boolean success) {
+            this(location, isp, success, "Unknown");
+        }
+
+        public static LocationInfo failed() {
+            return new LocationInfo("N/A", "N/A", false, "Failed");
+        }
     }
 
     private static class APIService {
-        String name; String baseUrl; java.util.function.Function<String, LocationInfo> parser; int priority; String apiKey;
+        String name;
+        String baseUrl;
+        java.util.function.Function<String, LocationInfo> parser;
+        int priority;
+        String apiKey;
+
         APIService(String name, String baseUrl, java.util.function.Function<String, LocationInfo> parser, int priority, String apiKey) {
-            this.name = name; this.baseUrl = baseUrl; this.parser = parser; this.priority = priority; this.apiKey = apiKey;
+            this.name = name;
+            this.baseUrl = baseUrl;
+            this.parser = parser;
+            this.priority = priority;
+            this.apiKey = apiKey;
         }
     }
 

@@ -27,23 +27,23 @@ public class TransferSocketAdapter implements Runnable {
         new Thread(new TransferSocketAdapter()).start();
     }
 
-    public static HostReply getHostReply(int port,int CONN_TYPE) throws SocketTimeoutException {
+    public static HostReply getHostReply(int port, int CONN_TYPE) throws SocketTimeoutException {
         for (int i = 0; i < SO_TIMEOUT / 10; i++) {//维持 SO_TIMEOUT 的时间
-            if (CONN_TYPE==TransferSocketAdapter.CONN_TYPE.TCP){
+            if (CONN_TYPE == TransferSocketAdapter.CONN_TYPE.TCP) {
                 for (HostReply hostReply : tcpHostReply) {
                     if (hostReply.outPort() == port) {
                         tcpHostReply.remove(hostReply);
                         return hostReply;
                     }
                 }
-            }else if (CONN_TYPE==TransferSocketAdapter.CONN_TYPE.UDP){
+            } else if (CONN_TYPE == TransferSocketAdapter.CONN_TYPE.UDP) {
                 for (HostReply hostReply : udpHostReply) {
                     if (hostReply.outPort() == port) {
                         udpHostReply.remove(hostReply);
                         return hostReply;
                     }
                 }
-            }else {//实际上不可能返回 null ，反正我会严格按照规范写代码
+            } else {//实际上不可能返回 null ，反正我会严格按照规范写代码
                 return null;
             }
             Sleeper.sleep(10);
@@ -79,24 +79,24 @@ public class TransferSocketAdapter implements Runnable {
                     int pretendedPort = host.receiveInt();
 
                     // 根据标识符进行不同的处理
-                        boolean isHas = false;
-                        for (HostClient hostClient : NeoProxyServer.availableHostClient) {//检验是否有host client 请求的
-                            if (hostClient.getOutPort() == pretendedPort) {
-                                if (connectionType.equals("TCP")){
-                                    tcpHostReply.add(new HostReply(pretendedPort, host));
-                                }else if (connectionType.equals("UDP")){
-                                    udpHostReply.add(new HostReply(pretendedPort, host));
-                                }else {//标识符无效
-                                    close(host);
-                                    break;
-                                }
-                                isHas = true;
+                    boolean isHas = false;
+                    for (HostClient hostClient : NeoProxyServer.availableHostClient) {//检验是否有host client 请求的
+                        if (hostClient.getOutPort() == pretendedPort) {
+                            if (connectionType.equals("TCP")) {
+                                tcpHostReply.add(new HostReply(pretendedPort, host));
+                            } else if (connectionType.equals("UDP")) {
+                                udpHostReply.add(new HostReply(pretendedPort, host));
+                            } else {//标识符无效
+                                close(host);
                                 break;
                             }
+                            isHas = true;
+                            break;
                         }
-                        if (!isHas) {//没有
-                            close(host);
-                        }
+                    }
+                    if (!isHas) {//没有
+                        close(host);
+                    }
                 } catch (Exception e) {
                     debugOperation(e);
                     close(host);
@@ -104,8 +104,9 @@ public class TransferSocketAdapter implements Runnable {
             }).start();
         }
     }
-    public static class CONN_TYPE{
-        public static final int TCP=0;
-        public static final int UDP=1;
+
+    public static class CONN_TYPE {
+        public static final int TCP = 0;
+        public static final int UDP = 1;
     }
 }

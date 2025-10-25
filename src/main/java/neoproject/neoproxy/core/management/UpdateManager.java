@@ -8,6 +8,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 
 import static neoproject.neoproxy.NeoProxyServer.*;
+import static neoproject.neoproxy.core.InfoBox.alert;
 
 public class UpdateManager {
     public static final String CLIENT_DIR = CURRENT_DIR_PATH + File.separator + "clients";
@@ -16,20 +17,15 @@ public class UpdateManager {
 
     public static void init() {
         if (!CLIENT_DIR_FOLDER.exists()) {
-            try {
-                boolean b = CLIENT_DIR_FOLDER.createNewFile();
-                if (!b) {
-                    myConsole.warn("Update-Manager", "Fail to create the update dir , this feature will be disabled.");
-                    return;
-                }
-                if (!CLIENT_DIR_FOLDER.canRead()) {
-                    myConsole.warn("Update-Manager", "The update dir is unreadable ! This feature will be disabled.");
-                } else {
-                    isInit = true;
-                }
-            } catch (IOException e) {
-                debugOperation(e);
+            boolean b = CLIENT_DIR_FOLDER.mkdirs();
+            if (!b) {
                 myConsole.warn("Update-Manager", "Fail to create the update dir , this feature will be disabled.");
+                return;
+            }
+            if (!CLIENT_DIR_FOLDER.canRead()) {
+                myConsole.warn("Update-Manager", "The update dir is unreadable ! This feature will be disabled.");
+            } else {
+                isInit = true;
             }
         } else {
             isInit = true;
@@ -45,7 +41,9 @@ public class UpdateManager {
         File[] files = CLIENT_DIR_FOLDER.listFiles();
         if (files == null) {
             tellFalseAndClose(hostClient);
-            myConsole.warn("Update-Manager", "A client try to download an update but clients dir is empty !");
+            if (alert){
+                myConsole.warn("Update-Manager", "A client try to download an update but clients dir is empty !");
+            }
             return;
         }
 
@@ -70,26 +68,39 @@ public class UpdateManager {
             if (str.equals("exe")) {
                 if (exeFile == null) {
                     tellFalseAndClose(hostClient);
-                    myConsole.warn("Update-Manager", "A client try to download an EXE not found in dir.");
+                    if (alert){
+                        myConsole.warn("Update-Manager", "A client try to download an EXE not found in dir.");
+                    }
                 } else {
-                    myConsole.log("Update-Manager", "A client try to download an EXE update !");
+                    if (alert){
+                        myConsole.log("Update-Manager", "A client try to download an EXE update !");
+                    }
                     tellTrueAndWriteAndClose(hostClient, exeFile);
-                    myConsole.log("Update-Manager", "A client from " + hostClient.getAddressAndPort() + " downloaded an EXE update success !");
+                    if (alert){
+                        myConsole.log("Update-Manager", "A client try to download an EXE update !");
+                    }
                 }
-
             } else {
                 if (jarFile == null) {
                     tellFalseAndClose(hostClient);
-                    myConsole.warn("Update-Manager", "A client try to download an JAR not found in dir.");
+                    if (alert){
+                        myConsole.warn("Update-Manager", "A client try to download an JAR not found in dir.");
+                    }
                 } else {
-                    myConsole.log("Update-Manager", "A client try to download an JAR update !");
+                    if (alert){
+                        myConsole.log("Update-Manager", "A client try to download an JAR update !");
+                    }
                     tellTrueAndWriteAndClose(hostClient, jarFile);
-                    myConsole.log("Update-Manager", "A client from " + hostClient.getAddressAndPort() + " downloaded an JAR update success !");
+                    if (alert){
+                        myConsole.log("Update-Manager", "A client from " + hostClient.getAddressAndPort() + " downloaded an JAR update success !");
+                    }
                 }
             }
         } catch (Exception e) {
             debugOperation(e);
-            myConsole.warn("Update-Manager", "A client try to download an update but failed.");
+            if (alert){
+                myConsole.warn("Update-Manager", "A client try to download an update but failed.");
+            }
         }
     }
 

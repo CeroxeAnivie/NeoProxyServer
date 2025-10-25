@@ -54,8 +54,8 @@ public class ConsoleManager {
             }
             String subCommand = params.getFirst();
             switch (subCommand) {
-                case "enable" -> InfoBox.alert = true;
-                case "disable" -> InfoBox.alert = false;
+                case "enable" -> handleAlert(true);
+                case "disable" -> handleAlert(false);
                 default -> myConsole.warn("Admin", "Usage: alert <enable|disable>");
             }
         });
@@ -125,6 +125,15 @@ public class ConsoleManager {
                 myConsole.error("Admin", "An internal error occurred while executing the key command, please check the logs.");
             }
         });
+    }
+
+    private static void handleAlert(boolean b) {
+        InfoBox.alert=b;
+        if (b){
+            myConsole.log("Admin","Alert Enabled !");
+        }else{
+            myConsole.log("Admin","Alert disabled !");
+        }
     }
 
     // ==================== Manual Table Printing Method (修正边框) ====================

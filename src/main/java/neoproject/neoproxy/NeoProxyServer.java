@@ -25,7 +25,7 @@ import static neoproject.neoproxy.core.threads.TCPTransformer.BUFFER_LEN;
 public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = System.getProperty("user.dir");
     public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
-    public static String EXPECTED_CLIENT_VERSION = "4.7.0";//from old to new versions
+    public static String EXPECTED_CLIENT_VERSION = "4.7.0|4.7.1";//from old to new versions
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.stringArrayToList(EXPECTED_CLIENT_VERSION.split("\\|"));
     public static int HOST_HOOK_PORT = 801;
     public static int HOST_CONNECT_PORT = 802;

@@ -44,8 +44,8 @@ public final class HostClient implements Closeable {
 
     private static void enableAutoSaveThread(HostClient hostClient) {
         Thread a = new Thread(() -> {
-            while (true) {
-                if (hostClient.getKey() != null && !hostClient.isStopped) {
+            while (!hostClient.isStopped) {
+                if (hostClient.getKey() != null) {
                     saveToDB(hostClient.getKey());
                 }
                 Sleeper.sleep(SAVE_DELAY);
@@ -56,8 +56,8 @@ public final class HostClient implements Closeable {
 
     private static void enableKeyDetectionTread(HostClient hostClient) {
         Thread a = new Thread(() -> {
-            while (true) {
-                if (hostClient.getKey() != null && !hostClient.isStopped && hostClient.getKey().isOutOfDate()) {
+            while (!hostClient.isStopped) {
+                if (hostClient.getKey() != null && hostClient.getKey().isOutOfDate()) {
                     sayInfo("The key " + hostClient.getKey().getName() + " is out of date !");
                     try {
                         InternetOperator.sendStr(hostClient, hostClient.getLangData().THE_KEY + hostClient.getKey().getName() + hostClient.getLangData().ARE_OUT_OF_DATE);
@@ -74,10 +74,6 @@ public final class HostClient implements Closeable {
 
                 if (hostClient.getKey() != null && !hostClient.getKey().isEnable()) {
                     hostClient.close();
-                    break;
-                }
-
-                if (hostClient.isStopped) {
                     break;
                 }
 

@@ -43,21 +43,21 @@ public class SequenceKey {
     protected String port; // 已从 int 改为 String 以支持动态端口范围
     protected double rate; // 单位：Mbps
     protected boolean isEnable; // 新增的启用状态字段
+    protected boolean enableWebHTML; // 新增的Web HTML启用状态字段 默认为 false
 
     /**
      * 私有构造函数，用于从数据库或创建时初始化对象。
      * 此构造函数不进行空值检查，因为其调用者（如 {@link #getKeyFromDB}）已确保参数有效。
      */
-    private SequenceKey(String name, double balance, String expireTime, String port, double rate, boolean isEnable) {
+    private SequenceKey(String name, double balance, String expireTime, String port, double rate, boolean isEnable, boolean enableWebHTML) {
         this.name = name;
         this.balance = balance;
         this.expireTime = expireTime;
         this.port = port;
         this.rate = rate;
         this.isEnable = isEnable;
+        this.enableWebHTML = enableWebHTML;
     }
-
-    // ==================== 数据库连接管理 ====================
 
     /**
      * 获取一个新的数据库连接。
@@ -68,6 +68,8 @@ public class SequenceKey {
     protected static Connection getConnection() throws SQLException {
         return DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
     }
+
+    // ==================== 数据库连接管理 ====================
 
     /**
      * 执行数据库清理任务：扫描所有密钥，禁用已过期的。
@@ -129,8 +131,6 @@ public class SequenceKey {
         }
     }
 
-    // ==================== 公共数据库操作方法 (所有异常被捕获并记录) ====================
-
     public static boolean isKeyExistsByName(String name) {
         try {
             if (name == null) {
@@ -151,6 +151,8 @@ public class SequenceKey {
         }
     }
 
+    // ==================== 公共数据库操作方法 (所有异常被捕获并记录) ====================
+
     /**
      * 从数据库获取密钥，不管是否启用，只要存在就返回。
      */
@@ -160,19 +162,28 @@ public class SequenceKey {
                 debugOperation(new IllegalArgumentException("name must not be null"));
                 return null;
             }
-            String sql = "SELECT name, balance, expireTime, port, rate, isEnable FROM sk WHERE name = ?";
+            String sql = "SELECT name, balance, expireTime, port, rate, isEnable, enableWebHTML FROM sk WHERE name = ?";
             try (Connection conn = getConnection();
                  PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, name);
                 try (ResultSet rs = stmt.executeQuery()) {
                     if (rs.next()) {
+                        // 处理旧数据库没有 enableWebHTML 列的情况
+                        boolean enableWebHTML;
+                        try {
+                            enableWebHTML = rs.getBoolean("enableWebHTML");
+                        } catch (SQLException e) {
+                            // 如果列不存在，使用默认值 false
+                            enableWebHTML = false;
+                        }
                         return new SequenceKey(
                                 rs.getString("name"),
                                 rs.getDouble("balance"),
                                 rs.getString("expireTime"),
                                 rs.getString("port"), // 从 getString 读取
                                 rs.getDouble("rate"),
-                                rs.getBoolean("isEnable")
+                                rs.getBoolean("isEnable"),
+                                enableWebHTML
                         );
                     }
                     return null;
@@ -193,19 +204,28 @@ public class SequenceKey {
                 debugOperation(new IllegalArgumentException("name must not be null"));
                 return null;
             }
-            String sql = "SELECT name, balance, expireTime, port, rate, isEnable FROM sk WHERE name = ? AND isEnable = TRUE";
+            String sql = "SELECT name, balance, expireTime, port, rate, isEnable, enableWebHTML FROM sk WHERE name = ? AND isEnable = TRUE";
             try (Connection conn = getConnection();
                  PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, name);
                 try (ResultSet rs = stmt.executeQuery()) {
                     if (rs.next()) {
+                        // 处理旧数据库没有 enableWebHTML 列的情况
+                        boolean enableWebHTML;
+                        try {
+                            enableWebHTML = rs.getBoolean("enableWebHTML");
+                        } catch (SQLException e) {
+                            // 如果列不存在，使用默认值 false
+                            enableWebHTML = false;
+                        }
                         return new SequenceKey(
                                 rs.getString("name"),
                                 rs.getDouble("balance"),
                                 rs.getString("expireTime"),
                                 rs.getString("port"), // 从 getString 读取
                                 rs.getDouble("rate"),
-                                rs.getBoolean("isEnable")
+                                rs.getBoolean("isEnable"),
+                                enableWebHTML
                         );
                     }
                     return null;
@@ -247,7 +267,8 @@ public class SequenceKey {
                                 expireTime VARCHAR(50) NOT NULL,
                                 port VARCHAR(50) NOT NULL, -- Changed to VARCHAR
                                 rate DOUBLE NOT NULL,
-                                isEnable BOOLEAN DEFAULT TRUE NOT NULL
+                                isEnable BOOLEAN DEFAULT TRUE NOT NULL,
+                                enableWebHTML BOOLEAN DEFAULT FALSE NOT NULL
                             );
                             INSERT INTO sk_new (name, balance, expireTime, port, rate, isEnable)
                             SELECT name, balance, expireTime, CAST(port AS VARCHAR), rate, isEnable FROM sk;
@@ -286,7 +307,8 @@ public class SequenceKey {
                             expireTime VARCHAR(50) NOT NULL,
                             port VARCHAR(50) NOT NULL, -- 使用 VARCHAR 以支持端口范围
                             rate DOUBLE NOT NULL,
-                            isEnable BOOLEAN DEFAULT TRUE NOT NULL
+                            isEnable BOOLEAN DEFAULT TRUE NOT NULL,
+                            enableWebHTML BOOLEAN DEFAULT FALSE NOT NULL
                         )
                         """;
                 try (PreparedStatement stmt = conn.prepareStatement(createTableSql)) {
@@ -297,8 +319,14 @@ public class SequenceKey {
                 migratePortColumnTypeIfNeeded(conn);
 
                 // 确保 isEnable 列存在，如果不存在则添加（H2 支持 IF NOT EXISTS）
-                String addColumnSql = "ALTER TABLE sk ADD COLUMN IF NOT EXISTS isEnable BOOLEAN DEFAULT TRUE NOT NULL";
-                try (PreparedStatement stmt = conn.prepareStatement(addColumnSql)) {
+                String addEnableColumnSql = "ALTER TABLE sk ADD COLUMN IF NOT EXISTS isEnable BOOLEAN DEFAULT TRUE NOT NULL";
+                try (PreparedStatement stmt = conn.prepareStatement(addEnableColumnSql)) {
+                    stmt.execute();
+                }
+
+                // 确保 enableWebHTML 列存在，如果不存在则添加（H2 支持 IF NOT EXISTS）
+                String addWebHTMLColumnSql = "ALTER TABLE sk ADD COLUMN IF NOT EXISTS enableWebHTML BOOLEAN DEFAULT FALSE NOT NULL";
+                try (PreparedStatement stmt = conn.prepareStatement(addWebHTMLColumnSql)) {
                     stmt.execute();
                 }
             }
@@ -355,7 +383,7 @@ public class SequenceKey {
                 return false;
             }
             // 创建时默认启用
-            String sql = "INSERT INTO sk (name, balance, expireTime, port, rate, isEnable) VALUES (?, ?, ?, ?, ?, TRUE)";
+            String sql = "INSERT INTO sk (name, balance, expireTime, port, rate, isEnable, enableWebHTML) VALUES (?, ?, ?, ?, ?, TRUE, FALSE)";
             try (Connection conn = getConnection();
                  PreparedStatement stmt = conn.prepareStatement(sql)) {
                 stmt.setString(1, name);
@@ -469,7 +497,7 @@ public class SequenceKey {
             }
             String sql = """
                     UPDATE sk 
-                    SET balance = ?, expireTime = ?, port = ?, rate = ?, isEnable = ?
+                    SET balance = ?, expireTime = ?, port = ?, rate = ?, isEnable = ?, enableWebHTML = ?
                     WHERE name = ?
                     """;
             try (Connection conn = getConnection();
@@ -479,7 +507,8 @@ public class SequenceKey {
                 stmt.setString(3, sequenceKey.port); // 直接存储 String
                 stmt.setDouble(4, sequenceKey.getRate());
                 stmt.setBoolean(5, sequenceKey.isEnable);
-                stmt.setString(6, name);
+                stmt.setBoolean(6, sequenceKey.enableWebHTML);
+                stmt.setString(7, name);
                 int rows = stmt.executeUpdate();
                 return rows > 0;
             }
@@ -488,8 +517,6 @@ public class SequenceKey {
             return false;
         }
     }
-
-    // ==================== 业务逻辑方法 ====================
 
     public static boolean isOutOfDate(String endTime) {
         try {
@@ -647,6 +674,24 @@ public class SequenceKey {
         return rate;
     }
 
+    /**
+     * 获取Web HTML启用状态
+     *
+     * @return true 如果启用，false 如果禁用
+     */
+    public boolean isHTMLEnabled() {
+        return enableWebHTML;
+    }
+
+    /**
+     * 设置Web HTML启用状态
+     *
+     * @param enableWebHTML true 启用，false 禁用
+     */
+    public void setHTMLEnabled(boolean enableWebHTML) {
+        this.enableWebHTML = enableWebHTML;
+    }
+
     @Override
     public String toString() {
         return "SequenceKey{" +
@@ -656,6 +701,7 @@ public class SequenceKey {
                 ", port=" + port +
                 ", rate=" + rate +
                 ", isEnable=" + isEnable +
+                ", enableWebHTML=" + enableWebHTML +
                 '}';
     }
 

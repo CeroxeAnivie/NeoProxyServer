@@ -125,14 +125,64 @@ public class ConsoleManager {
                 myConsole.error("Admin", "An internal error occurred while executing the key command, please check the logs.");
             }
         });
+
+        myConsole.registerCommand("web", "Enable or disable web HTML for a key", (List<String> params) -> {
+            if (params.size() != 2) {
+                myConsole.warn("Admin", "Usage: web <enable|disable> <key>");
+                return;
+            }
+
+            String action = params.get(0);
+            String keyName = params.get(1);
+
+            if (!action.equals("enable") && !action.equals("disable")) {
+                myConsole.warn("Admin", "Usage: web <enable|disable> <key>");
+                return;
+            }
+
+            if (!isKeyExistsByName(keyName)) {
+                myConsole.warn("Admin", "Key not found: " + keyName);
+                return;
+            }
+
+            boolean enable = action.equals("enable");
+
+            // 1. 先更新内存中的对象（如果存在）
+            boolean foundInMemory = false;
+            for (HostClient hostClient : availableHostClient) {
+                if (hostClient.getKey() != null && hostClient.getKey().getName().equals(keyName)) {
+                    hostClient.getKey().setHTMLEnabled(enable);
+                    foundInMemory = true;
+                }
+            }
+
+            // 2. 【关键修正】无论内存中是否存在，都必须从数据库加载、修改并保存
+            // 这确保了数据库总是被更新，并且是唯一的真实来源
+            SequenceKey keyFromDB = getKeyFromDB(keyName);
+            if (keyFromDB != null) {
+                keyFromDB.setHTMLEnabled(enable);
+                if (saveToDB(keyFromDB)) {
+                    myConsole.log("Admin", "Web HTML " + (enable ? "enabled" : "disabled") + " for key: " + keyName);
+                    // 如果内存中没有找到，说明这个密钥当前没有活跃连接，仅更新数据库即可
+                    if (!foundInMemory) {
+                        myConsole.log("Admin", "Note: Key '" + keyName + "' is not currently active. Database has been updated.");
+                    }
+                } else {
+                    myConsole.error("Admin", "Failed to update the database for key: " + keyName);
+                }
+            } else {
+                // 这种情况理论上不应该发生，因为前面已经检查过 isKeyExistsByName
+                myConsole.error("Admin", "Critical error: Could not load key '" + keyName + "' from database after confirming its existence.");
+            }
+        });
     }
 
     private static void handleAlert(boolean b) {
-        InfoBox.alert=b;
-        if (b){
-            myConsole.log("Admin","Alert Enabled !");
-        }else{
-            myConsole.log("Admin","Alert disabled !");
+        InfoBox.alert = b;
+        if (b) {
+            myConsole.log("Admin", "Alert Enabled !");
+        } else {
+            myConsole.log("Admin", "Alert disabled !");
         }
     }
 
@@ -631,7 +681,7 @@ public class ConsoleManager {
     }
 
     private static void listAllKeys() {
-        String sql = "SELECT name, balance, expireTime, port, rate, isEnable FROM sk";
+        String sql = "SELECT name, balance, expireTime, port, rate, isEnable, enableWebHTML FROM sk";
         try (var conn = getConnection();
              var stmt = conn.prepareStatement(sql);
              var rs = stmt.executeQuery()) {
@@ -643,9 +693,11 @@ public class ConsoleManager {
                 String portStr = rs.getString("port");
                 double rate = rs.getDouble("rate");
                 boolean isEnable = rs.getBoolean("isEnable");
+                boolean enableWebHTML = rs.getBoolean("enableWebHTML");
                 int clientNum = findKeyClientNum(name);
                 String formattedRate = killDoubleEndZero(rate);
                 String enableStatus = isEnable ? "✓" : "✗";
+                String webHTMLStatus = enableWebHTML ? "✓" : "✗";
 
                 rows.add(new String[]{
                         name,
@@ -654,6 +706,7 @@ public class ConsoleManager {
                         portStr,
                         formattedRate + "mbps",
                         enableStatus,
+                        webHTMLStatus,
                         String.valueOf(clientNum)
                 });
             }
@@ -662,8 +715,7 @@ public class ConsoleManager {
                 return;
             }
 
-            // 【修正】去掉序列号列
-            String[] headers = {"Name", "Balance", "ExpireTime", "Port", "Rate", "Enable", "Clients"};
+            String[] headers = {"Name", "Balance", "ExpireTime", "Port", "Rate", "Enable", "WebHTML", "Clients"};
             printAsciiTable(headers, rows);
         } catch (Exception e) {
             debugOperation(e);
@@ -731,6 +783,7 @@ public class ConsoleManager {
                 key list
                 key list <name | balance | rate | expire-time | enable>
                 key lp <name>
+                web <enable|disable> <key>
                 list
                 ban <ip_address>
                 unban <ip_address>
@@ -814,13 +867,13 @@ public class ConsoleManager {
             String portStr = sequenceKey.port;
             double rate = sequenceKey.getRate();
             boolean isEnable = sequenceKey.isEnable();
+            boolean enableWebHTML = sequenceKey.isHTMLEnabled();
             int clientNum = findKeyClientNum(name);
             String formattedRate = killDoubleEndZero(rate);
             String enableStatus = isEnable ? "✓" : "✗";
+            String webHTMLStatus = enableWebHTML ? "✓" : "✗";
 
-            // 【修正】去掉序列号列
-            String[] headers = {"Name", "Balance", "ExpireTime", "Port", "Rate", "Enable", "Clients"};
-            // 【修正】去掉序列号数据
+            String[] headers = {"Name", "Balance", "ExpireTime", "Port", "Rate", "Enable", "WebHTML", "Clients"};
             String[] data = {
                     name,
                     String.format("%.2f", balance),
@@ -828,6 +881,7 @@ public class ConsoleManager {
                     portStr,
                     formattedRate + "mbps",
                     enableStatus,
+                    webHTMLStatus,
                     String.valueOf(clientNum)
             };
 

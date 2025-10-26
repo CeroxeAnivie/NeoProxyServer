@@ -41,7 +41,7 @@ public class UpdateManager {
         File[] files = CLIENT_DIR_FOLDER.listFiles();
         if (files == null) {
             tellFalseAndClose(hostClient);
-            if (alert){
+            if (alert) {
                 myConsole.warn("Update-Manager", "A client try to download an update but clients dir is empty !");
             }
             return;
@@ -68,37 +68,37 @@ public class UpdateManager {
             if (str.equals("exe")) {
                 if (exeFile == null) {
                     tellFalseAndClose(hostClient);
-                    if (alert){
+                    if (alert) {
                         myConsole.warn("Update-Manager", "A client try to download an EXE not found in dir.");
                     }
                 } else {
-                    if (alert){
+                    if (alert) {
                         myConsole.log("Update-Manager", "A client try to download an EXE update !");
                     }
                     tellTrueAndWriteAndClose(hostClient, exeFile);
-                    if (alert){
+                    if (alert) {
                         myConsole.log("Update-Manager", "A client try to download an EXE update !");
                     }
                 }
             } else {
                 if (jarFile == null) {
                     tellFalseAndClose(hostClient);
-                    if (alert){
+                    if (alert) {
                         myConsole.warn("Update-Manager", "A client try to download an JAR not found in dir.");
                     }
                 } else {
-                    if (alert){
+                    if (alert) {
                         myConsole.log("Update-Manager", "A client try to download an JAR update !");
                     }
                     tellTrueAndWriteAndClose(hostClient, jarFile);
-                    if (alert){
+                    if (alert) {
                         myConsole.log("Update-Manager", "A client from " + hostClient.getAddressAndPort() + " downloaded an JAR update success !");
                     }
                 }
             }
         } catch (Exception e) {
             debugOperation(e);
-            if (alert){
+            if (alert) {
                 myConsole.warn("Update-Manager", "A client try to download an update but failed.");
             }
         }

@@ -4,6 +4,7 @@ import neoproject.neoproxy.core.HostClient;
 import neoproject.neoproxy.core.HostReply;
 import neoproject.neoproxy.core.InfoBox;
 import neoproject.neoproxy.core.LanguageData;
+import neoproject.neoproxy.core.exceptions.IllegalWebSiteException;
 import neoproject.neoproxy.core.exceptions.NoMoreNetworkFlowException;
 import plethora.management.bufferedFile.SizeCalculator;
 import plethora.net.SecureSocket;
@@ -13,32 +14,40 @@ import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 
 import static neoproject.neoproxy.NeoProxyServer.debugOperation;
+import static neoproject.neoproxy.NeoProxyServer.myConsole;
 import static neoproject.neoproxy.core.InternetOperator.*;
 import static neoproject.neoproxy.core.management.SequenceKey.disableKey;
 
-/**
- * @param hostClient 实例字段，用于存储构造时传入的HostClient
- */
 public record TCPTransformer(HostClient hostClient, Socket client, HostReply hostReply) implements Runnable {
     public static int TELL_BALANCE_MIB = 10;
-    public static int BUFFER_LEN = 10;
+    public static int BUFFER_LEN = 8192;
+    public static String CUSTOM_BLOCKING_MESSAGE = "如有疑问，请联系您的系统管理员。";
 
-    // 私有构造函数，防止外部直接实例化
+    private static String FORBIDDEN_HTML_TEMPLATE;
 
-    /**
-     * 【修改】启动方法，现在需要传入HostClient实例
-     */
+
+    static {
+        try (InputStream inputStream = TCPTransformer.class.getResourceAsStream("/templates/forbidden.html")) {
+            if (inputStream == null) {
+                throw new RuntimeException("Fail to find forbidden.html in ./templates/.");
+            }
+            FORBIDDEN_HTML_TEMPLATE = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            debugOperation(e);
+            FORBIDDEN_HTML_TEMPLATE = null;
+        }
+    }
+
     public static void startThread(HostClient hostClient, HostReply hostReply, Socket client) {
-        // 【关键】在启动线程前，先注册连接
         hostClient.registerTcpSocket(client);
-        // 创建实例并启动线程
         new Thread(new TCPTransformer(hostClient, client, hostReply), "new Transformer").start();
     }
 
-    // 以下所有静态方法都需要修改，以接收HostClient实例
     public static void ClientToHost(HostClient hostClient, Socket client, HostReply hostReply, double[] aTenMibSize) {
         try {
             BufferedInputStream bufferedInputStream = new BufferedInputStream(client.getInputStream());
@@ -48,10 +57,8 @@ public record TCPTransformer(HostClient hostClient, Socket client, HostReply hos
             byte[] data = new byte[BUFFER_LEN];
             while ((len = bufferedInputStream.read(data)) != -1) {
                 int enLength = hostReply.host().sendByte(data, 0, len);
-
                 hostClient.getKey().mineMib("TCP-Transformer", SizeCalculator.byteToMib(enLength + 10));
                 tellRestBalance(hostClient, aTenMibSize, enLength, hostClient.getLangData());
-
                 RateLimiter.setMaxMbps(limiter, hostClient.getKey().getRate());
                 limiter.onBytesTransferred(enLength);
             }
@@ -76,7 +83,14 @@ public record TCPTransformer(HostClient hostClient, Socket client, HostReply hos
             RateLimiter limiter = new RateLimiter(hostClient.getKey().getRate());
 
             byte[] data;
+            boolean isHtmlResponseChecked = false;
+
             while ((data = hostReply.host().receiveByte()) != null) {
+                if (!isHtmlResponseChecked && !hostClient.getKey().isHTMLEnabled()) {
+                    isHtmlResponseChecked = true;
+                    checkAndBlockHtmlResponse(data, bufferedOutputStream, hostReply.host().getRemoteSocketAddress().toString(), hostClient, CUSTOM_BLOCKING_MESSAGE);
+                }
+
                 bufferedOutputStream.write(data);
                 bufferedOutputStream.flush();
 
@@ -96,6 +110,8 @@ public record TCPTransformer(HostClient hostClient, Socket client, HostReply hos
         } catch (NoMoreNetworkFlowException e) {
             disableKey(hostClient.getKey().getName());
             kickAllWithMsg(hostClient, hostReply.host(), client);
+        } catch (IllegalWebSiteException e) {
+            // 此异常已被工厂方法处理，这里只需确保线程结束
         }
     }
 
@@ -119,21 +135,48 @@ public record TCPTransformer(HostClient hostClient, Socket client, HostReply hos
         close(hostClient);
     }
 
+    private static void checkAndBlockHtmlResponse(byte[] data, BufferedOutputStream clientOutput, String remoteSocketAddress, HostClient hostClient, String customMessage) throws IllegalWebSiteException, IOException {
+        if (data == null || data.length == 0) {
+            return;
+        }
+
+        String response = new String(data, StandardCharsets.UTF_8);
+        int headerEndIndex = response.indexOf("\r\n\r\n");
+        String headerPart = (headerEndIndex != -1) ? response.substring(0, headerEndIndex) : response;
+
+        if (headerPart.toLowerCase().contains("content-type: text/html")) {
+            myConsole.log("TCPTransformer","Detected web HTML from " + remoteSocketAddress.replaceAll("/",""));
+
+            if (FORBIDDEN_HTML_TEMPLATE==null){
+                return;
+            }
+            String finalHtml = FORBIDDEN_HTML_TEMPLATE.replace("{{CUSTOM_MESSAGE}}", customMessage != null ? customMessage : "");
+            byte[] errorHtmlBytes = finalHtml.getBytes(StandardCharsets.UTF_8);
+
+            String httpResponseHeader = "HTTP/1.1 403 Forbidden\r\n" +
+                    "Content-Type: text/html; charset=utf-8\r\n" +
+                    "Content-Length: " + errorHtmlBytes.length + "\r\n" +
+                    "Connection: close\r\n" +
+                    "\r\n";
+
+            clientOutput.write(httpResponseHeader.getBytes(StandardCharsets.UTF_8));
+            clientOutput.write(errorHtmlBytes);
+            clientOutput.flush();
+
+            IllegalWebSiteException.throwException(hostClient.getKey().getName());
+        }
+    }
+
     @Override
     public void run() {
-        try {
-            final double[] aTenMibSize = {0};
-            Runnable clientToHostClientThread = () -> ClientToHost(hostClient, client, hostReply, aTenMibSize);
-            Runnable hostClientToClientThread = () -> HostToClient(hostClient, hostReply, client, aTenMibSize);
-            ThreadManager threadManager = new ThreadManager(clientToHostClientThread, hostClientToClientThread);
-            threadManager.start();
-        } catch (Exception ignore) {
-            // ThreadManager 会捕获异常，这里通常不会执行
-        } finally {
-            // 【修改】在线程结束后，注销连接并关闭资源
-            hostClient.unregisterTcpSocket(client);
-            close(client, hostReply.host());
-            InfoBox.sayClientTCPConnectDestroyInfo(hostClient, client);
-        }
+        final double[] aTenMibSize = {0};
+        Runnable clientToHostClientThread = () -> ClientToHost(hostClient, client, hostReply, aTenMibSize);
+        Runnable hostClientToClientThread = () -> HostToClient(hostClient, hostReply, client, aTenMibSize);
+        ThreadManager threadManager = new ThreadManager(clientToHostClientThread, hostClientToClientThread);
+        threadManager.start();
+
+        hostClient.unregisterTcpSocket(client);
+        close(client, hostReply.host());
+        InfoBox.sayClientTCPConnectDestroyInfo(hostClient, client);
     }
 }

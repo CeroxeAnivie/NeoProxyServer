@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>访问受限</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+
+        :root {
+            --bg-color: #f0f2f5;
+            --card-bg: #ffffff;
+            --text-color: #1c1e21;
+            --secondary-text-color: #606770;
+            --accent-color: #e4606d;
+            --icon-color: #fa383e;
+            --border-radius: 12px;
+            --shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+        }
+
+        body {
+            margin: 0;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            text-align: center;
+        }
+
+        .container {
+            background-color: var(--card-bg);
+            padding: 48px;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+            max-width: 500px;
+            width: 90%;
+        }
+
+        .icon {
+            margin-bottom: 24px;
+        }
+
+        .icon svg {
+            width: 80px;
+            height: 80px;
+            color: var(--icon-color);
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+            margin: 0 0 16px;
+            color: var(--text-color);
+        }
+
+        p {
+            font-size: 16px;
+            font-weight: 400;
+            line-height: 1.6;
+            margin: 0 0 8px;
+            color: var(--secondary-text-color);
+        }
+
+        /* 【修改】自定义消息样式：仅加粗，移除红色框 */
+        .custom-message {
+            margin-top: 20px;
+            font-weight: bold; /* 加粗 */
+            color: var(--text-color); /* 使用普通文本颜色 */
+        }
+
+    </style>
+</head>
+<body>
+<main class="container">
+    <div class="icon">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+        </svg>
+    </div>
+    <h1>访问受限</h1>
+    <p>抱歉，您没有权限访问此网页内容。</p>
+    <p>这可能是因为您的访问策略限制了此类请求。</p>
+
+    <!-- 自定义消息占位符，现在会以加粗样式显示 -->
+    <p class="custom-message">{{CUSTOM_MESSAGE}}</p>
+
+    <!-- 【已删除】页脚信息 -->
+</main>
+</body>
+</html>

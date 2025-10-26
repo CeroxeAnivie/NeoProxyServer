@@ -36,6 +36,7 @@ public class ConfigOperator {
                 HostClient.AES_KEY_SIZE = Integer.parseInt(lineConfigReader.get("AES_KEY_SIZE"));
                 TCPTransformer.BUFFER_LEN = Integer.parseInt(lineConfigReader.get("BUFFER_LEN"));
                 TCPTransformer.TELL_BALANCE_MIB = Integer.parseInt(lineConfigReader.get("TELL_BALANCE_MIB"));
+                TCPTransformer.CUSTOM_BLOCKING_MESSAGE = lineConfigReader.get("CUSTOM_BLOCKING_MESSAGE");
                 IPChecker.ENABLE_BAN = Boolean.parseBoolean(lineConfigReader.get("ENABLE_BAN"));
                 TransferSocketAdapter.SO_TIMEOUT = Integer.parseInt(lineConfigReader.get("SO_TIMEOUT"));
 
@@ -64,6 +65,10 @@ public class ConfigOperator {
                     #是否开启非法连接封禁
                     #Whether to enable illegal connection ban
                     ENABLE_BAN=true
+                    
+                    ##自定义网页拦截消息，换行使用<br>
+                    #Customize webpage interception messages, use <br> for line breaks
+                    CUSTOM_BLOCKING_MESSAGE=如有疑问，请联系您的系统管理员。
                     
                     #设置服务端最大等待客户端响应的时间，单位为毫秒
                     #Set the maximum waiting time for the server to respond to the client, in milliseconds

@@ -2,10 +2,7 @@ package neoproject.neoproxy.core.management;
 
 import com.google.gson.Gson;
 import com.google.gson.annotations.SerializedName;
-
-import java.net.InetAddress;
-import java.net.URI;
-import java.net.UnknownHostException;
+import java.net.*;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -14,14 +11,31 @@ import java.util.List;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
-import static neoproject.neoproxy.NeoProxyServer.sayError;
-import static neoproject.neoproxy.NeoProxyServer.sayInfo;
+import static neoproject.neoproxy.NeoProxyServer.*;
 
 public class IPGeolocationHelper {
 
-    private static final HttpClient httpClient = HttpClient.newBuilder()
-            .executor(Executors.newCachedThreadPool())
-            .build();
+    // --- 核心：创建两个客户端，一个使用系统代理，一个直接连接 ---
+    private static final HttpClient httpClientWithProxy;
+    private static final HttpClient httpClientDirect;
+    private static final boolean USE_SYSTEM_PROXY;
+
+    static {
+        // 检测系统代理是否配置（使用增强版逻辑）
+        USE_SYSTEM_PROXY = isSystemProxyConfigured();
+        sayInfo("IPGeolocationHelper", "System proxy detected: " + USE_SYSTEM_PROXY + ". API requests will " + (USE_SYSTEM_PROXY ? "USE" : "NOT USE") + " system proxy.");
+
+        // 创建一个使用系统默认代理选择器的客户端
+        httpClientWithProxy = HttpClient.newBuilder()
+                .executor(Executors.newCachedThreadPool())
+                .build(); // 默认情况下，HttpClient会使用 ProxySelector.getDefault()
+
+        // 创建一个强制绕过所有代理的客户端
+        httpClientDirect = HttpClient.newBuilder()
+                .proxy(ProxySelector.of(null)) // ProxySelector.of(null) 是一个特殊值，表示不使用任何代理
+                .executor(Executors.newCachedThreadPool())
+                .build();
+    }
 
     private static final Gson gson = new Gson();
     private static final ExecutorService executor = Executors.newCachedThreadPool();
@@ -63,7 +77,7 @@ public class IPGeolocationHelper {
         for (CompletableFuture<LocationInfo> apiFuture : apiFutures) {
             apiFuture.thenAccept(result -> {
                 if (result != null && result.success() && !finalResult.isDone()) {
-                    sayInfo("IPGeolocationHelper: Got location from " + result.source() + " for IP " + ip + ". Cancelling other requests.");
+                    myConsole.log("IPGeolocationHelper","Got location from " + result.source() + " for IP " + ip + ". Cancelling other requests.");
                     finalResult.complete(result);
                     apiFutures.forEach(f -> {
                         if (f != apiFuture) {
@@ -103,7 +117,9 @@ public class IPGeolocationHelper {
                     .GET()
                     .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            // --- 核心：根据检测结果选择使用哪个客户端 ---
+            HttpClient clientToUse = USE_SYSTEM_PROXY ? httpClientWithProxy : httpClientDirect;
+            HttpResponse<String> response = clientToUse.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() == 200) {
                 LocationInfo result = apiService.parser.apply(response.body());
@@ -115,6 +131,47 @@ public class IPGeolocationHelper {
             throw new RuntimeException(e);
         }
         return null;
+    }
+
+    // --- 核心：增强版代理检测逻辑（增加了调试输出） ---
+    private static boolean isSystemProxyConfigured() {
+        // 1. 首先尝试标准的 ProxySelector
+        try {
+            ProxySelector defaultSelector = ProxySelector.getDefault();
+            if (defaultSelector != null) {
+                URI testUri = new URI("https://api.ip.sb/geoip");
+                List<Proxy> proxyList = defaultSelector.select(testUri);
+                if (proxyList != null && !proxyList.isEmpty() && proxyList.get(0) != Proxy.NO_PROXY) {
+                    sayInfo("IPGeolocationHelper", "Proxy detected via ProxySelector.");
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            sayError("IPGeolocationHelper", "ProxySelector check failed: " + e.getMessage());
+        }
+
+        // 2. 如果标准方法失败，直接检查环境变量
+        sayInfo("IPGeolocationHelper", "ProxySelector failed. Checking environment variables directly.");
+        String httpProxy = System.getenv("http_proxy");
+        String httpsProxy = System.getenv("https_proxy");
+
+        // --- 核心：增加调试输出 ---
+        if(IS_DEBUG_MODE){
+            myConsole.warn("IPGeolocationHelper", "DEBUG: Value of 'http_proxy' seen by Java is: '" + httpProxy + "'");
+            myConsole.warn("IPGeolocationHelper", "DEBUG: Value of 'https_proxy' seen by Java is: '" + httpsProxy + "'");
+        }
+
+        if (httpProxy != null && !httpProxy.isEmpty()) {
+            sayInfo("IPGeolocationHelper", "http_proxy environment variable found: " + httpProxy);
+            return true;
+        }
+        if (httpsProxy != null && !httpsProxy.isEmpty()) {
+            sayInfo("IPGeolocationHelper", "https_proxy environment variable found: " + httpsProxy);
+            return true;
+        }
+
+        sayInfo("IPGeolocationHelper", "No proxy found via ProxySelector or environment variables.");
+        return false;
     }
 
     // --- 核心：URL构建逻辑，只包含三个API ---
@@ -166,9 +223,7 @@ public class IPGeolocationHelper {
                 String location = locBuilder.length() > 2 ? locBuilder.substring(0, locBuilder.length() - 2) : "N/A";
                 return new LocationInfo(location, isp, true);
             }
-        } catch (Exception e) {
-            sayError("IPGeolocationHelper: Failed to parse IP-API response: " + e.getMessage());
-        }
+        } catch (Exception e) { sayError("IPGeolocationHelper: Failed to parse IP-API response: " + e.getMessage()); }
         return LocationInfo.failed();
     }
 
@@ -187,9 +242,7 @@ public class IPGeolocationHelper {
                 String location = locBuilder.length() > 2 ? locBuilder.substring(0, locBuilder.length() - 2) : "N/A";
                 return new LocationInfo(location, isp, true);
             }
-        } catch (Exception e) {
-            sayError("IPGeolocationHelper: Failed to parse IPAPI.co response: " + e.getMessage());
-        }
+        } catch (Exception e) { sayError("IPGeolocationHelper: Failed to parse IPAPI.co response: " + e.getMessage()); }
         return LocationInfo.failed();
     }
 
@@ -204,28 +257,14 @@ public class IPGeolocationHelper {
     }
 
     public record LocationInfo(String location, String isp, boolean success, String source) {
-        public LocationInfo(String location, String isp, boolean success) {
-            this(location, isp, success, "Unknown");
-        }
-
-        public static LocationInfo failed() {
-            return new LocationInfo("N/A", "N/A", false, "Failed");
-        }
+        public LocationInfo(String location, String isp, boolean success) { this(location, isp, success, "Unknown"); }
+        public static LocationInfo failed() { return new LocationInfo("N/A", "N/A", false, "Failed"); }
     }
 
     private static class APIService {
-        String name;
-        String baseUrl;
-        java.util.function.Function<String, LocationInfo> parser;
-        int priority;
-        String apiKey;
-
+        String name; String baseUrl; java.util.function.Function<String, LocationInfo> parser; int priority; String apiKey;
         APIService(String name, String baseUrl, java.util.function.Function<String, LocationInfo> parser, int priority, String apiKey) {
-            this.name = name;
-            this.baseUrl = baseUrl;
-            this.parser = parser;
-            this.priority = priority;
-            this.apiKey = apiKey;
+            this.name = name; this.baseUrl = baseUrl; this.parser = parser; this.priority = priority; this.apiKey = apiKey;
         }
     }
 

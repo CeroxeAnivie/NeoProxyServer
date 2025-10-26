@@ -58,7 +58,7 @@ public class NeoProxyServer {
             TransferSocketAdapter.startThread();
         } catch (IOException e) {
             debugOperation(e);
-            myConsole.error("Main", "Can not bind the outPort, it's occupied?");
+            sayError("Can not bind the outPort, it's occupied?");
             System.exit(-1);
         }
     }
@@ -129,7 +129,7 @@ public class NeoProxyServer {
             } catch (IndexOutOfBoundsException | IOException |
                      NoMorePortException |
                      AlreadyBlindPortException | UnRecognizedKeyException | OutDatedKeyException e) {
-                InfoBox.sayHostClientDiscInfo(hostClient, "Main");
+                InfoBox.sayHostClientDiscInfo(hostClient, "NeoProxyServer");
                 hostClient.close();
             } catch (UnSupportHostVersionException e) {
                 UpdateManager.handle(hostClient);
@@ -170,7 +170,7 @@ public class NeoProxyServer {
                 try {
                     InternetOperator.sendCommand(hostClient, "sendSocket;" + InternetOperator.getInternetAddressAndPort(client));
                 } catch (Exception e) {
-                    InfoBox.sayHostClientDiscInfo(hostClient, "Main");
+                    InfoBox.sayHostClientDiscInfo(hostClient, "NeoProxyServer");
                     hostClient.close();
                     close(client);
                     break;
@@ -260,7 +260,7 @@ public class NeoProxyServer {
     }
 
     public static void sayInfo(String str) {
-        myConsole.log("Main", str);
+        myConsole.log("NeoProxyServer", str);
     }
 
     public static void sayInfo(String subject, String str) {
@@ -268,7 +268,7 @@ public class NeoProxyServer {
     }
 
     public static void sayError(String str) {
-        myConsole.error("Main", str);
+        myConsole.error("NeoProxyServer", str);
     }
 
     public static void sayError(String subject, String str) {

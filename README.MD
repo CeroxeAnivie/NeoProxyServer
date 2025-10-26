@@ -188,22 +188,46 @@ NeoProxyServer 提供多层安全保护：
 
 ### 常见问题
 
-1. **端口被占用**
+1. **如何让 IP 查询 API 连接走代理**
+    - 如果是 Windows ，使用 Clash for Windows，开启系统代理，<br>使用 JVM 参数 `-Djava.net.useSystemProxies=true` 即可自动识别，比如
+    - ```
+      java -Djava.net.useSystemProxies=true -jar NeoProxyServer-4.9.2.jar
+      ```
+    - 如果是 Linux，可以参考 [这里](https://gitee.com/tools-repo/clash-for-linux-install#%E5%BF%AB%E9%80%9F%E5%BC%80%E5%A7%8B) 安装 Clash for Linux ，配置好后开启代理。
+    - 配置完以后执行 env | grep -i proxy ，你应该看到类似以下环境变量的输出
+    - >root@serXXXX:~# env | grep -i proxy
+      no_proxy=localhost,127.0.0.1,::1
+      https_proxy=http://127.0.0.1:7890
+      NO_PROXY=localhost,127.0.0.1,::1
+      HTTPS_PROXY=http://127.0.0.1:7890
+      HTTP_PROXY=http://127.0.0.1:7890
+      http_proxy=http://127.0.0.1:7890
+      ALL_PROXY=socks5h://127.0.0.1:7890
+      all_proxy=socks5h://127.0.0.1:7890
+    - 关注 HTTP_PROXY 和 HTTPS_PROXY 的值，使用以下 bash 文件来启动 jar 即可<br>会自动识别环境变量
+    - ```
+      export http_proxy="http://127.0.0.1:7890"
+      export https_proxy="http://127.0.0.1:7890"
+      
+      java -Djava.net.useSystemProxies=true -jar NeoProxyServer-4.8.2.jar
+      ```
+
+2. **端口被占用**
     - 检查配置文件中的端口设置
     - 确保端口未被其他程序占用
     - 使用 `netstat` 或 `lsof` 命令检查端口状态
 
-2. **客户端连接失败**
+3. **客户端连接失败**
     - 检查客户端版本是否兼容
     - 确认密钥是否有效且未过期
     - 检查网络防火墙设置
 
-3. **地理位置查询失败**
+4. **地理位置查询失败**
     - 检查系统代理设置
     - 确认网络连接正常
     - 查看调试日志中的错误信息
 
-4. **流量控制不生效**
+5. **流量控制不生效**
     - 确认密钥已设置流量配额
     - 检查速率限制设置
     - 查看实时流量监控日志

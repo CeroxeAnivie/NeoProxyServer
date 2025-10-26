@@ -20,6 +20,7 @@ import java.nio.charset.StandardCharsets;
 
 import static neoproject.neoproxy.NeoProxyServer.debugOperation;
 import static neoproject.neoproxy.NeoProxyServer.myConsole;
+import static neoproject.neoproxy.core.InfoBox.alert;
 import static neoproject.neoproxy.core.InternetOperator.*;
 import static neoproject.neoproxy.core.management.SequenceKey.disableKey;
 
@@ -145,7 +146,9 @@ public record TCPTransformer(HostClient hostClient, Socket client, HostReply hos
         String headerPart = (headerEndIndex != -1) ? response.substring(0, headerEndIndex) : response;
 
         if (headerPart.toLowerCase().contains("content-type: text/html")) {
-            myConsole.log("TCPTransformer","Detected web HTML from " + remoteSocketAddress.replaceAll("/",""));
+            if (alert){
+                myConsole.log("TCPTransformer","Detected web HTML from " + remoteSocketAddress.replaceAll("/",""));
+            }
 
             if (FORBIDDEN_HTML_TEMPLATE==null){
                 return;

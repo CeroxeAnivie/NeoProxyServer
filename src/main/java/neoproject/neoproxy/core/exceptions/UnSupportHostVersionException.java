@@ -1,17 +1,16 @@
 package neoproject.neoproxy.core.exceptions;
 
-import neoproject.neoproxy.NeoProxyServer;
 import neoproject.neoproxy.core.HostClient;
+import neoproject.neoproxy.core.ServerLogger;
 
 public class UnSupportHostVersionException extends Exception {
-    private UnSupportHostVersionException(String msg) {
-        super(msg);
+    public UnSupportHostVersionException(String message) {
+        super(message);
+        ServerLogger.error("UnSupportHostVersionException", "exception.unSupportHostVersion.message", message);
     }
 
     public static void throwException(String version, HostClient hostClient) throws UnSupportHostVersionException {
-        String str = "The host client from " + hostClient.getAddressAndPort() + " try to use an outdated version " + version + " to connect , refuse it...";
-        NeoProxyServer.sayInfo(str);
-        throw new UnSupportHostVersionException(str);
+        String message = ServerLogger.getMessage("exception.unSupportHostVersion.message", version);
+        throw new UnSupportHostVersionException(message);
     }
-
 }

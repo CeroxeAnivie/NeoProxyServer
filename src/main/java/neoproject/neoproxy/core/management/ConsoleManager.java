@@ -2,7 +2,7 @@ package neoproject.neoproxy.core.management;
 
 import neoproject.neoproxy.NeoProxyServer;
 import neoproject.neoproxy.core.HostClient;
-import neoproject.neoproxy.core.InfoBox;
+import neoproject.neoproxy.core.ServerLogger;
 import plethora.utils.MyConsole;
 
 import java.util.ArrayList;
@@ -44,7 +44,7 @@ public class ConsoleManager {
 
     private static void initCommand() {
         myConsole.registerCommand(null, "Unknown command", (List<String> params) -> {
-            myConsole.warn("Admin", "Unknown command, type 'help' for assistance.");
+            ServerLogger.infoWithSource("Admin", "consoleManager.unknownCommand");
         });
 
         myConsole.registerCommand("alert", "Set whether to enable verbose console output", (List<String> params) -> {
@@ -68,9 +68,9 @@ public class ConsoleManager {
             String ipToBan = params.getFirst();
             if (isValidIP(ipToBan)) {
                 if (IPChecker.exec(ipToBan, IPChecker.DO_BAN)) {
-                    myConsole.log("Admin", "IP address " + ipToBan + " has been banned.");
+                    ServerLogger.infoWithSource("Admin", "consoleManager.ipBanned", ipToBan);
                 } else {
-                    myConsole.warn("Admin", "Failed to ban IP address " + ipToBan + " .");
+                    ServerLogger.errorWithSource("Admin", "consoleManager.banFailed", ipToBan);
                 }
             } else {
                 myConsole.warn("Admin", "Invalid IP address format: " + ipToBan);
@@ -85,9 +85,9 @@ public class ConsoleManager {
             String ipToUnban = params.getFirst();
             if (isValidIP(ipToUnban)) {
                 if (IPChecker.exec(ipToUnban, UNBAN)) {
-                    myConsole.log("Admin", "IP address " + ipToUnban + " has been unbanned.");
+                    ServerLogger.infoWithSource("Admin", "consoleManager.ipUnbanned", ipToUnban);
                 } else {
-                    myConsole.warn("Admin", "IP address " + ipToUnban + " was not found in the ban list or failed to remove.");
+                    ServerLogger.errorWithSource("Admin", "consoleManager.unbanFailed", ipToUnban);
                 }
             } else {
                 myConsole.warn("Admin", "Invalid IP address format: " + ipToUnban);
@@ -122,7 +122,7 @@ public class ConsoleManager {
                 }
             } catch (Exception e) {
                 debugOperation(e);
-                myConsole.error("Admin", "An internal error occurred while executing the key command, please check the logs.");
+                ServerLogger.errorWithSource("Admin", "consoleManager.internalKeyError");
             }
         });
 
@@ -147,7 +147,6 @@ public class ConsoleManager {
 
             boolean enable = action.equals("enable");
 
-            // 1. 先更新内存中的对象（如果存在）
             boolean foundInMemory = false;
             for (HostClient hostClient : availableHostClient) {
                 if (hostClient.getKey() != null && hostClient.getKey().getName().equals(keyName)) {
@@ -156,62 +155,48 @@ public class ConsoleManager {
                 }
             }
 
-            // 2. 【关键修正】无论内存中是否存在，都必须从数据库加载、修改并保存
-            // 这确保了数据库总是被更新，并且是唯一的真实来源
             SequenceKey keyFromDB = getKeyFromDB(keyName);
             if (keyFromDB != null) {
                 keyFromDB.setHTMLEnabled(enable);
                 if (saveToDB(keyFromDB)) {
-                    myConsole.log("Admin", "Web HTML " + (enable ? "enabled" : "disabled") + " for key: " + keyName);
-                    // 如果内存中没有找到，说明这个密钥当前没有活跃连接，仅更新数据库即可
+                    String logKey = enable ? "consoleManager.webHtmlEnabled" : "consoleManager.webHtmlDisabled";
+                    ServerLogger.infoWithSource("Admin", logKey, keyName);
                     if (!foundInMemory) {
-                        myConsole.log("Admin", "Note: Key '" + keyName + "' is not currently active. Database has been updated.");
+                        ServerLogger.infoWithSource("Admin", "consoleManager.webHtmlNote", keyName);
                     }
                 } else {
-                    myConsole.error("Admin", "Failed to update the database for key: " + keyName);
+                    ServerLogger.errorWithSource("Admin", "consoleManager.dbUpdateFailed", keyName);
                 }
             } else {
-                // 这种情况理论上不应该发生，因为前面已经检查过 isKeyExistsByName
-                myConsole.error("Admin", "Critical error: Could not load key '" + keyName + "' from database after confirming its existence.");
+                ServerLogger.errorWithSource("Admin", "consoleManager.criticalDbError", keyName);
             }
         });
     }
 
     private static void handleAlert(boolean b) {
-        InfoBox.alert = b;
+        ServerLogger.alert = b;
         if (b) {
-            myConsole.log("Admin", "Alert Enabled !");
+            ServerLogger.infoWithSource("Admin", "consoleManager.alertEnabled");
         } else {
-            myConsole.log("Admin", "Alert disabled !");
+            ServerLogger.infoWithSource("Admin", "consoleManager.alertDisabled");
         }
     }
 
-    // ==================== Manual Table Printing Method (修正边框) ====================
-
-    /**
-     * Manually build an aligned table using StringBuilder.
-     * This is the most reliable and controllable method.
-     *
-     * @param headers Table headers
-     * @param data    Data list
-     */
+    // ==================== Manual Table Printing Method ====================
     private static void printAsciiTable(String[] headers, List<String[]> data) {
         if (data == null || data.isEmpty()) {
-            myConsole.log("Admin", "No data to display.");
+            ServerLogger.infoWithSource("Admin", "consoleManager.noDataToDisplay");
             return;
         }
 
-        // 1. 计算每列的最大显示宽度和最大行数
         int[] colWidths = new int[headers.length];
-        int[] maxLines = new int[headers.length]; // 记录每列的最大行数
+        int[] maxLines = new int[headers.length];
 
-        // 初始化表头宽度和行数
         for (int i = 0; i < headers.length; i++) {
             colWidths[i] = getDisplayWidth(headers[i]);
             maxLines[i] = 1;
         }
 
-        // 计算数据单元格的宽度和行数
         for (String[] row : data) {
             for (int i = 0; i < row.length; i++) {
                 String[] lines = row[i].split("\n");
@@ -224,18 +209,12 @@ public class ConsoleManager {
             }
         }
 
-        // 2. 使用StringBuilder构建表格字符串
         StringBuilder sb = new StringBuilder();
         sb.append('\n');
-
-        // 绘制上边框
         writeTopBorder(sb, colWidths);
-
-        // 绘制表头
         writeRow(sb, headers, colWidths, maxLines);
         writeMiddleBorder(sb, colWidths);
 
-        // 绘制数据行
         for (int i = 0; i < data.size(); i++) {
             writeRow(sb, data.get(i), colWidths, maxLines);
             if (i < data.size() - 1) {
@@ -244,18 +223,15 @@ public class ConsoleManager {
         }
 
         writeBottomBorder(sb, colWidths);
-        myConsole.log("Admin", sb.toString());
+        ServerLogger.logRaw("Admin", sb.toString());
     }
 
-    // 修改writeRow方法以支持多行
     private static void writeRow(StringBuilder sb, String[] row, int[] widths, int[] maxLines) {
-        // 将每列内容按换行符分割
         String[][] lines = new String[row.length][];
         for (int i = 0; i < row.length; i++) {
             lines[i] = row[i].split("\n");
         }
 
-        // 逐行绘制
         for (int line = 0; line < getMaxLineCount(maxLines); line++) {
             sb.append('│');
             for (int col = 0; col < row.length; col++) {
@@ -270,7 +246,6 @@ public class ConsoleManager {
         }
     }
 
-    // 新增方法：获取所有列中的最大行数
     private static int getMaxLineCount(int[] maxLines) {
         int max = 0;
         for (int lines : maxLines) {
@@ -279,7 +254,6 @@ public class ConsoleManager {
         return max;
     }
 
-    // 修改writeTopBorder方法
     private static void writeTopBorder(StringBuilder sb, int[] widths) {
         sb.append('┌');
         for (int i = 0; i < widths.length; i++) {
@@ -289,7 +263,6 @@ public class ConsoleManager {
         sb.append("┐\n");
     }
 
-    // 修改writeMiddleBorder方法
     private static void writeMiddleBorder(StringBuilder sb, int[] widths) {
         sb.append('├');
         for (int i = 0; i < widths.length; i++) {
@@ -299,7 +272,6 @@ public class ConsoleManager {
         sb.append("┤\n");
     }
 
-    // 修改writeBottomBorder方法
     private static void writeBottomBorder(StringBuilder sb, int[] widths) {
         sb.append('└');
         for (int i = 0; i < widths.length; i++) {
@@ -309,14 +281,10 @@ public class ConsoleManager {
         sb.append("┘\n");
     }
 
-    /**
-     * Calculate the display width of a string (CJK characters count as 2, others as 1).
-     */
     private static int getDisplayWidth(String str) {
         if (str == null) return 0;
         int width = 0;
         for (char c : str.toCharArray()) {
-            // Use a more precise Unicode range check
             if (Character.UnicodeBlock.of(c) == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS ||
                     Character.UnicodeBlock.of(c) == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS ||
                     Character.UnicodeBlock.of(c) == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A) {
@@ -328,31 +296,24 @@ public class ConsoleManager {
         return width;
     }
 
-
     // ==================== list Command Implementation ====================
 
     private static void listActiveHostClients() {
         if (availableHostClient.isEmpty()) {
-            myConsole.log("Admin", "No active HostClient connections.");
+            ServerLogger.infoWithSource("Admin", "consoleManager.noActiveHostClients");
             return;
         }
 
-        // 【修正】统计每个Access Code的数量，并确定代表实例
         Map<String, Integer> accessCodeCounts = new HashMap<>();
         Map<String, HostClient> accessCodeRepresentatives = new HashMap<>();
         Map<String, List<HostClient>> accessCodeToHostClients = new HashMap<>();
 
-        // 首先统计每个Access Code的数量，并选择第一个作为代表
         for (HostClient hostClient : availableHostClient) {
             String accessCode = hostClient.getKey() != null ? hostClient.getKey().getName() : "Unknown";
             accessCodeCounts.put(accessCode, accessCodeCounts.getOrDefault(accessCode, 0) + 1);
-
-            // 如果是第一次遇到这个Access Code，将其设为代表
             if (!accessCodeRepresentatives.containsKey(accessCode)) {
                 accessCodeRepresentatives.put(accessCode, hostClient);
             }
-
-            // 收集该Access Code的所有HostClient实例
             accessCodeToHostClients.computeIfAbsent(accessCode, k -> new ArrayList<>()).add(hostClient);
         }
 
@@ -365,11 +326,9 @@ public class ConsoleManager {
             }
         }
 
-        // 【修正】去掉序列号列
-        String[] headers = {"HostClient IP", "Access Code", "Location", "ISP", "External Clients"};
+        String[] headers = ServerLogger.getMessage("consoleManager.headers.list").split("\\|");
         List<String[]> rows = new ArrayList<>();
 
-        // 【修正】只添加代表实例，并传递该Access Code的所有实例
         for (Map.Entry<String, HostClient> entry : accessCodeRepresentatives.entrySet()) {
             HostClient hostClient = entry.getValue();
             String accessCode = entry.getKey();
@@ -382,20 +341,14 @@ public class ConsoleManager {
     }
 
     public static void printClientRegistrationTable(String accessCode, String ip, String location, String isp) {
-        // 【修正】去掉序列号列
-        String[] headers = {"Access Code", "IP Address", "Location", "ISP"};
-        // 【修正】去掉序列号数据
+        String[] headers = ServerLogger.getMessage("consoleManager.headers.registration").split("\\|");
         String[] data = {accessCode, ip, location, isp};
-
         List<String[]> rows = new ArrayList<>();
         rows.add(data);
-
         printAsciiTable(headers, rows);
     }
 
-    // ==================== Existing Code, Unchanged ====================
-    // (handleEnableCommand, handleDisableCommand, handleSetCommand, etc.)
-    // ... For brevity, the unchanged parts are omitted here, but should be kept in the actual code ...
+    // ==================== Key Command Implementations ====================
 
     private static void handleEnableCommand(List<String> params) {
         if (params.size() != 2) {
@@ -405,14 +358,14 @@ public class ConsoleManager {
 
         String name = params.get(1);
         if (!isKeyExistsByName(name)) {
-            myConsole.warn("Admin", "Key not found...");
+            ServerLogger.errorWithSource("Admin", "consoleManager.keyNotFound");
             return;
         }
 
         if (enableKey(name)) {
-            myConsole.log("Admin", "Key " + name + " has been enabled!");
+            ServerLogger.infoWithSource("Admin", "consoleManager.keyEnabled", name);
         } else {
-            myConsole.warn("Admin", "Failed to enable key.");
+            ServerLogger.errorWithSource("Admin", "consoleManager.enableKeyFailed");
         }
     }
 
@@ -424,14 +377,14 @@ public class ConsoleManager {
 
         String name = params.get(1);
         if (!isKeyExistsByName(name)) {
-            myConsole.warn("Admin", "Key not found...");
+            ServerLogger.errorWithSource("Admin", "consoleManager.keyNotFound");
             return;
         }
 
         if (disableKey(name)) {
-            myConsole.log("Admin", "Key " + name + " has been disabled!");
+            ServerLogger.infoWithSource("Admin", "consoleManager.keyDisabled", name);
         } else {
-            myConsole.warn("Admin", "Failed to disable key.");
+            ServerLogger.errorWithSource("Admin", "consoleManager.disableKeyFailed");
         }
     }
 
@@ -445,7 +398,7 @@ public class ConsoleManager {
 
         String name = params.get(1);
         if (!isKeyExistsByName(name)) {
-            myConsole.warn("Admin", "No such key: " + name);
+            ServerLogger.errorWithSource("Admin", "consoleManager.keyNotFoundSpecific", name);
             return;
         }
 
@@ -462,7 +415,7 @@ public class ConsoleManager {
         if (inMemoryKeysToUpdate.isEmpty()) {
             dbKeySnapshot = getKeyFromDB(name);
             if (dbKeySnapshot == null) {
-                myConsole.warn("Admin", "Could not find the key in database.");
+                ServerLogger.errorWithSource("Admin", "consoleManager.keyNotFound");
                 return;
             }
         }
@@ -508,15 +461,15 @@ public class ConsoleManager {
                     hasUpdate = true;
                     newPortStr = validatedPortStr;
                 } else {
-                    myConsole.warn("Admin", "Invalid outPort value: '" + portStr + "'. Must be a number (1-65535) or a range (e.g., 3344-3350).");
+                    ServerLogger.errorWithSource("Admin", "consoleManager.invalidPortValue", portStr);
                 }
             } else if (param.startsWith("t=")) {
                 String expireTimeInput = param.substring(2);
                 String expireTime = correctInputTime(expireTimeInput);
                 if (expireTime == null) {
-                    myConsole.warn("Admin", "Illegal time input: " + expireTimeInput);
+                    ServerLogger.errorWithSource("Admin", "consoleManager.illegalTimeInput", expireTimeInput);
                 } else if (isOutOfDate(expireTime)) {
-                    myConsole.warn("Admin", "The entered time cannot be earlier than the current time: " + expireTime);
+                    ServerLogger.errorWithSource("Admin", "consoleManager.timeEarlierThanCurrent", expireTime);
                 } else {
                     for (SequenceKey key : inMemoryKeysToUpdate) {
                         key.expireTime = expireTime;
@@ -527,39 +480,37 @@ public class ConsoleManager {
                     hasUpdate = true;
                 }
             } else {
-                myConsole.warn("Admin", "Unknown parameter: " + param + " (use b=, r=, p=, t=)");
+                ServerLogger.errorWithSource("Admin", "consoleManager.unknownParameter", param);
             }
         }
 
         if (!hasUpdate) {
-            myConsole.warn("Admin", "No valid parameters provided. Use b=<balance>, r=<rate>, p=<outPort>, t=<expireTime>");
+            ServerLogger.errorWithSource("Admin", "consoleManager.noValidParams");
             return;
         }
 
         if (newPortStr != null) {
-            myConsole.log("Admin", "Port policy changed to: '" + newPortStr + "'. Validating active connections...");
+            ServerLogger.infoWithSource("Admin", "consoleManager.portPolicyChanged", newPortStr);
             int disconnectedCount = 0;
             for (HostClient client : hostClientsToUpdate) {
                 int currentExternalPort = client.getOutPort();
                 if (!isPortInRange(currentExternalPort, newPortStr)) {
-                    myConsole.log("Admin", "Disconnecting client (Key: " + name +
-                            ", Current Port: " + currentExternalPort +
-                            ") as it no longer complies with the new outPort policy.");
+                    ServerLogger.infoWithSource("Admin", "consoleManager.disconnectingClient", name, String.valueOf(currentExternalPort));
                     client.close();
                     disconnectedCount++;
                 }
             }
             if (disconnectedCount > 0) {
-                myConsole.warn("Admin", "Disconnected " + disconnectedCount + " client(s) due to outPort policy change.");
+                ServerLogger.errorWithSource("Admin", "consoleManager.clientsDisconnected", String.valueOf(disconnectedCount));
             }
         }
 
         SequenceKey keyToSave = (dbKeySnapshot != null) ? dbKeySnapshot : inMemoryKeysToUpdate.getFirst();
         boolean isSuccess = saveToDB(keyToSave);
         if (isSuccess) {
-            myConsole.log("Admin", "Operation complete!");
+            ServerLogger.infoWithSource("Admin", "consoleManager.operationComplete");
         } else {
-            myConsole.warn("Admin", "Fail to set the key.");
+            ServerLogger.errorWithSource("Admin", "consoleManager.setKeyFailed");
         }
     }
 
@@ -599,7 +550,7 @@ public class ConsoleManager {
         if (sequenceKey != null) {
             outputSingleKeyAsTable(sequenceKey);
         } else {
-            myConsole.warn("Admin", "Key not found...");
+            ServerLogger.errorWithSource("Admin", "consoleManager.keyNotFound");
         }
     }
 
@@ -630,9 +581,9 @@ public class ConsoleManager {
 
         String name = params.get(1);
         if (removeKey(name)) {
-            myConsole.log("Admin", "Key " + name + " has been deleted!");
+            ServerLogger.infoWithSource("Admin", "consoleManager.keyDeleted", name);
         } else {
-            myConsole.warn("Admin", "Key not found or failed to delete.");
+            ServerLogger.errorWithSource("Admin", "consoleManager.keyDeleteFailed");
         }
     }
 
@@ -651,11 +602,11 @@ public class ConsoleManager {
 
         String expireTime = correctInputTime(expireTimeInput);
         if (expireTime == null) {
-            myConsole.warn("Admin", "Illegal time input.");
+            ServerLogger.errorWithSource("Admin", "consoleManager.illegalTimeInput");
             return;
         }
         if (isOutOfDate(expireTime)) {
-            myConsole.warn("Admin", "The entered time cannot be later than the current time.");
+            ServerLogger.errorWithSource("Admin", "consoleManager.timeEarlierThanCurrent", expireTime);
             return;
         }
 
@@ -667,16 +618,16 @@ public class ConsoleManager {
 
         String validatedPortStr = validateAndFormatPortInput(portStr);
         if (validatedPortStr == null) {
-            myConsole.warn("Admin", "Invalid port value: '" + portStr + "'. Must be a number (1-65535) or a range (e.g., 3344-3350).");
+            ServerLogger.errorWithSource("Admin", "consoleManager.invalidPortValue", portStr);
             return;
         }
 
         boolean isCreated = createNewKey(name, balance, expireTime, validatedPortStr, rate);
         if (isCreated) {
-            myConsole.log("Admin", "Key " + name + " has been created!");
+            ServerLogger.infoWithSource("Admin", "consoleManager.keyCreated", name);
         } else {
-            myConsole.error("Admin", "Failed to create key.");
-            myConsole.warn("Admin", "The key might already exist or an internal error occurred.");
+            ServerLogger.errorWithSource("Admin", "consoleManager.keyCreateFailed");
+            ServerLogger.errorWithSource("Admin", "consoleManager.keyCreateHint");
         }
     }
 
@@ -711,15 +662,15 @@ public class ConsoleManager {
                 });
             }
             if (rows.isEmpty()) {
-                myConsole.warn("Admin", "No key found.");
+                ServerLogger.errorWithSource("Admin", "consoleManager.keyNotFound");
                 return;
             }
 
-            String[] headers = {"Name", "Balance", "ExpireTime", "Port", "Rate", "Enable", "WebHTML", "Clients"};
+            String[] headers = ServerLogger.getMessage("consoleManager.headers.keyList").split("\\|");
             printAsciiTable(headers, rows);
         } catch (Exception e) {
             debugOperation(e);
-            myConsole.error("Admin", "Failed to query the database.");
+            ServerLogger.errorWithSource("Admin", "consoleManager.dbQueryFailed");
         }
     }
 
@@ -773,22 +724,20 @@ public class ConsoleManager {
     }
 
     private static void printKeyUsage() {
-        myConsole.warn("Admin", """
-                Usage:
-                key add <name> <balance> <expireTime> <port> <rate>
-                key set <name> [b=<balance>] [r=<rate>] [p=<port>] [t=<expireTime>]
-                key del <name>
-                key enable <name>
-                key disable <name>
-                key list
-                key list <name | balance | rate | expire-time | enable>
-                key lp <name>
-                web <enable|disable> <key>
-                list
-                ban <ip_address>
-                unban <ip_address>
-                listbans
-                Note: <port> can be a single number (e.g., 8080) or a range (e.g., 3344-3350).""");
+        myConsole.warn("Admin", "Usage:");
+        myConsole.warn("Admin", "  key add <name> <balance> <expireTime> <port> <rate> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.add"));
+        myConsole.warn("Admin", "  key set <name> [b=<balance>] [r=<rate>] [p=<port>] [t=<expireTime>] -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.set"));
+        myConsole.warn("Admin", "  key del <name> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.del"));
+        myConsole.warn("Admin", "  key enable <name> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.enable"));
+        myConsole.warn("Admin", "  key disable <name> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.disable"));
+        myConsole.warn("Admin", "  key list -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.list"));
+        myConsole.warn("Admin", "  key lp <name> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.lp"));
+        myConsole.warn("Admin", "  web <enable|disable> <key> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.web"));
+        myConsole.warn("Admin", "  list -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.listCmd"));
+        myConsole.warn("Admin", "  ban <ip_address> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.banCmd"));
+        myConsole.warn("Admin", "  unban <ip_address> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.unbanCmd"));
+        myConsole.warn("Admin", "  listbans -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.listbansCmd"));
+        myConsole.warn("Admin", ServerLogger.getMessage("consoleManager.printKeyUsage.portNote"));
     }
 
     private static String validateAndFormatPortInput(String portInput) {
@@ -826,7 +775,7 @@ public class ConsoleManager {
         try {
             return Double.parseDouble(str);
         } catch (NumberFormatException e) {
-            myConsole.warn("Admin", "Invalid value for " + fieldName + ": '" + str + "'");
+            ServerLogger.errorWithSource("Admin", "consoleManager.invalidValueForField", fieldName, str);
             return null;
         }
     }
@@ -849,13 +798,13 @@ public class ConsoleManager {
                 if (!output.isEmpty()) {
                     output.setLength(output.length() - separator.length());
                 }
-                myConsole.log("Admin", output.toString());
+                ServerLogger.infoWithSource("Admin", output.toString());
             } else {
-                myConsole.warn("Admin", "No key found.");
+                ServerLogger.errorWithSource("Admin", "consoleManager.keyNotFound");
             }
         } catch (Exception e) {
             debugOperation(e);
-            myConsole.error("Admin", "Failed to query the database.");
+            ServerLogger.errorWithSource("Admin", "consoleManager.dbQueryFailed");
         }
     }
 
@@ -873,7 +822,7 @@ public class ConsoleManager {
             String enableStatus = isEnable ? "✓" : "✗";
             String webHTMLStatus = enableWebHTML ? "✓" : "✗";
 
-            String[] headers = {"Name", "Balance", "ExpireTime", "Port", "Rate", "Enable", "WebHTML", "Clients"};
+            String[] headers = ServerLogger.getMessage("consoleManager.headers.keyList").split("\\|");
             String[] data = {
                     name,
                     String.format("%.2f", balance),
@@ -891,7 +840,7 @@ public class ConsoleManager {
             printAsciiTable(headers, rows);
         } catch (Exception e) {
             debugOperation(e);
-            myConsole.error("Admin", "Failed to format key information.");
+            ServerLogger.errorWithSource("Admin", "consoleManager.failedToFormatKey");
         }
     }
 

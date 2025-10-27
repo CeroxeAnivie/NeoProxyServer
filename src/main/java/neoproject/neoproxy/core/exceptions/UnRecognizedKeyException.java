@@ -1,15 +1,15 @@
 package neoproject.neoproxy.core.exceptions;
 
-import neoproject.neoproxy.NeoProxyServer;
+import neoproject.neoproxy.core.ServerLogger;
 
 public class UnRecognizedKeyException extends Exception {
-    private UnRecognizedKeyException(String msg) {
-        super(msg);
+    public UnRecognizedKeyException(String message) {
+        super(message);
+        ServerLogger.error("UnRecognizedKeyException", "exception.unRecognizedKey.message", message);
     }
 
-    public static void throwException(String keyCode) throws UnRecognizedKeyException {
-        String str = "The access code " + keyCode + " could not find in DB , or it's disabled.";
-        NeoProxyServer.sayInfo(str);
-        throw new UnRecognizedKeyException(str);
+    public static void throwException(String key) throws UnRecognizedKeyException {
+        String message = ServerLogger.getMessage("exception.unRecognizedKey.message", key);
+        throw new UnRecognizedKeyException(message);
     }
 }

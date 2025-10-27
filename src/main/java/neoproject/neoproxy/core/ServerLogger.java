@@ -84,8 +84,6 @@ public class ServerLogger {
         }
     }
 
-    // ==================== ERROR ====================
-
     /**
      * 记录WARN级别日志，并指定日志来源
      *
@@ -99,6 +97,8 @@ public class ServerLogger {
             NeoProxyServer.myConsole.warn(source, message);
         }
     }
+
+    // ==================== ERROR ====================
 
     /**
      * 记录ERROR级别日志
@@ -127,8 +127,6 @@ public class ServerLogger {
         }
     }
 
-    // ==================== HELPER ====================
-
     /**
      * 记录ERROR级别日志，并指定日志来源
      *
@@ -142,10 +140,10 @@ public class ServerLogger {
             NeoProxyServer.myConsole.error(source, message);
         }
     }
-// ... 在 ServerLogger 类中添加以下方法 ...
 
     /**
-     * 从资源文件中获取并格式化消息
+     * 从资源文件中获取并格式化消息。
+     * 为确保全球格式一致，所有数字参数在格式化前都会被转换为字符串，以避免千位分隔符等问题。
      *
      * @param key  资源文件中的键
      * @param args 格式化参数
@@ -153,12 +151,24 @@ public class ServerLogger {
      */
     public static String getMessage(String key, Object... args) {
         if (bundle == null) {
-            return "!!! ResourceBundle is not loaded. Key: " + key + " !!!";
+            return "!!! ResourceBundle not loaded. Cannot get message for key: " + key + " !!!";
         }
         try {
             String pattern = bundle.getString(key);
-            return MessageFormat.format(pattern, args);
+            // 【新方案】在格式化之前，将所有数字参数转换为字符串
+            Object[] formattedArgs = new Object[args.length];
+            for (int i = 0; i < args.length; i++) {
+                if (args[i] instanceof Number) {
+                    // 使用 String.valueOf 来转换数字，它不会添加任何千位分隔符
+                    formattedArgs[i] = String.valueOf(args[i]);
+                } else {
+                    formattedArgs[i] = args[i];
+                }
+            }
+            // 现在使用标准的 MessageFormat，但它的参数已经是字符串了，不会再格式化数字
+            return MessageFormat.format(pattern, formattedArgs);
         } catch (MissingResourceException e) {
+            // 如果找不到key，返回一个友好的提示
             return "!!! Log message not found for key: " + key + " !!!";
         }
     }
@@ -170,11 +180,16 @@ public class ServerLogger {
      * @param message 原始消息
      */
     public static void logRaw(String source, String message) {
-        NeoProxyServer.myConsole.log(source, message);
+        if (NeoProxyServer.myConsole != null) {
+            NeoProxyServer.myConsole.log(source, message);
+        }
     }
 
+    // ==================== LEGACY METHODS (已废弃) ====================
+    // 以下方法是为了兼容旧代码而保留的，建议在新代码中直接使用 ServerLogger 的方法
+    // 这些方法的存在是 InfoBox 等类中调用它们的原因。
+
     public static void sayHostClientDiscInfo(HostClient hostClient, String subject) {
-        // MODIFIED: 使用 infoWithSource
         ServerLogger.infoWithSource(subject, "infoBox.hostClientDisconnected", hostClient.getAddressAndPort());
     }
 
@@ -213,5 +228,4 @@ public class ServerLogger {
             ServerLogger.info("infoBox.killingClientConnection", InternetOperator.getInternetAddressAndPort(client));
         }
     }
-
 }

@@ -11,7 +11,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-import static neoproject.neoproxy.NeoProxyServer.*;
+import static neoproject.neoproxy.NeoProxyServer.availableHostClient;
+import static neoproject.neoproxy.NeoProxyServer.debugOperation;
 
 /**
  * IP 检查工具类，用于管理 IP 封禁列表。

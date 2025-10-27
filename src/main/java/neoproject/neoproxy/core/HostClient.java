@@ -14,6 +14,7 @@ import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static neoproject.neoproxy.NeoProxyServer.availableHostClient;
+import static neoproject.neoproxy.NeoProxyServer.sayInfo;
 import static neoproject.neoproxy.core.management.SequenceKey.saveToDB;
 
 public final class HostClient implements Closeable {
@@ -53,18 +54,17 @@ public final class HostClient implements Closeable {
         a.start();
     }
 
-    // MODIFIED: Use ServerLogger
     private static void enableKeyDetectionTread(HostClient hostClient) {
         Thread a = new Thread(() -> {
             while (!hostClient.isStopped) {
                 if (hostClient.getKey() != null && hostClient.getKey().isOutOfDate()) {
-                    ServerLogger.info("hostClient.keyOutOfDate", hostClient.getKey().getName());
+                    sayInfo("The key " + hostClient.getKey().getName() + " is out of date !");
                     try {
                         InternetOperator.sendStr(hostClient, hostClient.getLangData().THE_KEY + hostClient.getKey().getName() + hostClient.getLangData().ARE_OUT_OF_DATE);
                         InternetOperator.sendCommand(hostClient, "exit");
-                        ServerLogger.sayHostClientDiscInfo(hostClient, "KeyDetectionTread");
+                        InfoBox.sayHostClientDiscInfo(hostClient, "KeyDetectionTread");
                     } catch (Exception e2) {
-                        ServerLogger.sayHostClientDiscInfo(hostClient, "KeyDetectionTread");
+                        InfoBox.sayHostClientDiscInfo(hostClient, "KeyDetectionTread");
                     }
 
                     hostClient.close();
@@ -81,33 +81,6 @@ public final class HostClient implements Closeable {
             }
         });
         a.start();
-    }
-
-// ... 其他代码保持不变 ...
-
-    // MODIFIED: Use ServerLogger
-    public void enableCheckAliveThread() {
-        HostClient hostClient = this;
-
-        new Thread(() -> {
-            while (true) {
-                try {
-                    byte[] bytes = hostClient.hostServerHook.receiveRaw();
-                    if (bytes.length == 0) {
-                        hostClient.close();
-                        // MODIFIED: 使用 infoWithSource
-                        ServerLogger.infoWithSource("CheckAliveThread", "hostClient.checkAliveThreadDisconnected", hostClient.getAddressAndPort());
-                        break;
-                    }
-                } catch (Exception e) {
-                    hostClient.close();
-                    // MODIFIED: 使用 infoWithSource
-                    ServerLogger.infoWithSource("CheckAliveThread", "hostClient.checkAliveThreadDisconnected", hostClient.getAddressAndPort());
-                    break;
-                }
-            }
-        }).start();
-
     }
 
     /**
@@ -141,7 +114,6 @@ public final class HostClient implements Closeable {
 
     /**
      * 【新增】格式化HostClient信息为表格行数组，用于list命令。
-     * 注意：此方法返回的数据用于表格显示，其内容（IP, Location等）不应被翻译。
      *
      * @param accessCodeCounts            Access Code计数映射，用于显示相同Access Code的数量
      * @param isRepresentative            是否为该Access Code的代表实例
@@ -199,7 +171,7 @@ public final class HostClient implements Closeable {
         // 格式化外部客户端IP显示，使用换行符分隔
         StringBuilder sb = new StringBuilder();
         for (String ip : allIPs) {
-            if (!sb.isEmpty()) sb.append("\n");
+            if (sb.length() > 0) sb.append("\n");
             int tcpCount = tcpCounts.getOrDefault(ip, 0);
             int udpCount = udpCounts.getOrDefault(ip, 0);
             sb.append(ip).append(" (T:").append(tcpCount).append(" U:").append(udpCount).append(")");
@@ -242,6 +214,27 @@ public final class HostClient implements Closeable {
         this.isStopped = true;
     }
 
+    public void enableCheckAliveThread() {
+        HostClient hostClient = this;
+
+        new Thread(() -> {
+            while (true) {
+                try {
+                    byte[] bytes = hostClient.hostServerHook.receiveRaw();
+                    if (bytes.length == 0) {
+                        hostClient.close();
+                        sayInfo("CheckAliveThread", "Detected hostClient on " + hostClient.getAddressAndPort() + " has been disconnected !");
+                        break;
+                    }
+                } catch (Exception e) {
+                    hostClient.close();
+                    sayInfo("CheckAliveThread", "Detected hostClient on " + hostClient.getAddressAndPort() + " has been disconnected !");
+                    break;
+                }
+            }
+        }).start();
+
+    }
 
     public SequenceKey getKey() {
         return sequenceKey;

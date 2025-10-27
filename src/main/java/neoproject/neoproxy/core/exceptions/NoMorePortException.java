@@ -1,15 +1,15 @@
 package neoproject.neoproxy.core.exceptions;
 
-import neoproject.neoproxy.core.ServerLogger;
+import neoproject.neoproxy.NeoProxyServer;
 
 public class NoMorePortException extends Exception {
-    public NoMorePortException(String message) {
-        super(message);
-        ServerLogger.error("NoMorePortException", "exception.noMorePort.message", message);
+    private NoMorePortException(String msg) {
+        super(msg);
     }
 
     public static void throwException() throws NoMorePortException {
-        String message = ServerLogger.getMessage("exception.noMorePort.message");
-        throw new NoMorePortException(message);
+        String str = "There are no more dynamic ports available";
+        NeoProxyServer.sayInfo(str);
+        throw new NoMorePortException(str);
     }
 }

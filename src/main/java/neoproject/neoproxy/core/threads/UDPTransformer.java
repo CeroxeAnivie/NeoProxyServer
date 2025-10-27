@@ -144,9 +144,9 @@ public class UDPTransformer implements Runnable {
         close(host);
         try {
             InternetOperator.sendCommand(hostClient, "exitNoFlow");
-            ServerLogger.sayHostClientDiscInfo(hostClient, "UDPTransformer");
+            InfoBox.sayHostClientDiscInfo(hostClient, "UDPTransformer");
         } catch (Exception e) {
-            ServerLogger.sayHostClientDiscInfo(hostClient, "UDPTransformer");
+            InfoBox.sayHostClientDiscInfo(hostClient, "UDPTransformer");
         }
         close(hostClient);
     }
@@ -267,7 +267,7 @@ public class UDPTransformer implements Runnable {
             // 确保资源被释放
             close(hostReply.host());
             udpClientConnections.remove(this);
-            ServerLogger.sayClientUDPConnectDestroyInfo(hostClient, clientIP + ":" + clientOutPort);
+            InfoBox.sayClientUDPConnectDestroyInfo(hostClient, clientIP + ":" + clientOutPort);
         }
     }
 

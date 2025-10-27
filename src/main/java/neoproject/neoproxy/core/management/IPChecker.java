@@ -1,7 +1,6 @@
 package neoproject.neoproxy.core.management;
 
 import neoproject.neoproxy.core.HostClient;
-import neoproject.neoproxy.core.ServerLogger;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -58,13 +57,11 @@ public class IPChecker {
                     writer.write(ip);
                     writer.newLine();
                     writer.flush();
-                    // MODIFIED: Use ServerLogger
-                    ServerLogger.infoWithSource("IPChecker", "ipChecker.ipBanned", ip);
+                    myConsole.log("IPChecker", "IP " + ip + " has been banned.");
                     return true;
                 } catch (IOException e) {
                     debugOperation(e);
-                    // MODIFIED: Use ServerLogger
-                    ServerLogger.errorWithSource("IPChecker", "ipChecker.failedToBan", ip);
+                    myConsole.error("IPChecker", "Failed to write IP " + ip + " to banList.txt: ");
                     bannedIPSet.remove(ip);
                 }
             }
@@ -117,8 +114,9 @@ public class IPChecker {
                 // 如果文件不存在，创建一个空文件
                 boolean created = bannedIPList.createNewFile();
                 if (!created) {
-                    // MODIFIED: Use ServerLogger, removed null check
-                    ServerLogger.warnWithSource("IPChecker", "ipChecker.failedToCreateFile");
+                    if (myConsole != null) {
+                        myConsole.warn("IPChecker", "Failed to create banList.txt file.");
+                    }
                 }
                 return; // 文件不存在或创建失败，集合保持为空
             }
@@ -132,13 +130,15 @@ public class IPChecker {
                         bannedIPSet.add(line);
                     }
                 }
-                // MODIFIED: Use ServerLogger, removed null check
-                ServerLogger.infoWithSource("IPChecker", "ipChecker.loadedBannedIPs", bannedIPSet.size(), bannedIPList.getAbsolutePath());
+                if (myConsole != null) {
+                    myConsole.log("IPChecker", "Loaded " + bannedIPSet.size() + " banned IPs from " + bannedIPList.getAbsolutePath());
+                }
             }
         } catch (IOException e) {
             debugOperation(e);
-            // MODIFIED: Use ServerLogger, removed null check
-            ServerLogger.errorWithSource("IPChecker", "ipChecker.failedToLoad", e.getMessage());
+            if (myConsole != null) {
+                myConsole.error("IPChecker", "Failed to load banList.txt: " + e.getMessage());
+            }
             System.exit(-1); // 文件读取失败是严重错误
         }
     }
@@ -172,16 +172,14 @@ public class IPChecker {
         File banFile = new File(banListPath);
 
         if (!banFile.exists()) {
-            // MODIFIED: Use ServerLogger
-            ServerLogger.warnWithSource("Admin", "ipChecker.banListFileNotFound");
+            myConsole.warn("Admin", "Ban list file does not exist.");
             return;
         }
 
         try {
             List<String> lines = Files.readAllLines(Paths.get(banListPath));
             if (lines.isEmpty()) {
-                // MODIFIED: Use ServerLogger
-                ServerLogger.infoWithSource("Admin", "ipChecker.banListIsEmpty");
+                myConsole.log("Admin", "Ban list is empty.");
                 return;
             }
 
@@ -197,12 +195,10 @@ public class IPChecker {
             }
             output.append("└").append("─".repeat(22)).append("┘"); // No \n at the very end if not desired
 
-            // MODIFIED: Use logRaw for table output
-            ServerLogger.logRaw("Admin", output.toString());
+            myConsole.log("Admin", output.toString());
         } catch (IOException e) {
             debugOperation(e);
-            // MODIFIED: Use ServerLogger
-            ServerLogger.errorWithSource("Admin", "ipChecker.failedToReadBanList");
+            myConsole.error("Admin", "Failed to read ban list file.");
         }
     }
 }

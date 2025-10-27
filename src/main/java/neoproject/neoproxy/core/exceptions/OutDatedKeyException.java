@@ -1,16 +1,13 @@
 package neoproject.neoproxy.core.exceptions;
 
-import neoproject.neoproxy.core.ServerLogger;
 import neoproject.neoproxy.core.management.SequenceKey;
 
 public class OutDatedKeyException extends Exception {
-    public OutDatedKeyException(String message) {
-        super(message);
-        ServerLogger.error("OutDatedKeyException", "exception.outDatedKey.message", message);
+    private OutDatedKeyException(String msg) {
+        super(msg);
     }
 
-    public static void throwException(SequenceKey key) throws OutDatedKeyException {
-        String message = ServerLogger.getMessage("exception.outDatedKey.message", key.getName());
-        throw new OutDatedKeyException(message);
+    public static void throwException(SequenceKey sequenceKey) throws OutDatedKeyException {
+        throw new OutDatedKeyException("The vault " + sequenceKey.getName() + " are out of date.");
     }
 }

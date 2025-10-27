@@ -10,10 +10,10 @@ import plethora.net.SecureServerSocket;
 import plethora.net.SecureSocket;
 import plethora.utils.ArrayUtils;
 import plethora.utils.MyConsole;
+import plethora.utils.StringUtils;
 
 import java.io.IOException;
 import java.net.*;
-import java.util.Locale;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static neoproject.neoproxy.core.InternetOperator.close;
@@ -25,10 +25,10 @@ import static neoproject.neoproxy.core.threads.TCPTransformer.BUFFER_LEN;
 public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = System.getProperty("user.dir");
     public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
-    public static String EXPECTED_CLIENT_VERSION = "4.7.0|4.7.1|4.7.2";//from old to new versions
+    public static String EXPECTED_CLIENT_VERSION = "4.7.0|4.7.1";//from old to new versions
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.stringArrayToList(EXPECTED_CLIENT_VERSION.split("\\|"));
-    public static int HOST_HOOK_PORT = 44801;
-    public static int HOST_CONNECT_PORT = 44802;
+    public static int HOST_HOOK_PORT = 801;
+    public static int HOST_CONNECT_PORT = 802;
     public static String LOCAL_DOMAIN_NAME = "localhost";
     public static SecureServerSocket hostServerTransferServerSocket = null;
     public static SecureServerSocket hostServerHookServerSocket = null;
@@ -58,7 +58,7 @@ public class NeoProxyServer {
             TransferSocketAdapter.startThread();
         } catch (IOException e) {
             debugOperation(e);
-            ServerLogger.error("neoProxyServer.canNotBindPort");
+            sayError("Can not bind the outPort, it's occupied?");
             System.exit(-1);
         }
     }
@@ -67,21 +67,17 @@ public class NeoProxyServer {
         for (String arg : args) {
             switch (arg) {
                 case "--debug" -> IS_DEBUG_MODE = true;
-                case "--zh-cn" -> ServerLogger.setLocale(Locale.SIMPLIFIED_CHINESE);
-                case "--en-us" -> ServerLogger.setLocale(Locale.US);
+                // You can continue to add other parameters, for example:
+                // case "--verbose" -> IS_VERBOSE = true;
                 default -> {
-                    // 忽略未知参数，但可以在这里添加提示
-                    if (IS_DEBUG_MODE) {
-                        System.err.println("Debug: Ignoring unknown argument: " + arg);
-                    }
-                }
+                } // Ignore unknown parameters
             }
         }
     }
 
     private static void printLogo() {
-        ServerLogger.info("neoProxyServer.logo");
-        myConsole.log("NeoProxyServer", """
+        sayInfo("-----------------------------------------------------");
+        sayInfo("""
                 
                    _____                                    \s
                   / ____|                                   \s
@@ -101,11 +97,11 @@ public class NeoProxyServer {
         NeoProxyServer.checkARGS(args);
         NeoProxyServer.initStructure();
 
-        ServerLogger.info("neoProxyServer.currentLogFile", myConsole.getLogFile().getAbsolutePath());
-        ServerLogger.info("neoProxyServer.localDomainName", LOCAL_DOMAIN_NAME);
-        ServerLogger.info("neoProxyServer.listenHostConnectPort", HOST_CONNECT_PORT);
-        ServerLogger.info("neoProxyServer.listenHostHookPort", HOST_HOOK_PORT);
-        ServerLogger.info("neoProxyServer.supportClientVersions", EXPECTED_CLIENT_VERSION);
+        sayInfo("Current log file : " + myConsole.getLogFile().getAbsolutePath());
+        sayInfo("LOCAL_DOMAIN_NAME: " + LOCAL_DOMAIN_NAME);
+        sayInfo("Listen HOST_CONNECT_PORT on " + HOST_CONNECT_PORT);
+        sayInfo("Listen HOST_HOOK_PORT on " + HOST_HOOK_PORT);
+        sayInfo("Support client versions: " + EXPECTED_CLIENT_VERSION);
 
         while (!isStopped) {
             try {
@@ -114,7 +110,7 @@ public class NeoProxyServer {
             } catch (IOException e) {
                 debugOperation(e);
                 if (!isStopped) {
-                    ServerLogger.info("neoProxyServer.clientConnectButFail");
+                    InfoBox.sayAHostClientTryToConnectButFail();
                 } else {
                     break;
                 }
@@ -133,7 +129,7 @@ public class NeoProxyServer {
             } catch (IndexOutOfBoundsException | IOException |
                      NoMorePortException |
                      AlreadyBlindPortException | UnRecognizedKeyException | OutDatedKeyException e) {
-                ServerLogger.sayHostClientDiscInfo(hostClient, "NeoProxyServer");
+                InfoBox.sayHostClientDiscInfo(hostClient, "NeoProxyServer");
                 hostClient.close();
             } catch (UnSupportHostVersionException e) {
                 UpdateManager.handle(hostClient);
@@ -143,18 +139,17 @@ public class NeoProxyServer {
         }, "HostClient-Handler").start();
     }
 
-    // MODIFIED: Use ServerLogger
     public static HostClient listenAndConfigureHostClient() throws SlientException, IOException {
         SecureSocket hostServerHook = hostServerHookServerSocket.accept();
         String clientAddress = hostServerHook.getInetAddress().getHostAddress();
 
         if (IPChecker.exec(clientAddress, IPChecker.CHECK_IS_BAN)) {
             close(hostServerHook);
-            ServerLogger.info("neoProxyServer.banConnectInfo", clientAddress);
+            InfoBox.sayBanConnectInfo(clientAddress);
             SlientException.throwException();
         }
 
-        ServerLogger.info("neoProxyServer.clientTryToConnect", clientAddress, hostServerHook.getPort());
+        InfoBox.sayHostClientTryToConnect(clientAddress, hostServerHook.getPort());
 
         return new HostClient(hostServerHook);
 
@@ -175,7 +170,7 @@ public class NeoProxyServer {
                 try {
                     InternetOperator.sendCommand(hostClient, "sendSocket;" + InternetOperator.getInternetAddressAndPort(client));
                 } catch (Exception e) {
-                    ServerLogger.sayHostClientDiscInfo(hostClient, "NeoProxyServer");
+                    InfoBox.sayHostClientDiscInfo(hostClient, "NeoProxyServer");
                     hostClient.close();
                     close(client);
                     break;
@@ -185,14 +180,14 @@ public class NeoProxyServer {
                 try {
                     hostReply = TransferSocketAdapter.getHostReply(hostClient.getOutPort(), TransferSocketAdapter.CONN_TYPE.TCP);
                 } catch (SocketTimeoutException e) {
-                    ServerLogger.sayClientSuccConnectToChaSerButHostClientTimeOut(hostClient);
-                    ServerLogger.sayKillingClientSideConnection(client);
+                    InfoBox.sayClientSuccConnectToChaSerButHostClientTimeOut(hostClient);
+                    InfoBox.sayKillingClientSideConnection(client);
                     close(client);
                     continue;
                 }
 
                 TCPTransformer.startThread(hostClient, hostReply, client);
-                ServerLogger.sayClientTCPConnectBuildUpInfo(hostClient, client);
+                InfoBox.sayClientTCPConnectBuildUpInfo(hostClient, client);
             }
         }, "HostClient-TCP-Service").start();
         //udp
@@ -238,7 +233,7 @@ public class NeoProxyServer {
                                 try {
                                     hostReply = TransferSocketAdapter.getHostReply(hostClient.getOutPort(), TransferSocketAdapter.CONN_TYPE.UDP);
                                 } catch (SocketTimeoutException e) {// 此时后端S离线，A没有发 SecureSocket 给B
-                                    ServerLogger.sayClientSuccConnectToChaSerButHostClientTimeOut(hostClient);
+                                    InfoBox.sayClientSuccConnectToChaSerButHostClientTimeOut(hostClient);
                                     //直接丢弃 UDP 包，什么也不管
                                     return;
                                 }
@@ -252,7 +247,7 @@ public class NeoProxyServer {
                                 newUdpTransformer.addPacketToSend(firstData);
 
                                 // 6. Record successful connection establishment
-                                ServerLogger.sayClientUDPConnectBuildUpInfo(hostClient, datagramPacket);
+                                InfoBox.sayClientUDPConnectBuildUpInfo(hostClient, datagramPacket);
 
                             } catch (Exception e) {
                                 debugOperation(e);
@@ -262,6 +257,22 @@ public class NeoProxyServer {
                 } // end synchronized block
             }
         }, "HostClient-UDP-Service").start();
+    }
+
+    public static void sayInfo(String str) {
+        myConsole.log("NeoProxyServer", str);
+    }
+
+    public static void sayInfo(String subject, String str) {
+        myConsole.log(subject, str);
+    }
+
+    public static void sayError(String str) {
+        myConsole.error("NeoProxyServer", str);
+    }
+
+    public static void sayError(String subject, String str) {
+        myConsole.error(subject, str);
     }
 
     // Optimized port checking method
@@ -297,8 +308,10 @@ public class NeoProxyServer {
         hostClient.setClientServerSocket(new ServerSocket(port));//tcp
         hostClient.setClientDatagramSocket(new DatagramSocket(port));//udp
         String clientAddress = InternetOperator.getInternetAddressAndPort(hostClient.getHostServerHook());
-        ServerLogger.info("neoProxyServer.hostClientRegisterSuccess", clientAddress);
+        sayInfo("HostClient on " + clientAddress + " register successfully!");
+        // --- 调用新方法 ---
         printClientRegistrationInfo(hostClient);
+        // --- 结束调用 ---
         InternetOperator.sendCommand(hostClient, String.valueOf(port));
         InternetOperator.sendStr(hostClient, hostClient.getLangData().THIS_ACCESS_CODE_HAVE +
                 hostClient.getKey().getBalance() + hostClient.getLangData().MB_OF_FLOW_LEFT);
@@ -306,7 +319,7 @@ public class NeoProxyServer {
                 hostClient.getKey().getExpireTime());
         InternetOperator.sendStr(hostClient, hostClient.getLangData().USE_THE_ADDRESS +
                 LOCAL_DOMAIN_NAME + ":" + port + hostClient.getLangData().TO_START_UP_CONNECTION);
-        ServerLogger.info("neoProxyServer.assignedConnectionAddress", LOCAL_DOMAIN_NAME + ":" + port);
+        sayInfo("Assigned connection address: " + LOCAL_DOMAIN_NAME + ":" + port);
     }
 
     /**
@@ -318,13 +331,17 @@ public class NeoProxyServer {
         String ip = hostClient.getHostServerHook().getInetAddress().getHostAddress();
         String accessCode = hostClient.getKey().getName();
 
+        // --- 调用 IPGeolocationHelper 获取位置和 ISP 信息 ---
         IPGeolocationHelper.LocationInfo locInfo = IPGeolocationHelper.getLocationInfo(ip);
         String location = locInfo.location();
         String isp = locInfo.isp();
+        // --- 结束调用 ---
 
+        // 【修改】缓存位置和ISP信息到HostClient对象中
         hostClient.setCachedLocation(location);
         hostClient.setCachedISP(isp);
 
+        // 【修改】调用ConsoleManager中的通用表格打印方法
         ConsoleManager.printClientRegistrationTable(accessCode, ip, location, isp);
     }
 
@@ -383,16 +400,16 @@ public class NeoProxyServer {
         return new Object[]{currentSequenceKey, languageData};
     }
 
-    // MODIFIED: Use ServerLogger
     public static void debugOperation(Exception e) {
         if (IS_DEBUG_MODE) {
-            ServerLogger.error("neoProxyServer.debugOperation", e, e.getMessage());
-            e.printStackTrace();
+            String exceptionMsg = StringUtils.getExceptionMsg(e);
+            myConsole.error("Debugger", exceptionMsg, e);
         }
     }
 
+    //关闭方法
     private static void shutdown() {
-        ServerLogger.info("neoProxyServer.shuttingDown");
+        sayInfo("Shutting down the NeoProxyServer...");
 
         isStopped = true;
         // 关闭所有 HostClient 连接
@@ -419,6 +436,6 @@ public class NeoProxyServer {
         } catch (IOException e) {
             debugOperation(e);
         }
-        ServerLogger.info("neoProxyServer.shutdownCompleted");
+        sayInfo("NeoProxyServer shutdown completed.");
     }
 }

@@ -651,13 +651,13 @@ public class SequenceKey {
         try {
             if (mib < 0) {
                 debugOperation(new IllegalArgumentException("mib must be non-negative"));
-                NoMoreNetworkFlowException.throwException("SK-Manager", "exception.invalidMibValue", name);
+                NoMoreNetworkFlowException.throwException("SK-Manager", "Invalid mib value for key: " + name);
             }
             if (this.isOutOfDate()) {
-                NoMoreNetworkFlowException.throwException("SK-Manager", "exception.keyOutOfDateForFlow", name);
+                NoMoreNetworkFlowException.throwException("SK-Manager", name);
             }
             if (balance <= 0) {
-                NoMoreNetworkFlowException.throwException(sourceSubject, "exception.insufficientBalance", name);
+                NoMoreNetworkFlowException.throwException(sourceSubject, name);
             }
             this.balance -= mib;
             if (this.balance < 0) {

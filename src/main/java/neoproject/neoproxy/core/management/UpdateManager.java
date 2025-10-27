@@ -1,16 +1,14 @@
 package neoproject.neoproxy.core.management;
 
 import neoproject.neoproxy.core.HostClient;
-import neoproject.neoproxy.core.ServerLogger;
 
 import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 
-import static neoproject.neoproxy.NeoProxyServer.CURRENT_DIR_PATH;
-import static neoproject.neoproxy.NeoProxyServer.debugOperation;
-import static neoproject.neoproxy.core.ServerLogger.alert;
+import static neoproject.neoproxy.NeoProxyServer.*;
+import static neoproject.neoproxy.core.InfoBox.alert;
 
 public class UpdateManager {
     public static final String CLIENT_DIR = CURRENT_DIR_PATH + File.separator + "clients";
@@ -21,13 +19,11 @@ public class UpdateManager {
         if (!CLIENT_DIR_FOLDER.exists()) {
             boolean b = CLIENT_DIR_FOLDER.mkdirs();
             if (!b) {
-                // MODIFIED: Use ServerLogger
-                ServerLogger.error("Update-Manager", "Fail to create the update dir , this feature will be disabled.");
+                myConsole.warn("Update-Manager", "Fail to create the update dir , this feature will be disabled.");
                 return;
             }
             if (!CLIENT_DIR_FOLDER.canRead()) {
-                // MODIFIED: Use ServerLogger
-                ServerLogger.error("Update-Manager", "The update dir is unreadable ! This feature will be disabled.");
+                myConsole.warn("Update-Manager", "The update dir is unreadable ! This feature will be disabled.");
             } else {
                 isInit = true;
             }
@@ -46,8 +42,7 @@ public class UpdateManager {
         if (files == null) {
             tellFalseAndClose(hostClient);
             if (alert) {
-                // MODIFIED: Use ServerLogger
-                ServerLogger.error("Update-Manager", "A client try to download an update but clients dir is empty !");
+                myConsole.warn("Update-Manager", "A client try to download an update but clients dir is empty !");
             }
             return;
         }
@@ -67,50 +62,44 @@ public class UpdateManager {
             }
         }
 
+
         try {
             String str = hostClient.getHostServerHook().receiveStr();//获取客户端是要exe还是jar
             if (str.equals("exe")) {
                 if (exeFile == null) {
                     tellFalseAndClose(hostClient);
                     if (alert) {
-                        // MODIFIED: 使用 errorWithSource
-                        ServerLogger.errorWithSource("Update-Manager", "updateManager.exeNotFound");
+                        myConsole.warn("Update-Manager", "A client try to download an EXE not found in dir.");
                     }
                 } else {
                     if (alert) {
-                        // MODIFIED: 使用 infoWithSource
-                        ServerLogger.infoWithSource("Update-Manager", "updateManager.clientDownloadingExe");
+                        myConsole.log("Update-Manager", "A client try to download an EXE update !");
                     }
                     tellTrueAndWriteAndClose(hostClient, exeFile);
                     if (alert) {
-                        // MODIFIED: 使用 infoWithSource
-                        ServerLogger.infoWithSource("Update-Manager", "updateManager.exeDownloadSuccess", hostClient.getAddressAndPort());
+                        myConsole.log("Update-Manager", "A client try to download an EXE update !");
                     }
                 }
             } else {
                 if (jarFile == null) {
                     tellFalseAndClose(hostClient);
                     if (alert) {
-                        // MODIFIED: 使用 errorWithSource
-                        ServerLogger.errorWithSource("Update-Manager", "updateManager.jarNotFound");
+                        myConsole.warn("Update-Manager", "A client try to download an JAR not found in dir.");
                     }
                 } else {
                     if (alert) {
-                        // MODIFIED: 使用 infoWithSource
-                        ServerLogger.infoWithSource("Update-Manager", "updateManager.clientDownloadingJar");
+                        myConsole.log("Update-Manager", "A client try to download an JAR update !");
                     }
                     tellTrueAndWriteAndClose(hostClient, jarFile);
                     if (alert) {
-                        // MODIFIED: 使用 infoWithSource
-                        ServerLogger.infoWithSource("Update-Manager", "updateManager.jarDownloadSuccess", hostClient.getAddressAndPort());
+                        myConsole.log("Update-Manager", "A client from " + hostClient.getAddressAndPort() + " downloaded an JAR update success !");
                     }
                 }
             }
         } catch (Exception e) {
             debugOperation(e);
             if (alert) {
-                // MODIFIED: 使用 errorWithSource
-                ServerLogger.errorWithSource("Update-Manager", "updateManager.downloadFailed");
+                myConsole.warn("Update-Manager", "A client try to download an update but failed.");
             }
         }
     }
@@ -131,8 +120,7 @@ public class UpdateManager {
             hostClient.getHostServerHook().sendByte(bufferedInputStream.readAllBytes());
         } catch (IOException e) {
             debugOperation(e);
-            // MODIFIED: Use ServerLogger
-            ServerLogger.error("Update-Manager", "A client try to download an update but failed.");
+            myConsole.warn("Update-Manager", "A client try to download an update but failed.");
         }
         hostClient.close();
     }

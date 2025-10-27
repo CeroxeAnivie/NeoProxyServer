@@ -47,20 +47,15 @@ mvn clean package
 
 生成的可执行 JAR 文件位于 `target/NeoProxyServer-XXXX.jar`。
 
-### 启动服务端（使用中文输出）
+### 启动服务端
 
 ```bash
-java -jar target/NeoProxyServer-XXXX.jar --zh-cn
-
-# 可选参数追加到后面
-# --debug                            打印调试信息（异常栈）
-# --en-us / --zh-ch                  强制指定语言
-
+java -jar target/NeoProxyServer-XXXX.jar
 ```
 
 > 默认监听：
-> - **Hook 端口**：`44801`（客户端注册）
-> - **连接端口**：`44802`（数据通道）
+> - **Hook 端口**：`801`（客户端注册）
+> - **连接端口**：`802`（数据通道）
 
 启动后，服务端将自动生成 `config.cfg` 配置文件和 `sk.mv.db` 数据库。
 
@@ -74,8 +69,8 @@ ALERT=true                           # 是否启用详细连接日志
 ENABLE_BAN=true                      # 是否启用IP封禁
 SO_TIMEOUT=1000                      # 服务端等待客户端响应超时（毫秒）
 TELL_BALANCE_MIB=10                  # 每消耗10MB流量通知剩余量
-HOST_HOOK_PORT=44801                   # 客户端注册端口
-HOST_CONNECT_PORT=44802                # 数据通道端口
+HOST_HOOK_PORT=801                   # 客户端注册端口
+HOST_CONNECT_PORT=802                # 数据通道端口
 BUFFER_LEN=4096                      # 数据缓冲区大小
 SAVE_DELAY=3000                      # 密钥状态保存间隔（毫秒）
 AES_KEY_SIZE=128                     # 加密密钥长度
@@ -122,10 +117,10 @@ CUSTOM_BLOCKING_MESSAGE=如有疑问，请联系您的系统管理员。  # 自�
 
 NeoProxyServer 支持拦截网页内容，当密钥未启用网页访问权限时，系统会自动拦截并显示自定义的拦截页面。
 
-| 命令                  | 说明            |
-|---------------------|---------------|
-| `web enable <key>`  | 为指定密钥启用网页访问权限 |
-| `web disable <key>` | 为指定密钥禁用网页访问权限 |
+| 命令                          | 说明                         |
+|-----------------------------|----------------------------|
+| `web enable <key>`          | 为指定密钥启用网页访问权限           |
+| `web disable <key>`         | 为指定密钥禁用网页访问权限           |
 
 拦截页面模板位于 `/templates/forbidden.html`，可通过修改 `config.cfg` 中的 `CUSTOM_BLOCKING_MESSAGE` 来自定义拦截消息。
 
@@ -196,7 +191,7 @@ NeoProxyServer 提供多层安全保护：
 1. **如何让 IP 查询 API 连接走代理**
     - 如果是 Windows ，使用 Clash for Windows，开启系统代理，<br>使用 JVM 参数 `-Djava.net.useSystemProxies=true` 即可自动识别，比如
     - ```
-      java -Djava.net.useSystemProxies=true -jar NeoProxyServer-4.9.2.jar --zh-cn
+      java -Djava.net.useSystemProxies=true -jar NeoProxyServer-4.9.2.jar
       ```
     - 如果是 Linux，可以参考 [这里](https://gitee.com/tools-repo/clash-for-linux-install#%E5%BF%AB%E9%80%9F%E5%BC%80%E5%A7%8B) 安装 Clash for Linux ，配置好后开启代理。
     - 配置完以后执行 env | grep -i proxy ，你应该看到类似以下环境变量的输出
@@ -214,7 +209,7 @@ NeoProxyServer 提供多层安全保护：
       export http_proxy="http://127.0.0.1:7890"
       export https_proxy="http://127.0.0.1:7890"
       
-      java -Djava.net.useSystemProxies=true -jar NeoProxyServer-4.8.2.jar --zh-cn
+      java -Djava.net.useSystemProxies=true -jar NeoProxyServer-4.8.2.jar
       ```
 
 2. **端口被占用**
@@ -224,8 +219,18 @@ NeoProxyServer 提供多层安全保护：
 
 3. **客户端连接失败**
     - 检查客户端版本是否兼容
-    - 确认客户端的 config.cfg 里的 HOST_HOOK_PORT 和 HOST_CONNECT_PORT 跟服务端是否一致
-    - 检查服务端的网络防火墙设置
+    - 确认密钥是否有效且未过期
+    - 检查网络防火墙设置
+
+4. **地理位置查询失败**
+    - 检查系统代理设置
+    - 确认网络连接正常
+    - 查看调试日志中的错误信息
+
+5. **流量控制不生效**
+    - 确认密钥已设置流量配额
+    - 检查速率限制设置
+    - 查看实时流量监控日志
 
 ### 调试模式
 

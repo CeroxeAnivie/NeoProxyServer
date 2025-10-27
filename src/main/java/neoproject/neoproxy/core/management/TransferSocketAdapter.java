@@ -3,7 +3,6 @@ package neoproject.neoproxy.core.management;
 import neoproject.neoproxy.NeoProxyServer;
 import neoproject.neoproxy.core.HostClient;
 import neoproject.neoproxy.core.HostReply;
-import neoproject.neoproxy.core.ServerLogger;
 import plethora.net.SecureServerSocket;
 import plethora.net.SecureSocket;
 import plethora.utils.Sleeper;
@@ -59,9 +58,7 @@ public class TransferSocketAdapter implements Runnable {
             NeoProxyServer.hostServerTransferServerSocket = new SecureServerSocket(NeoProxyServer.HOST_CONNECT_PORT);
         } catch (IOException e) {
             debugOperation(e);
-            // 2. 【修改点】将原来的 sayError 替换为 ServerLogger.errorWithSource
-            // 原代码: NeoProxyServer.sayError("TransferSocketAdapter", "Can not bind the outPort , it's Occupied ?");
-            ServerLogger.errorWithSource("TransferSocketAdapter", "transferSocketAdapter.bindPortFailed");
+            NeoProxyServer.sayError("TransferSocketAdapter", "Can not bind the outPort , it's Occupied ?");
             System.exit(-1);
         }
 

@@ -1,6 +1,6 @@
 package neoproject.neoproxy.core.exceptions;
 
-import neoproject.neoproxy.NeoProxyServer;
+import neoproject.neoproxy.core.ServerLogger;
 
 public class AlreadyBlindPortException extends Exception {
     private AlreadyBlindPortException(int port) {
@@ -12,12 +12,12 @@ public class AlreadyBlindPortException extends Exception {
     }
 
     public static void throwException(int port) throws AlreadyBlindPortException {
-        NeoProxyServer.sayInfo("The outPort " + port + " has already blind !");
+        ServerLogger.warn("exception.alreadyBlindPort.message", port);
         throw new AlreadyBlindPortException(port);
     }
 
     public static void throwException(int startPort, int endPort) throws AlreadyBlindPortException {
-        NeoProxyServer.sayInfo("There are no available outPort between " + startPort + " and " + endPort + " !");
+        ServerLogger.warn("exception.alreadyBlindPort.range.message", startPort, endPort);
         throw new AlreadyBlindPortException(startPort, endPort);
     }
 }

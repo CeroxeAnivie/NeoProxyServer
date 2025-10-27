@@ -2,6 +2,8 @@ package neoproject.neoproxy.core.management;
 
 import com.google.gson.Gson;
 import com.google.gson.annotations.SerializedName;
+import neoproject.neoproxy.core.ServerLogger;
+
 import java.net.*;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -11,7 +13,7 @@ import java.util.List;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
-import static neoproject.neoproxy.NeoProxyServer.*;
+import static neoproject.neoproxy.NeoProxyServer.IS_DEBUG_MODE;
 
 public class IPGeolocationHelper {
 
@@ -19,11 +21,25 @@ public class IPGeolocationHelper {
     private static final HttpClient httpClientWithProxy;
     private static final HttpClient httpClientDirect;
     private static final boolean USE_SYSTEM_PROXY;
+    private static final Gson gson = new Gson();
+    private static final ExecutorService executor = Executors.newCachedThreadPool();
+    // 核心：API服务列表，只保留您指定的三个
+    private static final List<APIService> API_SERVICES = List.of(
+            // 优先级 1: ip.sb
+            new APIService("ip.sb", "https://api.ip.sb/geoip", IPGeolocationHelper::parseIpSbResponse, 1, null),
+            // 优先级 2: ip-api.com
+            new APIService("ip-api.com", "http://ip-api.com/json/", IPGeolocationHelper::parseIPAPIResponse, 2, null),
+            // 优先级 3: ipapi.co
+            new APIService("ipapi.co", "https://ipapi.co/", IPGeolocationHelper::parseIPAPICoResponse, 3, null)
+    );
 
     static {
         // 检测系统代理是否配置（使用增强版逻辑）
         USE_SYSTEM_PROXY = isSystemProxyConfigured();
-        sayInfo("IPGeolocationHelper", "System proxy detected: " + USE_SYSTEM_PROXY + ". API requests will " + (USE_SYSTEM_PROXY ? "USE" : "NOT USE") + " system proxy.");
+        ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.systemProxyDetected",
+                USE_SYSTEM_PROXY,
+                ServerLogger.getMessage(USE_SYSTEM_PROXY ? "ipGeolocationHelper.systemProxyWillUse" : "ipGeolocationHelper.systemProxyWillNotUse")
+        );
 
         // 创建一个使用系统默认代理选择器的客户端
         httpClientWithProxy = HttpClient.newBuilder()
@@ -37,29 +53,16 @@ public class IPGeolocationHelper {
                 .build();
     }
 
-    private static final Gson gson = new Gson();
-    private static final ExecutorService executor = Executors.newCachedThreadPool();
-
-    // 核心：API服务列表，只保留您指定的三个
-    private static final List<APIService> API_SERVICES = List.of(
-            // 优先级 1: ip.sb
-            new APIService("ip.sb", "https://api.ip.sb/geoip", IPGeolocationHelper::parseIpSbResponse, 1, null),
-            // 优先级 2: ip-api.com
-            new APIService("ip-api.com", "http://ip-api.com/json/", IPGeolocationHelper::parseIPAPIResponse, 2, null),
-            // 优先级 3: ipapi.co
-            new APIService("ipapi.co", "https://ipapi.co/", IPGeolocationHelper::parseIPAPICoResponse, 3, null)
-    );
-
     public static LocationInfo getLocationInfo(String ip) {
         // 预检查私有IP地址
         try {
             InetAddress address = InetAddress.getByName(ip);
             if (address.isLoopbackAddress() || address.isSiteLocalAddress() || address.isLinkLocalAddress()) {
-                sayInfo("IPGeolocationHelper: IP " + ip + " is a private/local address. Skipping online lookup.");
+                ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.privateIpSkipped", ip);
                 return new LocationInfo("Localhost", "N/A", true, "Local Detection");
             }
         } catch (UnknownHostException e) {
-            sayError("IPGeolocationHelper: Invalid IP address format: " + ip);
+            ServerLogger.errorWithSource("IPGeolocationHelper", "ipGeolocationHelper.invalidIpFormat", ip);
             return LocationInfo.failed();
         }
 
@@ -69,7 +72,7 @@ public class IPGeolocationHelper {
                 .map(api -> CompletableFuture.supplyAsync(() -> queryAPIService(api, ip), executor)
                         .exceptionally(e -> {
                             String errorMsg = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
-                            sayError("IPGeolocationHelper: Error with " + api.name + ": " + errorMsg);
+                            ServerLogger.errorWithSource("IPGeolocationHelper", "ipGeolocationHelper.apiError", api.name, errorMsg);
                             return null;
                         }))
                 .collect(Collectors.toList());
@@ -77,7 +80,7 @@ public class IPGeolocationHelper {
         for (CompletableFuture<LocationInfo> apiFuture : apiFutures) {
             apiFuture.thenAccept(result -> {
                 if (result != null && result.success() && !finalResult.isDone()) {
-                    myConsole.log("IPGeolocationHelper","Got location from " + result.source() + " for IP " + ip + ". Cancelling other requests.");
+                    ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.locationFound", result.source(), ip);
                     finalResult.complete(result);
                     apiFutures.forEach(f -> {
                         if (f != apiFuture) {
@@ -90,7 +93,7 @@ public class IPGeolocationHelper {
 
         CompletableFuture.allOf(apiFutures.toArray(new CompletableFuture[0])).thenRun(() -> {
             if (!finalResult.isDone()) {
-                sayError("IPGeolocationHelper: All API services failed for IP " + ip);
+                ServerLogger.errorWithSource("IPGeolocationHelper", "ipGeolocationHelper.allApisFailed", ip);
                 finalResult.complete(LocationInfo.failed());
             }
         });
@@ -98,11 +101,11 @@ public class IPGeolocationHelper {
         try {
             return finalResult.get(3000, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
-            sayError("IPGeolocationHelper: Overall timeout (3000ms) reached for IP " + ip + ".");
+            ServerLogger.errorWithSource("IPGeolocationHelper", "ipGeolocationHelper.overallTimeout", ip);
             apiFutures.forEach(f -> f.cancel(true));
             return LocationInfo.failed();
         } catch (InterruptedException | ExecutionException e) {
-            sayError("IPGeolocationHelper: Error during parallel lookup: " + e.getMessage());
+            ServerLogger.errorWithSource("IPGeolocationHelper", "ipGeolocationHelper.parallelLookupError", e.getMessage());
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             return LocationInfo.failed();
         }
@@ -142,35 +145,35 @@ public class IPGeolocationHelper {
                 URI testUri = new URI("https://api.ip.sb/geoip");
                 List<Proxy> proxyList = defaultSelector.select(testUri);
                 if (proxyList != null && !proxyList.isEmpty() && proxyList.get(0) != Proxy.NO_PROXY) {
-                    sayInfo("IPGeolocationHelper", "Proxy detected via ProxySelector.");
+                    ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.systemProxyDetected", true, ServerLogger.getMessage("ipGeolocationHelper.systemProxyWillUse"));
                     return true;
                 }
             }
         } catch (Exception e) {
-            sayError("IPGeolocationHelper", "ProxySelector check failed: " + e.getMessage());
+            ServerLogger.errorWithSource("IPGeolocationHelper", "ipGeolocationHelper.proxySelectorCheckFailed", e.getMessage());
         }
 
         // 2. 如果标准方法失败，直接检查环境变量
-        sayInfo("IPGeolocationHelper", "ProxySelector failed. Checking environment variables directly.");
+        ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.checkingEnvVars");
         String httpProxy = System.getenv("http_proxy");
         String httpsProxy = System.getenv("https_proxy");
 
         // --- 核心：增加调试输出 ---
-        if(IS_DEBUG_MODE){
-            myConsole.warn("IPGeolocationHelper", "DEBUG: Value of 'http_proxy' seen by Java is: '" + httpProxy + "'");
-            myConsole.warn("IPGeolocationHelper", "DEBUG: Value of 'https_proxy' seen by Java is: '" + httpsProxy + "'");
+        if (IS_DEBUG_MODE) {
+            ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.debugHttpProxy", httpProxy);
+            ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.debugHttpsProxy", httpsProxy);
         }
 
         if (httpProxy != null && !httpProxy.isEmpty()) {
-            sayInfo("IPGeolocationHelper", "http_proxy environment variable found: " + httpProxy);
+            ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.httpProxyFound", httpProxy);
             return true;
         }
         if (httpsProxy != null && !httpsProxy.isEmpty()) {
-            sayInfo("IPGeolocationHelper", "https_proxy environment variable found: " + httpsProxy);
+            ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.httpsProxyFound", httpsProxy);
             return true;
         }
 
-        sayInfo("IPGeolocationHelper", "No proxy found via ProxySelector or environment variables.");
+        ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.noProxyFound");
         return false;
     }
 
@@ -203,7 +206,7 @@ public class IPGeolocationHelper {
                 return new LocationInfo(location, isp, true);
             }
         } catch (Exception e) {
-            sayError("IPGeolocationHelper: Failed to parse ip.sb response: " + e.getMessage());
+            ServerLogger.errorWithSource("IPGeolocationHelper", "ipGeolocationHelper.parseError.ipSb", e.getMessage());
         }
         return LocationInfo.failed();
     }
@@ -223,7 +226,9 @@ public class IPGeolocationHelper {
                 String location = locBuilder.length() > 2 ? locBuilder.substring(0, locBuilder.length() - 2) : "N/A";
                 return new LocationInfo(location, isp, true);
             }
-        } catch (Exception e) { sayError("IPGeolocationHelper: Failed to parse IP-API response: " + e.getMessage()); }
+        } catch (Exception e) {
+            ServerLogger.errorWithSource("IPGeolocationHelper", "ipGeolocationHelper.parseError.ipApi", e.getMessage());
+        }
         return LocationInfo.failed();
     }
 
@@ -242,7 +247,9 @@ public class IPGeolocationHelper {
                 String location = locBuilder.length() > 2 ? locBuilder.substring(0, locBuilder.length() - 2) : "N/A";
                 return new LocationInfo(location, isp, true);
             }
-        } catch (Exception e) { sayError("IPGeolocationHelper: Failed to parse IPAPI.co response: " + e.getMessage()); }
+        } catch (Exception e) {
+            ServerLogger.errorWithSource("IPGeolocationHelper", "ipGeolocationHelper.parseError.ipApiCo", e.getMessage());
+        }
         return LocationInfo.failed();
     }
 
@@ -257,14 +264,28 @@ public class IPGeolocationHelper {
     }
 
     public record LocationInfo(String location, String isp, boolean success, String source) {
-        public LocationInfo(String location, String isp, boolean success) { this(location, isp, success, "Unknown"); }
-        public static LocationInfo failed() { return new LocationInfo("N/A", "N/A", false, "Failed"); }
+        public LocationInfo(String location, String isp, boolean success) {
+            this(location, isp, success, "Unknown");
+        }
+
+        public static LocationInfo failed() {
+            return new LocationInfo("N/A", "N/A", false, "Failed");
+        }
     }
 
     private static class APIService {
-        String name; String baseUrl; java.util.function.Function<String, LocationInfo> parser; int priority; String apiKey;
+        String name;
+        String baseUrl;
+        java.util.function.Function<String, LocationInfo> parser;
+        int priority;
+        String apiKey;
+
         APIService(String name, String baseUrl, java.util.function.Function<String, LocationInfo> parser, int priority, String apiKey) {
-            this.name = name; this.baseUrl = baseUrl; this.parser = parser; this.priority = priority; this.apiKey = apiKey;
+            this.name = name;
+            this.baseUrl = baseUrl;
+            this.parser = parser;
+            this.priority = priority;
+            this.apiKey = apiKey;
         }
     }
 

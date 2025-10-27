@@ -2,26 +2,22 @@ package neoproject.neoproxy.core.threads;
 
 import neoproject.neoproxy.core.HostClient;
 import neoproject.neoproxy.core.HostReply;
-import neoproject.neoproxy.core.InfoBox;
 import neoproject.neoproxy.core.LanguageData;
+import neoproject.neoproxy.core.ServerLogger;
 import neoproject.neoproxy.core.exceptions.IllegalWebSiteException;
 import neoproject.neoproxy.core.exceptions.NoMoreNetworkFlowException;
 import plethora.management.bufferedFile.SizeCalculator;
 import plethora.net.SecureSocket;
 import plethora.thread.ThreadManager;
 
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
-import java.io.Closeable;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
 import static neoproject.neoproxy.NeoProxyServer.debugOperation;
 import static neoproject.neoproxy.NeoProxyServer.myConsole;
-import static neoproject.neoproxy.core.InfoBox.alert;
 import static neoproject.neoproxy.core.InternetOperator.*;
+import static neoproject.neoproxy.core.ServerLogger.alert;
 import static neoproject.neoproxy.core.management.SequenceKey.disableKey;
 
 public record TCPTransformer(HostClient hostClient, Socket client, HostReply hostReply) implements Runnable {
@@ -129,9 +125,9 @@ public record TCPTransformer(HostClient hostClient, Socket client, HostReply hos
         close(client, host);
         try {
             sendCommand(hostClient, "exitNoFlow");
-            InfoBox.sayHostClientDiscInfo(hostClient, "TCPTransformer");
+            ServerLogger.sayHostClientDiscInfo(hostClient, "TCPTransformer");
         } catch (Exception e) {
-            InfoBox.sayHostClientDiscInfo(hostClient, "TCPTransformer");
+            ServerLogger.sayHostClientDiscInfo(hostClient, "TCPTransformer");
         }
         close(hostClient);
     }
@@ -146,11 +142,11 @@ public record TCPTransformer(HostClient hostClient, Socket client, HostReply hos
         String headerPart = (headerEndIndex != -1) ? response.substring(0, headerEndIndex) : response;
 
         if (headerPart.toLowerCase().contains("content-type: text/html")) {
-            if (alert){
-                myConsole.log("TCPTransformer","Detected web HTML from " + remoteSocketAddress.replaceAll("/",""));
+            if (alert) {
+                myConsole.log("TCPTransformer", "Detected web HTML from " + remoteSocketAddress.replaceAll("/", ""));
             }
 
-            if (FORBIDDEN_HTML_TEMPLATE==null){
+            if (FORBIDDEN_HTML_TEMPLATE == null) {
                 return;
             }
             String finalHtml = FORBIDDEN_HTML_TEMPLATE.replace("{{CUSTOM_MESSAGE}}", customMessage != null ? customMessage : "");
@@ -180,6 +176,6 @@ public record TCPTransformer(HostClient hostClient, Socket client, HostReply hos
 
         hostClient.unregisterTcpSocket(client);
         close(client, hostReply.host());
-        InfoBox.sayClientTCPConnectDestroyInfo(hostClient, client);
+        ServerLogger.sayClientTCPConnectDestroyInfo(hostClient, client);
     }
 }

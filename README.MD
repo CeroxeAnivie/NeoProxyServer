@@ -51,11 +51,15 @@ mvn clean package
 
 ```bash
 java -jar target/NeoProxyServer-XXXX.jar
+
+# 可选参数追加到后面
+# --debug                            打印调试信息（异常栈）
+# --en-us / --zh-ch                  强制指定语言
 ```
 
 > 默认监听：
-> - **Hook 端口**：`801`（客户端注册）
-> - **连接端口**：`802`（数据通道）
+> - **Hook 端口**：`44801`（客户端注册）
+> - **连接端口**：`44802`（数据通道）
 
 启动后，服务端将自动生成 `config.cfg` 配置文件和 `sk.mv.db` 数据库。
 
@@ -69,8 +73,8 @@ ALERT=true                           # 是否启用详细连接日志
 ENABLE_BAN=true                      # 是否启用IP封禁
 SO_TIMEOUT=1000                      # 服务端等待客户端响应超时（毫秒）
 TELL_BALANCE_MIB=10                  # 每消耗10MB流量通知剩余量
-HOST_HOOK_PORT=801                   # 客户端注册端口
-HOST_CONNECT_PORT=802                # 数据通道端口
+HOST_HOOK_PORT=44801                   # 客户端注册端口
+HOST_CONNECT_PORT=44802                # 数据通道端口
 BUFFER_LEN=4096                      # 数据缓冲区大小
 SAVE_DELAY=3000                      # 密钥状态保存间隔（毫秒）
 AES_KEY_SIZE=128                     # 加密密钥长度

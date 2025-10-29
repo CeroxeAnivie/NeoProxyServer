@@ -126,6 +126,28 @@ public class ConsoleManager {
             }
         });
 
+        myConsole.registerCommand("debug", "Enable or disable debug mode", (List<String> params) -> {
+            if (params.size() != 1) {
+                myConsole.warn("Admin", "Usage: debug <enable|disable>");
+                return;
+            }
+
+            String action = params.getFirst();
+
+            if (!action.equals("enable") && !action.equals("disable")) {
+                myConsole.warn("Admin", "Usage: web <enable|disable> <key>");
+                return;
+            }
+
+            if (action.equals("enable")) {
+                IS_DEBUG_MODE=true;
+                ServerLogger.warnWithSource("Admin","consoleManager.debugEnabled");
+            }else {
+                IS_DEBUG_MODE=false;
+                ServerLogger.warnWithSource("Admin","consoleManager.debugDisabled");
+            }
+        });
+
         myConsole.registerCommand("web", "Enable or disable web HTML for a key", (List<String> params) -> {
             if (params.size() != 2) {
                 myConsole.warn("Admin", "Usage: web <enable|disable> <key>");

@@ -15,8 +15,8 @@ import static neoproject.neoproxy.core.ServerLogger.alert;
 public class UpdateManager {
     public static final String CLIENT_DIR = CURRENT_DIR_PATH + File.separator + "clients";
     public static final File CLIENT_DIR_FOLDER = new File(CLIENT_DIR);
-    private static boolean isInit = false;
     private static final int CHUNK_SIZE = 8192; // 8KB块大小
+    private static boolean isInit = false;
 
     public static void init() {
         if (!CLIENT_DIR_FOLDER.exists()) {

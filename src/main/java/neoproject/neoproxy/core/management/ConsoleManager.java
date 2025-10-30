@@ -73,7 +73,7 @@ public class ConsoleManager {
                     ServerLogger.errorWithSource("Admin", "consoleManager.banFailed", ipToBan);
                 }
             } else {
-                myConsole.warn("Admin", "Invalid IP address format: " + ipToBan);
+                ServerLogger.errorWithSource("Admin", "consoleManager.invalidIPFormate", ipToBan);
             }
         });
 
@@ -90,7 +90,7 @@ public class ConsoleManager {
                     ServerLogger.errorWithSource("Admin", "consoleManager.unbanFailed", ipToUnban);
                 }
             } else {
-                myConsole.warn("Admin", "Invalid IP address format: " + ipToUnban);
+                ServerLogger.errorWithSource("Admin", "consoleManager.invalidIPFormate", ipToUnban);
             }
         });
 
@@ -140,12 +140,16 @@ public class ConsoleManager {
             }
 
             if (action.equals("enable")) {
-                IS_DEBUG_MODE=true;
-                ServerLogger.warnWithSource("Admin","consoleManager.debugEnabled");
-            }else {
-                IS_DEBUG_MODE=false;
-                ServerLogger.warnWithSource("Admin","consoleManager.debugDisabled");
+                IS_DEBUG_MODE = true;
+                ServerLogger.warnWithSource("Admin", "consoleManager.debugEnabled");
+            } else {
+                IS_DEBUG_MODE = false;
+                ServerLogger.warnWithSource("Admin", "consoleManager.debugDisabled");
             }
+        });
+
+        myConsole.registerCommand("ver", "Print version info", (List<String> params) -> {
+            ServerLogger.infoWithSource("Admin", "consoleManager.currentServerVersion", VERSION, EXPECTED_CLIENT_VERSION);
         });
 
         myConsole.registerCommand("web", "Enable or disable web HTML for a key", (List<String> params) -> {

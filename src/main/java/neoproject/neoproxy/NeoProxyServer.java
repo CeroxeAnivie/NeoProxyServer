@@ -12,11 +12,14 @@ import plethora.utils.ArrayUtils;
 import plethora.utils.MyConsole;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.*;
 import java.util.Locale;
+import java.util.Properties;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static neoproject.neoproxy.core.InternetOperator.close;
+import static neoproject.neoproxy.core.ServerLogger.alert;
 import static neoproject.neoproxy.core.management.IPChecker.loadBannedIPs;
 import static neoproject.neoproxy.core.management.SequenceKey.DYNAMIC_PORT;
 import static neoproject.neoproxy.core.management.SequenceKey.initKeyDatabase;
@@ -25,17 +28,39 @@ import static neoproject.neoproxy.core.threads.TCPTransformer.BUFFER_LEN;
 public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = System.getProperty("user.dir");
     public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
-    public static String EXPECTED_CLIENT_VERSION = "4.7.2";//from old to new versions
+    public static String VERSION = getAppVersion();
+    public static String EXPECTED_CLIENT_VERSION = "4.7.0|4.7.1|4.7.2";//from old to new versions
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.stringArrayToList(EXPECTED_CLIENT_VERSION.split("\\|"));
     public static int HOST_HOOK_PORT = 44801;
     public static int HOST_CONNECT_PORT = 44802;
     public static String LOCAL_DOMAIN_NAME = "localhost";
-    public static SecureServerSocket hostServerTransferServerSocket = null;
     public static SecureServerSocket hostServerHookServerSocket = null;
+    public static SecureServerSocket hostServerTransferServerSocket = null;
     public static boolean IS_DEBUG_MODE = false;
     public static MyConsole myConsole;
-
     public static boolean isStopped = false;
+
+    private static String getAppVersion() {
+        Properties props = new Properties();
+        try (InputStream is = NeoProxyServer.class.getClassLoader()
+                .getResourceAsStream("app.properties")) {
+            if (is == null) {
+                throw new IllegalStateException(
+                        "Missing resource: " + "app.properties" + " (ensure it's in src/main/resources)");
+            }
+            props.load(is); // Java 9+ 默认 UTF-8，安全读取中文/特殊字符
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to read " + "app.properties", e);
+        }
+
+        String version = props.getProperty("app.version");
+        if (version == null || version.trim().isEmpty()) {
+            throw new IllegalStateException(
+                    "Property '" + "app.version" + "' is missing or empty in " + "app.properties");
+        }
+
+        return version.trim();
+    }
 
     public static void initConsole() {
         ConsoleManager.init();
@@ -49,7 +74,6 @@ public class NeoProxyServer {
         ConfigOperator.readAndSetValue(); // 3. Configuration
         UpdateManager.init();    // 4. Update manager
         SecureSocket.setMaxAllowedPacketSize((int) SizeCalculator.mibToByte(200)); // 5. Set max packet size to 200m
-        loadBannedIPs();
 
         // 5. Network services
         try {
@@ -61,6 +85,7 @@ public class NeoProxyServer {
             ServerLogger.error("neoProxyServer.canNotBindPort");
             System.exit(-1);
         }
+        loadBannedIPs();
     }
 
     private static void checkARGS(String[] args) {
@@ -143,14 +168,18 @@ public class NeoProxyServer {
         }, "HostClient-Handler").start();
     }
 
-    // MODIFIED: Use ServerLogger
     public static HostClient listenAndConfigureHostClient() throws SlientException, IOException {
         SecureSocket hostServerHook = hostServerHookServerSocket.accept();
+        if (hostServerHook == null) {//获得了封禁ip的socket
+            SlientException.throwException();
+        }
         String clientAddress = hostServerHook.getInetAddress().getHostAddress();
 
         if (IPChecker.exec(clientAddress, IPChecker.CHECK_IS_BAN)) {
             close(hostServerHook);
-            ServerLogger.info("neoProxyServer.banConnectInfo", clientAddress);
+            if (alert) {
+                ServerLogger.info("neoProxyServer.banConnectInfo", clientAddress);
+            }
             SlientException.throwException();
         }
 
@@ -167,6 +196,10 @@ public class NeoProxyServer {
                 Socket client;
                 try {
                     client = hostClient.getClientServerSocket().accept();
+                    if (IPChecker.exec(client.getInetAddress().getHostAddress(),IPChecker.CHECK_IS_BAN)){
+                        client.close();
+                        continue;
+                    }
                 } catch (IOException e) {
                     debugOperation(e);
                     continue;

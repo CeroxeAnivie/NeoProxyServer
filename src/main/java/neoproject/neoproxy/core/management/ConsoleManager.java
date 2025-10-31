@@ -16,12 +16,7 @@ import static neoproject.neoproxy.NeoProxyServer.*;
 import static neoproject.neoproxy.core.management.IPChecker.*;
 import static neoproject.neoproxy.core.management.SequenceKey.*;
 
-/**
- * Console manager, responsible for registering and processing all console commands.
- * <p>
- * All command processing logic will catch internal exceptions and log them via {@link NeoProxyServer#debugOperation},
- * preventing the entire application from crashing due to command errors.
- */
+
 public class ConsoleManager {
 
     private static final String TIME_FORMAT_PATTERN = "^(\\d{4})/(\\d{1,2})/(\\d{1,2})-(\\d{1,2}):(\\d{1,2})$";

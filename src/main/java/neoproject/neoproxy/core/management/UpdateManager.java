@@ -8,8 +8,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 
-import static neoproject.neoproxy.NeoProxyServer.CURRENT_DIR_PATH;
-import static neoproject.neoproxy.NeoProxyServer.debugOperation;
+import static neoproject.neoproxy.NeoProxyServer.*;
 import static neoproject.neoproxy.core.ServerLogger.alert;
 
 public class UpdateManager {
@@ -36,6 +35,19 @@ public class UpdateManager {
     }
 
     public static void handle(HostClient hostClient) {
+        boolean isWantedToUpdate;
+        try {
+            isWantedToUpdate= Boolean.parseBoolean(hostClient.getHostServerHook().receiveStr());
+        } catch (IOException e) {
+            debugOperation(e);
+            hostClient.close();
+            return;
+        }
+
+        if (!isWantedToUpdate){
+            return;
+        }
+
         if (!isInit || !CLIENT_DIR_FOLDER.exists()) {
             tellFalseAndClose(hostClient);
             return;
@@ -59,8 +71,8 @@ public class UpdateManager {
         }
 
         try {
-            String str = hostClient.getHostServerHook().receiveStr(); // 获取客户端是要exe还是jar
-            if (str.equals("exe")) {
+            String str = hostClient.getHostServerHook().receiveStr(); // 获取客户端是要 7z 还是jar
+            if (str.equals("7z")) {
                 if (sevenZFile == null) {
                     tellFalseAndClose(hostClient);
                     if (alert) {
@@ -110,7 +122,6 @@ public class UpdateManager {
 
     private static void tellFalseAndClose(HostClient hostClient) {
         try {
-            hostClient.getHostServerHook().receiveStr(); // ignore
             hostClient.getHostServerHook().sendStr("false"); // 告诉客户端无法下载
         } catch (IOException ignored) {
         }

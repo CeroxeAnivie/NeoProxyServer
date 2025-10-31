@@ -14,6 +14,12 @@ import plethora.utils.MyConsole;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.security.CodeSource;
+import java.security.ProtectionDomain;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -26,10 +32,10 @@ import static neoproject.neoproxy.core.management.SequenceKey.initKeyDatabase;
 import static neoproject.neoproxy.core.threads.TCPTransformer.BUFFER_LEN;
 
 public class NeoProxyServer {
-    public static final String CURRENT_DIR_PATH = System.getProperty("user.dir");
+    public static final String CURRENT_DIR_PATH = String.valueOf(getJarDirectory());
     public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
     public static String VERSION = getAppVersion();
-    public static String EXPECTED_CLIENT_VERSION = "4.7.0|4.7.1|4.7.2";//from old to new versions
+    public static String EXPECTED_CLIENT_VERSION = "4.7.0|4.7.1|4.7.2|4.7.3";//from old to new versions
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.stringArrayToList(EXPECTED_CLIENT_VERSION.split("\\|"));
     public static int HOST_HOOK_PORT = 44801;
     public static int HOST_CONNECT_PORT = 44802;
@@ -67,6 +73,12 @@ public class NeoProxyServer {
     }
 
     public static void initStructure() {
+        try {//处理eula，这是头等大事
+            copyResourceToJarDirectory("eula.txt");
+        } catch (IOException e) {
+            e.printStackTrace();
+            System.exit(-2);
+        }
         // Initialization order is clearer
         initConsole();           // 1. Console system
         printLogo();
@@ -130,7 +142,7 @@ public class NeoProxyServer {
         ServerLogger.info("neoProxyServer.localDomainName", LOCAL_DOMAIN_NAME);
         ServerLogger.info("neoProxyServer.listenHostConnectPort", HOST_CONNECT_PORT);
         ServerLogger.info("neoProxyServer.listenHostHookPort", HOST_HOOK_PORT);
-        ServerLogger.info("neoProxyServer.supportClientVersions", EXPECTED_CLIENT_VERSION);
+        ServerLogger.info("consoleManager.currentServerVersion",VERSION, EXPECTED_CLIENT_VERSION);
 
         while (!isStopped) {
             try {
@@ -139,7 +151,9 @@ public class NeoProxyServer {
             } catch (IOException e) {
                 debugOperation(e);
                 if (!isStopped) {
-                    ServerLogger.info("neoProxyServer.clientConnectButFail");
+                    if (alert){
+                        ServerLogger.info("neoProxyServer.clientConnectButFail");
+                    }
                 } else {
                     break;
                 }
@@ -149,7 +163,7 @@ public class NeoProxyServer {
         }
     }
 
-    // New method: handle new connected HostClient
+    //handle new connected HostClient
     private static void handleNewHostClient(HostClient hostClient) {
         new Thread(() -> {
             try {
@@ -192,7 +206,7 @@ public class NeoProxyServer {
     public static void handleTransformerServiceWithNewThread(HostClient hostClient) {
         //tcp
         new Thread(() -> {
-            while (!hostClient.getClientServerSocket().isClosed()) {
+            while (!hostClient.isStopped()) {
                 Socket client;
                 try {
                     client = hostClient.getClientServerSocket().accept();
@@ -292,19 +306,36 @@ public class NeoProxyServer {
                             }
                         }, "UDP-Create-New-" + clientOutPort).start();
                     }
-                } // end synchronized block
+                }
             }
         }, "HostClient-UDP-Service").start();
     }
 
-    // Optimized port checking method
     private static int getCurrentAvailableOutPort(SequenceKey sequenceKey) {
         for (int i = sequenceKey.getDyStart(); i <= sequenceKey.getDyEnd(); i++) {
+            boolean tcpAvailable;
+            boolean udpAvailable;
+
+            // 检查TCP端口可用性
             try (ServerSocket serverSocket = new ServerSocket()) {
                 serverSocket.bind(new InetSocketAddress(i), 0);
-                return i;
+                tcpAvailable = true;
             } catch (IOException ignore) {
-                // Port is not available, continue to the next one
+                // TCP端口不可用，继续检查下一个端口
+                continue;
+            }
+
+            // 检查UDP端口可用性
+            try (DatagramSocket datagramSocket = new DatagramSocket(i)) {
+                udpAvailable = true;
+            } catch (IOException ignore) {
+                // UDP端口不可用，继续检查下一个端口
+                continue;
+            }
+
+            // 只有当TCP和UDP都可用时，才返回该端口
+            if (tcpAvailable && udpAvailable) {
+                return i;
             }
         }
         return -1;
@@ -367,21 +398,20 @@ public class NeoProxyServer {
 
         String hostClientInfo = InternetOperator.receiveStr(hostClient);
         if (hostClientInfo == null || hostClientInfo.isEmpty()) {
-            UnSupportHostVersionException.throwException("_NULL_", hostClient);
+            UnSupportHostVersionException.throwException(hostClient.getIP(),"_NULL_");
         }
 
-        assert hostClientInfo != null;
         String[] info = hostClientInfo.split(";");
         if (info.length != 3) {
-            UnSupportHostVersionException.throwException("_NULL_", hostClient);
+            UnSupportHostVersionException.throwException(hostClient.getIP(),"_NULL_");
         }
 
         LanguageData languageData = "zh".equals(info[0]) ?
                 LanguageData.getChineseLanguage() : new LanguageData();
 
         if (!availableVersions.contains(info[1])) {
-            InternetOperator.sendStr(hostClient, languageData.UNSUPPORTED_VERSION_MSG + EXPECTED_CLIENT_VERSION);
-            UnSupportHostVersionException.throwException(info[1], hostClient);
+            InternetOperator.sendStr(hostClient, languageData.UNSUPPORTED_VERSION_MSG + availableVersions.getLast());
+            UnSupportHostVersionException.throwException(hostClient.getIP(),info[1]);
         }
 
         SequenceKey currentSequenceKey = SequenceKey.getEnabledKeyFromDB(info[2]);
@@ -453,5 +483,83 @@ public class NeoProxyServer {
             debugOperation(e);
         }
         ServerLogger.info("neoProxyServer.shutdownCompleted");
+    }
+
+    //copy EULA
+    public static Path copyResourceToJarDirectory(String resourcePath) throws IOException {
+        if (resourcePath == null || resourcePath.isBlank()) {
+            throw new IllegalArgumentException("Resource path cannot be null or blank.");
+        }
+
+        // 1. 获取资源的输入流
+        // 使用当前类的类加载器来查找资源，这是最可靠的方式
+        ClassLoader classLoader = NeoProxyServer.class.getClassLoader();
+        try (InputStream resourceStream = classLoader.getResourceAsStream(resourcePath)) {
+            if (resourceStream == null) {
+                throw new IOException("Resource not found in classpath: " + resourcePath);
+            }
+
+            // 2. 定位当前 JAR 文件的位置
+            Path targetDirectory = getJarDirectory();
+
+            // 3. 构建目标文件的完整路径
+            // Paths.get("a/b/c", "d.txt") 会正确处理路径分隔符
+            Path targetFile = targetDirectory.resolve(Paths.get(resourcePath).getFileName());
+
+            // 4. 确保目标文件的父目录存在（如果资源路径包含子目录）
+            // 例如，如果资源是 "config/app.properties"，我们需要确保 "config" 目录存在
+            Path parentDir = targetFile.getParent();
+            if (parentDir != null && !Files.exists(parentDir)) {
+                Files.createDirectories(parentDir);
+            }
+
+            // 5. 执行拷贝操作
+            // REPLACE_EXISTING 选项会覆盖已存在的同名文件
+            Files.copy(resourceStream, targetFile, StandardCopyOption.REPLACE_EXISTING);
+
+            return targetFile;
+        }
+    }
+
+    /**
+     * 获取当前运行的 JAR 文件所在的目录。
+     *
+     * @return JAR 文件所在的目录 {@link Path}。
+     */
+    private static Path getJarDirectory(){
+        try {
+            // 获取当前类的 ProtectionDomain
+            ProtectionDomain domain = NeoProxyServer.class.getProtectionDomain();
+            if (domain == null) {
+                throw new IOException("ProtectionDomain is null. Cannot determine JAR location.");
+            }
+
+            // 获取 CodeSource，它包含了类的来源位置（通常是 JAR 文件）
+            CodeSource codeSource = domain.getCodeSource();
+            if (codeSource == null) {
+                throw new IOException("CodeSource is null. Cannot determine JAR location.");
+            }
+
+            // 获取位置的 URL
+            URL location = codeSource.getLocation();
+            if (location == null) {
+                throw new IOException("CodeSource location is null. Cannot determine JAR location.");
+            }
+
+            // 将 URL 转换为 Path
+            // location.toURI() 能正确处理路径中的空格和特殊字符
+            Path jarPath = Paths.get(location.toURI());
+
+            // 返回 JAR 文件的父目录
+            Path parentDir = jarPath.getParent();
+            if (parentDir == null) {
+                // 这在 JAR 位于文件系统根目录时极不可能发生，但作为一种防御性检查
+                throw new IOException("Cannot determine parent directory of JAR file: " + jarPath);
+            }
+            return parentDir;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Path.of(System.getProperty("user.dir"));
+        }
     }
 }

@@ -97,7 +97,7 @@ public final class InternetOperator {
         return packet.getAddress().getHostAddress() + ":" + packet.getPort();
     }
 
-    public static String getIP(Socket socket) {
+    public static String getIP(SecureSocket socket) {
         return socket.getInetAddress().toString().replaceAll("/", "");
     }
 

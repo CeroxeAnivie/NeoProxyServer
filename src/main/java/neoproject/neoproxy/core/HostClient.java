@@ -21,7 +21,7 @@ public final class HostClient implements Closeable {
     public static int DETECTION_DELAY = 1000;
     public static int AES_KEY_SIZE = 128;
     private final SecureSocket hostServerHook;
-    // 用于跟踪所有由该 HostClient创建的活跃TCP连接
+    // 用于跟踪所有由该 HostClient 创建的活跃 TCP 连接
     private final CopyOnWriteArrayList<Socket> activeTcpSockets = new CopyOnWriteArrayList<>();
     private boolean isStopped = false;
     private SequenceKey sequenceKey = null;
@@ -29,11 +29,9 @@ public final class HostClient implements Closeable {
     private DatagramSocket clientDatagramSocket = null;
     private LanguageData languageData = new LanguageData();
     private int outPort = -1;
-
-    // 【新增】用于缓存地理位置信息的字段
+    // 用于缓存地理位置信息的字段
     private String cachedLocation;
     private String cachedISP;
-
     public HostClient(SecureSocket hostServerHook) throws IOException {
         this.hostServerHook = hostServerHook;
 
@@ -83,9 +81,10 @@ public final class HostClient implements Closeable {
         a.start();
     }
 
-// ... 其他代码保持不变 ...
+    public boolean isStopped() {
+        return isStopped;
+    }
 
-    // MODIFIED: Use ServerLogger
     public void enableCheckAliveThread() {
         HostClient hostClient = this;
 
@@ -95,9 +94,8 @@ public final class HostClient implements Closeable {
                     byte[] bytes = hostClient.hostServerHook.receiveRaw();
                     if (bytes.length == 0) {
                         hostClient.close();
-                        // MODIFIED: 使用 infoWithSource
                         ServerLogger.infoWithSource("CheckAliveThread", "hostClient.checkAliveThreadDisconnected", hostClient.getAddressAndPort());
-                        break;
+                        break;//退出 while
                     }
                 } catch (Exception e) {
                     hostClient.close();
@@ -231,13 +229,7 @@ public final class HostClient implements Closeable {
         availableHostClient.remove(this);
         InternetOperator.close(hostServerHook);
         InternetOperator.close(clientDatagramSocket);
-
-        if (clientServerSocket != null) {
-            try {
-                clientServerSocket.close();
-            } catch (IOException ignored) {
-            }
-        }
+        InternetOperator.close(clientServerSocket);
 
         this.isStopped = true;
     }
@@ -273,6 +265,9 @@ public final class HostClient implements Closeable {
 
     public String getAddressAndPort() {
         return InternetOperator.getInternetAddressAndPort(hostServerHook);
+    }
+    public String getIP(){
+        return InternetOperator.getIP(hostServerHook);
     }
 
     public LanguageData getLangData() {

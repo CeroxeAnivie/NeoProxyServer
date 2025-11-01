@@ -1,6 +1,5 @@
 package neoproject.neoproxy.core.management;
 
-import neoproject.neoproxy.NeoProxyServer;
 import neoproject.neoproxy.core.HostClient;
 import neoproject.neoproxy.core.ServerLogger;
 import plethora.utils.MyConsole;

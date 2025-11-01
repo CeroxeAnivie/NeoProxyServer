@@ -11,6 +11,7 @@ import plethora.net.SecureSocket;
 import plethora.utils.ArrayUtils;
 import plethora.utils.MyConsole;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.*;
@@ -32,7 +33,7 @@ import static neoproject.neoproxy.core.management.SequenceKey.initKeyDatabase;
 import static neoproject.neoproxy.core.threads.TCPTransformer.BUFFER_LEN;
 
 public class NeoProxyServer {
-    public static final String CURRENT_DIR_PATH = String.valueOf(getJarDirectory());
+    public static final String CURRENT_DIR_PATH = getJarDirOrUserDir();
     public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
     public static String VERSION = getAppVersion();
     public static String EXPECTED_CLIENT_VERSION = "4.7.0|4.7.1|4.7.2|4.7.3";//from old to new versions
@@ -142,7 +143,7 @@ public class NeoProxyServer {
         ServerLogger.info("neoProxyServer.localDomainName", LOCAL_DOMAIN_NAME);
         ServerLogger.info("neoProxyServer.listenHostConnectPort", HOST_CONNECT_PORT);
         ServerLogger.info("neoProxyServer.listenHostHookPort", HOST_HOOK_PORT);
-        ServerLogger.info("consoleManager.currentServerVersion",VERSION, EXPECTED_CLIENT_VERSION);
+        ServerLogger.info("consoleManager.currentServerVersion", VERSION, EXPECTED_CLIENT_VERSION);
 
         while (!isStopped) {
             try {
@@ -151,7 +152,7 @@ public class NeoProxyServer {
             } catch (IOException e) {
                 debugOperation(e);
                 if (!isStopped) {
-                    if (alert){
+                    if (alert) {
                         ServerLogger.info("neoProxyServer.clientConnectButFail");
                     }
                 } else {
@@ -210,7 +211,7 @@ public class NeoProxyServer {
                 Socket client;
                 try {
                     client = hostClient.getClientServerSocket().accept();
-                    if (IPChecker.exec(client.getInetAddress().getHostAddress(),IPChecker.CHECK_IS_BAN)){
+                    if (IPChecker.exec(client.getInetAddress().getHostAddress(), IPChecker.CHECK_IS_BAN)) {
                         client.close();
                         continue;
                     }
@@ -398,12 +399,12 @@ public class NeoProxyServer {
 
         String hostClientInfo = InternetOperator.receiveStr(hostClient);
         if (hostClientInfo == null || hostClientInfo.isEmpty()) {
-            UnSupportHostVersionException.throwException(hostClient.getIP(),"_NULL_");
+            UnSupportHostVersionException.throwException(hostClient.getIP(), "_NULL_");
         }
 
         String[] info = hostClientInfo.split(";");
         if (info.length != 3) {
-            UnSupportHostVersionException.throwException(hostClient.getIP(),"_NULL_");
+            UnSupportHostVersionException.throwException(hostClient.getIP(), "_NULL_");
         }
 
         LanguageData languageData = "zh".equals(info[0]) ?
@@ -411,7 +412,7 @@ public class NeoProxyServer {
 
         if (!availableVersions.contains(info[1])) {
             InternetOperator.sendStr(hostClient, languageData.UNSUPPORTED_VERSION_MSG + availableVersions.getLast());
-            UnSupportHostVersionException.throwException(hostClient.getIP(),info[1]);
+            UnSupportHostVersionException.throwException(hostClient.getIP(), info[1]);
         }
 
         SequenceKey currentSequenceKey = SequenceKey.getEnabledKeyFromDB(info[2]);
@@ -500,7 +501,7 @@ public class NeoProxyServer {
             }
 
             // 2. 定位当前 JAR 文件的位置
-            Path targetDirectory = getJarDirectory();
+            Path targetDirectory = Path.of(getJarDirOrUserDir());
 
             // 3. 构建目标文件的完整路径
             // Paths.get("a/b/c", "d.txt") 会正确处理路径分隔符
@@ -522,44 +523,61 @@ public class NeoProxyServer {
     }
 
     /**
-     * 获取当前运行的 JAR 文件所在的目录。
+     * 获取应用程序的运行路径。
+     * <p>
+     * 如果是从 JAR 文件运行，则返回 JAR 文件所在的文件夹的绝对路径。
+     * 如果不是（例如从 IDE 或 class 文件目录运行），或者在获取路径时发生任何异常，
+     * 则返回 {@code user.dir} 系统属性（用户当前工作目录）。
+     * <p>
+     * 此方法保证不会抛出任何已检查异常。
      *
-     * @return JAR 文件所在的目录 {@link Path}。
+     * @return JAR 文件所在文件夹的绝对路径，或 {@code user.dir}。
      */
-    private static Path getJarDirectory(){
+    public static String getJarDirOrUserDir() {
+        // 定义在任何失败情况下的回退路径
+        String fallbackPath = System.getProperty("user.dir");
+
         try {
-            // 获取当前类的 ProtectionDomain
-            ProtectionDomain domain = NeoProxyServer.class.getProtectionDomain();
-            if (domain == null) {
-                throw new IOException("ProtectionDomain is null. Cannot determine JAR location.");
+            // 1. 获取当前类的保护域
+            ProtectionDomain protectionDomain = NeoProxyServer.class.getProtectionDomain();
+            if (protectionDomain == null) {
+                return fallbackPath;
             }
 
-            // 获取 CodeSource，它包含了类的来源位置（通常是 JAR 文件）
-            CodeSource codeSource = domain.getCodeSource();
+            // 2. 获取代码源
+            CodeSource codeSource = protectionDomain.getCodeSource();
             if (codeSource == null) {
-                throw new IOException("CodeSource is null. Cannot determine JAR location.");
+                return fallbackPath;
             }
 
-            // 获取位置的 URL
+            // 3. 获取位置 URL
             URL location = codeSource.getLocation();
             if (location == null) {
-                throw new IOException("CodeSource location is null. Cannot determine JAR location.");
+                return fallbackPath;
             }
 
-            // 将 URL 转换为 Path
-            // location.toURI() 能正确处理路径中的空格和特殊字符
-            Path jarPath = Paths.get(location.toURI());
+            // 4. 将 URL 转换为文件对象
+            File file = new File(location.toURI());
 
-            // 返回 JAR 文件的父目录
-            Path parentDir = jarPath.getParent();
-            if (parentDir == null) {
-                // 这在 JAR 位于文件系统根目录时极不可能发生，但作为一种防御性检查
-                throw new IOException("Cannot determine parent directory of JAR file: " + jarPath);
+            // 5. 判断是否是一个 JAR 文件
+            if (file.isFile() && file.getName().toLowerCase().endsWith(".jar")) {
+                // 成功：获取 JAR 文件的父目录
+                File parentDir = file.getParentFile();
+                if (parentDir != null) {
+                    // 返回父目录的绝对路径
+                    return parentDir.getAbsolutePath();
+                }
+                // 如果 parentDir 为 null (极罕见情况，如JAR在文件系统根目录)，也回退
+                return fallbackPath;
             }
-            return parentDir;
         } catch (Exception e) {
-            e.printStackTrace();
-            return Path.of(System.getProperty("user.dir"));
+            // 捕获所有可能的异常（如 SecurityException, URISyntaxException, NullPointerException 等）
+            // 根据要求，不向外抛出，而是返回回退路径
+            // 在实际项目中，这里可以考虑使用日志记录异常，例如：
+            // logger.warn("Failed to get JAR directory, falling back to user.dir.", e);
         }
+
+        // 默认情况（非JAR运行或发生异常）：返回 user.dir
+        return fallbackPath;
     }
 }

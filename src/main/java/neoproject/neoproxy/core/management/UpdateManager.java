@@ -7,8 +7,10 @@ import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.util.Arrays;
 
-import static neoproject.neoproxy.NeoProxyServer.*;
+import static neoproject.neoproxy.NeoProxyServer.CURRENT_DIR_PATH;
+import static neoproject.neoproxy.NeoProxyServer.debugOperation;
 import static neoproject.neoproxy.core.ServerLogger.alert;
 
 public class UpdateManager {
@@ -37,14 +39,14 @@ public class UpdateManager {
     public static void handle(HostClient hostClient) {
         boolean isWantedToUpdate;
         try {
-            isWantedToUpdate= Boolean.parseBoolean(hostClient.getHostServerHook().receiveStr());
+            isWantedToUpdate = Boolean.parseBoolean(hostClient.getHostServerHook().receiveStr(1000));
         } catch (IOException e) {
             debugOperation(e);
             hostClient.close();
             return;
         }
 
-        if (!isWantedToUpdate){
+        if (!isWantedToUpdate) {
             return;
         }
 
@@ -63,6 +65,7 @@ public class UpdateManager {
         }
 
         File sevenZFile = null;
+
         for (File file : files) {
             if (file.getName().endsWith(".7z")) {
                 sevenZFile = file;

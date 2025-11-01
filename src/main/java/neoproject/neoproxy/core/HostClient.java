@@ -32,6 +32,7 @@ public final class HostClient implements Closeable {
     // 用于缓存地理位置信息的字段
     private String cachedLocation;
     private String cachedISP;
+
     public HostClient(SecureSocket hostServerHook) throws IOException {
         this.hostServerHook = hostServerHook;
 
@@ -266,7 +267,8 @@ public final class HostClient implements Closeable {
     public String getAddressAndPort() {
         return InternetOperator.getInternetAddressAndPort(hostServerHook);
     }
-    public String getIP(){
+
+    public String getIP() {
         return InternetOperator.getIP(hostServerHook);
     }
 

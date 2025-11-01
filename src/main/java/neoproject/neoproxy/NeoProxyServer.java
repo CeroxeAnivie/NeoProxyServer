@@ -146,14 +146,20 @@ public class NeoProxyServer {
         ServerLogger.info("consoleManager.currentServerVersion", VERSION, EXPECTED_CLIENT_VERSION);
 
         while (!isStopped) {
+            HostClient hostClient=null;
             try {
-                HostClient hostClient = listenAndConfigureHostClient();
+                hostClient = listenAndConfigureHostClient();
                 handleNewHostClient(hostClient);
             } catch (IOException e) {
                 debugOperation(e);
                 if (!isStopped) {
                     if (alert) {
-                        ServerLogger.info("neoProxyServer.clientConnectButFail");
+                        String exceptionMsg=e.getMessage();
+                        if (exceptionMsg.contains("Handshake failed from")) {//特别捕获握手异常
+                            ServerLogger.info("neoProxyServer.clientConnectButFail",exceptionMsg.split("from")[1]);
+                        }else {
+                            ServerLogger.info("neoProxyServer.clientConnectButFail","_UNKNOWN_");
+                        }
                     }
                 } else {
                     break;

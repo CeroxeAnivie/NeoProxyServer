@@ -10,16 +10,22 @@ import java.io.IOException;
 import java.net.DatagramSocket;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-import static neoproject.neoproxy.NeoProxyServer.availableHostClient;
+import static neoproject.neoproxy.NeoProxyServer.*;
+import static neoproject.neoproxy.core.ServerLogger.alert;
+import static neoproject.neoproxy.core.ServerLogger.sayHostClientDiscInfo;
 import static neoproject.neoproxy.core.management.SequenceKey.saveToDB;
 
 public final class HostClient implements Closeable {
+    // 心跳验证相关常量
+    private static final String EXPECTED_HEARTBEAT = "PING";
     public static int SAVE_DELAY = 3000;//3s
     public static int DETECTION_DELAY = 1000;
     public static int AES_KEY_SIZE = 128;
+    public static int HEARTBEAT_TIMEOUT = 5000; // 5秒超时，可配置
     private final SecureSocket hostServerHook;
     // 用于跟踪所有由该 HostClient 创建的活跃 TCP 连接
     private final CopyOnWriteArrayList<Socket> activeTcpSockets = new CopyOnWriteArrayList<>();
@@ -89,24 +95,72 @@ public final class HostClient implements Closeable {
     public void enableCheckAliveThread() {
         HostClient hostClient = this;
 
-        new Thread(() -> {
-            while (true) {
+        Thread heartbeatCheckThread = new Thread(() -> {
+            // 记录最后一次收到有效心跳（"PING"）的时间戳。
+            // 初始化为0，表示尚未收到任何有效心跳。
+            long lastValidHeartbeatTime = 0;
+            // 记录连接建立的时间，用于在收到第一个心跳前计算超时。
+            long connectionEstablishedTime = System.currentTimeMillis();
+
+            while (!hostClient.isStopped) {
                 try {
-                    byte[] bytes = hostClient.hostServerHook.receiveRaw();
-                    if (bytes.length == 0) {
+                    // 使用固定的1秒超时来接收消息。这既是轮询间隔，也避免了CPU空转。
+                    // 客户端也是1秒发一次，这个频率很匹配。
+                    String message = hostClient.hostServerHook.receiveStr(1000);
+
+                    if (message == null) {
+                        // receiveStr() 返回 null，表示客户端正常关闭了连接
+                        sayHostClientDiscInfo(hostClient, Thread.currentThread().getName());
                         hostClient.close();
-                        ServerLogger.infoWithSource("CheckAliveThread", "hostClient.checkAliveThreadDisconnected", hostClient.getAddressAndPort());
-                        break;//退出 while
+                        break;
+                    } else if (EXPECTED_HEARTBEAT.equals(message)) {
+                        // 1. 收到的是有效心跳包 "PING"
+                        lastValidHeartbeatTime = System.currentTimeMillis(); // 更新最后有效心跳时间
+                        if (IS_DEBUG_MODE) {
+                            myConsole.warn(Thread.currentThread().getName(), "Received valid heartbeat.");
+                        }
+                    } else {
+                        // 2. 收到的是无效数据包，按需求丢弃，什么都不做（除了记录日志）
+                        if (alert) {
+                            myConsole.warn(Thread.currentThread().getName(), "Detected invalid packet, discarding: " + message);
+                        }
+                        // 注意：这里绝对不能更新 lastValidHeartbeatTime
                     }
+
+                } catch (SocketTimeoutException e) {
+                    // 这个超时是预期的！它表示1秒内没有收到任何消息。
+                    // 现在是检查心跳是否真正超时的最佳时机。
+                    long currentTime = System.currentTimeMillis();
+
+                    // 确定计算超时的起点：如果还没收到过心跳，就从连接建立时算起
+                    long startTime = (lastValidHeartbeatTime == 0) ? connectionEstablishedTime : lastValidHeartbeatTime;
+
+                    long timeSinceLastValidHeartbeat = currentTime - startTime;
+
+                    if (timeSinceLastValidHeartbeat >= HEARTBEAT_TIMEOUT) {
+                        // 已经超过允许的最大心跳间隔，判断客户端离线
+//                        myConsole.warn(Thread.currentThread().getName(),
+//                                "Client heartbeat timeout. No PING received for " + timeSinceLastValidHeartbeat + "ms.");
+                        debugOperation(e);
+                        sayHostClientDiscInfo(hostClient, Thread.currentThread().getName());
+                        hostClient.close();
+                        break;
+                    }
+                    // 如果未超时，则继续循环，等待下一次1秒超时或消息到来
+
                 } catch (Exception e) {
+                    // 发生其他IO异常（如网络中断、Broken pipe等），连接不可靠，直接关闭
+                    debugOperation(e);
+                    sayHostClientDiscInfo(hostClient, Thread.currentThread().getName());
                     hostClient.close();
-                    // MODIFIED: 使用 infoWithSource
-                    ServerLogger.infoWithSource("CheckAliveThread", "hostClient.checkAliveThreadDisconnected", hostClient.getAddressAndPort());
                     break;
                 }
             }
-        }).start();
+        });
 
+        heartbeatCheckThread.setName("HeartbeatCheck-" + hostClient.getKey().getName());
+        heartbeatCheckThread.setDaemon(true); // 设置为守护线程，不阻止JVM退出
+        heartbeatCheckThread.start();
     }
 
     /**
@@ -220,6 +274,7 @@ public final class HostClient implements Closeable {
 
     @Override
     public void close() {
+        System.out.println(1);
         // 先关闭所有活跃的TCP连接
         for (Socket socket : activeTcpSockets) {
             InternetOperator.close(socket);

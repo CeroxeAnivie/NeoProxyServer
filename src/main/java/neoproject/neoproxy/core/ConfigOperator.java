@@ -4,9 +4,9 @@ import neoproject.neoproxy.NeoProxyServer;
 import neoproject.neoproxy.core.management.IPChecker;
 import neoproject.neoproxy.core.management.TransferSocketAdapter;
 import neoproject.neoproxy.core.threads.TCPTransformer;
-import plethora.management.bufferedFile.BufferedFile;
 import plethora.utils.config.LineConfigReader;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,7 +18,7 @@ import java.nio.file.StandardOpenOption;
  */
 public final class ConfigOperator {
 
-    public static final BufferedFile CONFIG_FILE = new BufferedFile(NeoProxyServer.CURRENT_DIR_PATH + java.io.File.separator + "config.cfg");
+    public static final File CONFIG_FILE = new File(NeoProxyServer.CURRENT_DIR_PATH + java.io.File.separator + "config.cfg");
     private static final Path CONFIG_PATH = CONFIG_FILE.toPath();
 
     /**
@@ -37,9 +37,9 @@ public final class ConfigOperator {
             #Whether to enable illegal connection ban
             ENABLE_BAN=true
             
-            ##自定义网页拦截消息，换行使用<br>
+            #自定义网页拦截消息，换行使用<br>
             #Customize webpage interception messages, use <br> for line breaks
-            CUSTOM_BLOCKING_MESSAGE=如有疑问，请联系您的系统管理员。
+            CUSTOM_BLOCKING_MESSAGE=根据中国法律，网页相关服务需要报备。<br>加入 QQ 群 304509047 获取进一步支持。
             
             #设置服务端最大等待客户端响应的时间，单位为毫秒
             #Set the maximum waiting time for the server to respond to the client, in milliseconds
@@ -64,7 +64,11 @@ public final class ConfigOperator {
             
             #AES加密的秘钥长度
             #AES encryption key length
-            AES_KEY_SIZE=128""";
+            AES_KEY_SIZE=128
+            
+            #服务端判断客户端几秒内无响应就判断为超时的时间（单位：毫秒）
+            # The timeout period (in milliseconds) for which the server determines if the client has not responded.
+            HEARTBEAT_TIMEOUT=5000""";
 
     private ConfigOperator() {
         // 工具类，禁止实例化
@@ -114,6 +118,7 @@ public final class ConfigOperator {
         ServerLogger.alert = reader.getOptional("ALERT").map(Boolean::parseBoolean).orElse(true);
         HostClient.SAVE_DELAY = reader.getOptional("SAVE_DELAY").map(Integer::parseInt).orElse(3000);
         HostClient.AES_KEY_SIZE = reader.getOptional("AES_KEY_SIZE").map(Integer::parseInt).orElse(128);
+        HostClient.HEARTBEAT_TIMEOUT = reader.getOptional("HEARTBEAT_TIMEOUT").map(Integer::parseInt).orElse(5000);
         TCPTransformer.BUFFER_LEN = reader.getOptional("BUFFER_LEN").map(Integer::parseInt).orElse(4096);
         TCPTransformer.TELL_BALANCE_MIB = reader.getOptional("TELL_BALANCE_MIB").map(Integer::parseInt).orElse(10);
         TCPTransformer.CUSTOM_BLOCKING_MESSAGE = reader.getOptional("CUSTOM_BLOCKING_MESSAGE").orElse("如有疑问，请联系您的系统管理员。");

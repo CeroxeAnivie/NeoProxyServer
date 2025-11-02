@@ -7,7 +7,6 @@ import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.util.Arrays;
 
 import static neoproject.neoproxy.NeoProxyServer.CURRENT_DIR_PATH;
 import static neoproject.neoproxy.NeoProxyServer.debugOperation;

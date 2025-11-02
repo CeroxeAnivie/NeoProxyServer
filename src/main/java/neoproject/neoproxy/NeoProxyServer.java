@@ -21,6 +21,8 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.security.CodeSource;
 import java.security.ProtectionDomain;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -36,8 +38,8 @@ public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = getJarDirOrUserDir();
     public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
     public static String VERSION = getAppVersion();
-    public static String EXPECTED_CLIENT_VERSION = "4.7.0|4.7.1|4.7.2|4.7.3";//from old to new versions
-    public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.stringArrayToList(EXPECTED_CLIENT_VERSION.split("\\|"));
+    public static String EXPECTED_CLIENT_VERSION = "4.7.4";//from old to new versions
+    public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.toCopyOnWriteArrayListWithLoop(EXPECTED_CLIENT_VERSION.split("\\|"));
     public static int HOST_HOOK_PORT = 44801;
     public static int HOST_CONNECT_PORT = 44802;
     public static String LOCAL_DOMAIN_NAME = "localhost";
@@ -146,7 +148,7 @@ public class NeoProxyServer {
         ServerLogger.info("consoleManager.currentServerVersion", VERSION, EXPECTED_CLIENT_VERSION);
 
         while (!isStopped) {
-            HostClient hostClient=null;
+            HostClient hostClient = null;
             try {
                 hostClient = listenAndConfigureHostClient();
                 handleNewHostClient(hostClient);
@@ -154,11 +156,11 @@ public class NeoProxyServer {
                 debugOperation(e);
                 if (!isStopped) {
                     if (alert) {
-                        String exceptionMsg=e.getMessage();
+                        String exceptionMsg = e.getMessage();
                         if (exceptionMsg.contains("Handshake failed from")) {//特别捕获握手异常
-                            ServerLogger.info("neoProxyServer.clientConnectButFail",exceptionMsg.split("from")[1]);
-                        }else {
-                            ServerLogger.info("neoProxyServer.clientConnectButFail","_UNKNOWN_");
+                            ServerLogger.info("neoProxyServer.clientConnectButFail", exceptionMsg.split("from")[1]);
+                        } else {
+                            ServerLogger.info("neoProxyServer.clientConnectButFail", "_UNKNOWN_");
                         }
                     }
                 } else {
@@ -350,11 +352,13 @@ public class NeoProxyServer {
 
     private static void checkHostClientLegitimacyAndTellInfo(HostClient hostClient) throws IOException, NoMorePortException, SlientException, UnRecognizedKeyException, AlreadyBlindPortException, UnSupportHostVersionException, OutDatedKeyException {
         Object[] obj = NeoProxyServer.checkHostClientVersionAndKeyAndLang(hostClient);
-        hostClient.enableCheckAliveThread();
-        availableHostClient.add(hostClient);
         SequenceKey key = (SequenceKey) obj[0];
         hostClient.setKey(key);
         hostClient.setLangData((LanguageData) obj[1]);
+
+        hostClient.enableCheckAliveThread();
+        availableHostClient.add(hostClient);
+
         int port;
         if (hostClient.getKey().getPort() != DYNAMIC_PORT) {
             port = hostClient.getKey().getPort();

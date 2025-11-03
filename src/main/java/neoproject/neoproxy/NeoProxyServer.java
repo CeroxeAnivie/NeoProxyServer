@@ -38,7 +38,7 @@ public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = getJarDirOrUserDir();
     public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
     public static String VERSION = getAppVersion();
-    public static String EXPECTED_CLIENT_VERSION = "4.7.4";//from old to new versions
+    public static String EXPECTED_CLIENT_VERSION = "4.7.4|4.8.4|4.8.5";//from old to new versions
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.toCopyOnWriteArrayListWithLoop(EXPECTED_CLIENT_VERSION.split("\\|"));
     public static int HOST_HOOK_PORT = 44801;
     public static int HOST_CONNECT_PORT = 44802;

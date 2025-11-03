@@ -116,9 +116,6 @@ public final class HostClient implements Closeable {
                     } else if (EXPECTED_HEARTBEAT.equals(message)) {
                         // 1. 收到的是有效心跳包 "PING"
                         lastValidHeartbeatTime = System.currentTimeMillis(); // 更新最后有效心跳时间
-                        if (IS_DEBUG_MODE) {
-                            myConsole.warn(Thread.currentThread().getName(), "Received valid heartbeat.");
-                        }
                     } else {
                         // 2. 收到的是无效数据包，按需求丢弃，什么都不做（除了记录日志）
                         if (alert) {
@@ -274,7 +271,6 @@ public final class HostClient implements Closeable {
 
     @Override
     public void close() {
-        System.out.println(1);
         // 先关闭所有活跃的TCP连接
         for (Socket socket : activeTcpSockets) {
             InternetOperator.close(socket);

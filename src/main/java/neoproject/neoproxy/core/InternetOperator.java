@@ -6,8 +6,7 @@ import plethora.net.SecureSocket;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.net.DatagramPacket;
-import java.net.Socket;
+import java.net.*;
 
 import static neoproject.neoproxy.NeoProxyServer.debugOperation;
 
@@ -99,6 +98,27 @@ public final class InternetOperator {
 
     public static String getIP(SecureSocket socket) {
         return socket.getInetAddress().toString().replaceAll("/", "");
+    }
+
+    public static boolean isTCPAvailable(int port) {
+        try {
+            ServerSocket testSocket = new ServerSocket();
+            testSocket.bind(new InetSocketAddress(port), 0);
+            testSocket.close();
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    public static boolean isUDPAvailable(int port) {
+        try {
+            DatagramSocket datagramSocket = new DatagramSocket(port);
+            datagramSocket.close();
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
     }
 
 }

@@ -21,13 +21,13 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.security.CodeSource;
 import java.security.ProtectionDomain;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.locks.LockSupport;
 
-import static neoproject.neoproxy.core.InternetOperator.close;
+import static neoproject.neoproxy.core.InternetOperator.*;
 import static neoproject.neoproxy.core.ServerLogger.alert;
 import static neoproject.neoproxy.core.management.IPChecker.loadBannedIPs;
 import static neoproject.neoproxy.core.management.SequenceKey.DYNAMIC_PORT;
@@ -38,7 +38,7 @@ public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = getJarDirOrUserDir();
     public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
     public static String VERSION = getAppVersion();
-    public static String EXPECTED_CLIENT_VERSION = "4.7.4|4.8.4|4.8.5";//from old to new versions
+    public static String EXPECTED_CLIENT_VERSION = "4.7.4|4.8.4|4.8.5|4.8.6";//from old to new versions
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.toCopyOnWriteArrayListWithLoop(EXPECTED_CLIENT_VERSION.split("\\|"));
     public static int HOST_HOOK_PORT = 44801;
     public static int HOST_CONNECT_PORT = 44802;
@@ -148,7 +148,7 @@ public class NeoProxyServer {
         ServerLogger.info("consoleManager.currentServerVersion", VERSION, EXPECTED_CLIENT_VERSION);
 
         while (!isStopped) {
-            HostClient hostClient = null;
+            HostClient hostClient;
             try {
                 hostClient = listenAndConfigureHostClient();
                 handleNewHostClient(hostClient);
@@ -223,13 +223,16 @@ public class NeoProxyServer {
                         client.close();
                         continue;
                     }
-                } catch (IOException e) {
-                    debugOperation(e);
+                } catch (IOException | NullPointerException e) {
+                    if (hostClient.isTCPEnabled()) {//排除了是因为关掉TCP功能的异常输出
+                        debugOperation(e);
+                    }
+                    waitForTcpEnabled(hostClient);//如果本来就启用，就不会等
                     continue;
                 }
 
                 try {
-                    InternetOperator.sendCommand(hostClient, "sendSocket;" + InternetOperator.getInternetAddressAndPort(client));
+                    sendCommand(hostClient, "sendSocket;" + getInternetAddressAndPort(client));
                 } catch (Exception e) {
                     ServerLogger.sayHostClientDiscInfo(hostClient, "NeoProxyServer");
                     hostClient.close();
@@ -253,14 +256,17 @@ public class NeoProxyServer {
         }, "HostClient-TCP-Service").start();
         //udp
         new Thread(() -> {
-            DatagramSocket datagramSocket = hostClient.getClientDatagramSocket();
-            while (!datagramSocket.isClosed()) {
+            while (!hostClient.isStopped()) {
+                DatagramSocket datagramSocket = hostClient.getClientDatagramSocket();
                 byte[] buffer = new byte[BUFFER_LEN];
                 DatagramPacket datagramPacket = new DatagramPacket(buffer, buffer.length);
                 try {
                     datagramSocket.receive(datagramPacket); // 【唯一的 receive 点】
-                } catch (IOException e) {
-                    debugOperation(e);
+                } catch (IOException | NullPointerException e) {
+                    if (hostClient.isUDPEnabled()) {//排除了是因为关掉UDP功能的异常输出
+                        debugOperation(e);
+                    }
+                    waitForUDPEnabled(hostClient);
                     continue;
                 }
 
@@ -287,7 +293,7 @@ public class NeoProxyServer {
                         new Thread(() -> {
                             try {
                                 // 1. Notify client A to create a new UDP connection
-                                InternetOperator.sendCommand(hostClient, "sendSocketUDP;" + InternetOperator.getInternetAddressAndPort(datagramPacket));
+                                sendCommand(hostClient, "sendSocketUDP;" + getInternetAddressAndPort(datagramPacket));
 
                                 // Timeout will throw an exception SocketTimeoutException
                                 HostReply hostReply;
@@ -320,57 +326,52 @@ public class NeoProxyServer {
         }, "HostClient-UDP-Service").start();
     }
 
-    private static int getCurrentAvailableOutPort(SequenceKey sequenceKey) {
+    private static int getCurrentAvailableOutPort(SequenceKey sequenceKey) {//TCP and UDP all
         for (int i = sequenceKey.getDyStart(); i <= sequenceKey.getDyEnd(); i++) {
-            boolean tcpAvailable;
-            boolean udpAvailable;
-
             // 检查TCP端口可用性
             try (ServerSocket serverSocket = new ServerSocket()) {
                 serverSocket.bind(new InetSocketAddress(i), 0);
-                tcpAvailable = true;
             } catch (IOException ignore) {
                 // TCP端口不可用，继续检查下一个端口
                 continue;
             }
 
             // 检查UDP端口可用性
-            try (DatagramSocket datagramSocket = new DatagramSocket(i)) {
-                udpAvailable = true;
+            try {
+                DatagramSocket testU = new DatagramSocket(i);
+                testU.close();
             } catch (IOException ignore) {
                 // UDP端口不可用，继续检查下一个端口
                 continue;
             }
 
-            // 只有当TCP和UDP都可用时，才返回该端口
-            if (tcpAvailable && udpAvailable) {
-                return i;
-            }
+            // 只有当TCP和UDP都可用时，才返回该端口，如果有不可用直接 continue 了不会到这里
+            return i;
         }
         return -1;
     }
 
     private static void checkHostClientLegitimacyAndTellInfo(HostClient hostClient) throws IOException, NoMorePortException, SlientException, UnRecognizedKeyException, AlreadyBlindPortException, UnSupportHostVersionException, OutDatedKeyException {
-        Object[] obj = NeoProxyServer.checkHostClientVersionAndKeyAndLang(hostClient);
-        SequenceKey key = (SequenceKey) obj[0];
-        hostClient.setKey(key);
-        hostClient.setLangData((LanguageData) obj[1]);
-
-        hostClient.enableCheckAliveThread();
-        availableHostClient.add(hostClient);
+        NeoProxyServer.checkHostClientVersionAndKeyAndLang(hostClient);//不仅会检测还会配置好这个 host client
 
         int port;
         if (hostClient.getKey().getPort() != DYNAMIC_PORT) {
             port = hostClient.getKey().getPort();
         } else {
-            port = NeoProxyServer.getCurrentAvailableOutPort(key);
+            port = NeoProxyServer.getCurrentAvailableOutPort(hostClient.getKey());//这个是动态端口会找两个协议都可用的端口，防止用户突然开关
             if (port == -1) {
                 NoMorePortException.throwException();
             }
         }
+
         hostClient.setOutPort(port);
-        hostClient.setClientServerSocket(new ServerSocket(port));//tcp
-        hostClient.setClientDatagramSocket(new DatagramSocket(port));//udp
+        if (hostClient.isTCPEnabled()) {
+            hostClient.setClientServerSocket(new ServerSocket(port));//tcp
+        }
+        if (hostClient.isUDPEnabled()) {
+            hostClient.setClientDatagramSocket(new DatagramSocket(port));//udp
+        }
+
         String clientAddress = InternetOperator.getInternetAddressAndPort(hostClient.getHostServerHook());
         ServerLogger.info("neoProxyServer.hostClientRegisterSuccess", clientAddress);
         printClientRegistrationInfo(hostClient);
@@ -403,7 +404,7 @@ public class NeoProxyServer {
         ConsoleManager.printClientRegistrationTable(accessCode, ip, location, isp);
     }
 
-    private static Object[] checkHostClientVersionAndKeyAndLang(HostClient hostClient)
+    private static void checkHostClientVersionAndKeyAndLang(HostClient hostClient)
             throws IOException, UnSupportHostVersionException, UnRecognizedKeyException,
             AlreadyBlindPortException, IndexOutOfBoundsException, OutDatedKeyException {
 
@@ -412,8 +413,9 @@ public class NeoProxyServer {
             UnSupportHostVersionException.throwException(hostClient.getIP(), "_NULL_");
         }
 
+        //zh;version;key;TU
         String[] info = hostClientInfo.split(";");
-        if (info.length != 3) {
+        if (info.length < 3 || info.length > 4) {//长度只能3和4 客户端4.8.5之前是3  4.8.6之后是4
             UnSupportHostVersionException.throwException(hostClient.getIP(), "_NULL_");
         }
 
@@ -432,18 +434,29 @@ public class NeoProxyServer {
             UnRecognizedKeyException.throwException(info[2]);
         }
 
+        //zh;version;key;TU
+        if (info.length == 4) {//4.8.6之后是4
+            if (info[3].startsWith("T")) {
+                hostClient.setTCPEnabled(true);
+            }
+            if (info[3].endsWith("U")) {
+                hostClient.setUDPEnabled(true);
+            }
+        }
+
         assert currentSequenceKey != null;
         if (currentSequenceKey.getPort() != DYNAMIC_PORT) {
-            try (ServerSocket testSocket = new ServerSocket()) {
-                testSocket.bind(new InetSocketAddress(currentSequenceKey.getPort()), 0);
-            } catch (IOException e) {
-                InternetOperator.sendStr(hostClient, languageData.THE_PORT_HAS_ALREADY_BLIND);
+            //两个都要检查，因为不知道客户端会不会打开
+            boolean isTCPAvailable = isTCPAvailable(currentSequenceKey.getPort());
+            boolean isUDPAvailable = isUDPAvailable(currentSequenceKey.getPort());
+            if (!isTCPAvailable || !isUDPAvailable) {
+                InternetOperator.sendStr(hostClient, languageData.THE_PORT_HAS_ALREADY_BIND);
                 AlreadyBlindPortException.throwException(currentSequenceKey.getPort());
             }
-        } else {
+        } else {//动态端口
             int i = getCurrentAvailableOutPort(currentSequenceKey);
             if (i == -1) {
-                InternetOperator.sendStr(hostClient, languageData.THE_PORT_HAS_ALREADY_BLIND);
+                InternetOperator.sendStr(hostClient, languageData.THE_PORT_HAS_ALREADY_BIND);
                 AlreadyBlindPortException.throwException(currentSequenceKey.getDyStart(), currentSequenceKey.getDyEnd());
             }
         }
@@ -453,11 +466,14 @@ public class NeoProxyServer {
             OutDatedKeyException.throwException(currentSequenceKey);
         }
 
+        hostClient.setKey(currentSequenceKey);
+        hostClient.setLangData(languageData);
+        hostClient.enableCheckAliveThread();
+        availableHostClient.add(hostClient);
+
         InternetOperator.sendStr(hostClient, languageData.CONNECTION_BUILD_UP_SUCCESSFULLY);
-        return new Object[]{currentSequenceKey, languageData};
     }
 
-    // MODIFIED: Use ServerLogger
     public static void debugOperation(Exception e) {
         if (IS_DEBUG_MODE) {
             ServerLogger.error("neoProxyServer.debugOperation", e, e.getMessage());
@@ -497,7 +513,7 @@ public class NeoProxyServer {
     }
 
     //copy EULA
-    public static Path copyResourceToJarDirectory(String resourcePath) throws IOException {
+    public static void copyResourceToJarDirectory(String resourcePath) throws IOException {
         if (resourcePath == null || resourcePath.isBlank()) {
             throw new IllegalArgumentException("Resource path cannot be null or blank.");
         }
@@ -528,7 +544,6 @@ public class NeoProxyServer {
             // REPLACE_EXISTING 选项会覆盖已存在的同名文件
             Files.copy(resourceStream, targetFile, StandardCopyOption.REPLACE_EXISTING);
 
-            return targetFile;
         }
     }
 
@@ -589,5 +604,59 @@ public class NeoProxyServer {
 
         // 默认情况（非JAR运行或发生异常）：返回 user.dir
         return fallbackPath;
+    }
+
+    public static void waitForTcpEnabled(HostClient hostClient) {
+        CountDownLatch latch = new CountDownLatch(1);
+
+        Thread.startVirtualThread(() -> {
+            try {
+                // 使用 LockSupport.parkNanos 进行极短时间的停放
+                // 1_000_000 纳秒 = 1 毫秒
+                final long parkTimeNanos = 1_000_000L;
+                while (!hostClient.isTCPEnabled()) {
+                    // 停放当前线程 1 毫秒。这比 sleep 更底层，开销可能更小。
+                    LockSupport.parkNanos(parkTimeNanos);
+                }
+                // 条件满足，立即唤醒主线程
+                latch.countDown();
+            } catch (Exception e) {
+                debugOperation(e);
+            }
+        });
+
+        // 主线程在这里高效等待，直到被唤醒
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            debugOperation(e);
+        }
+    }
+
+    public static void waitForUDPEnabled(HostClient hostClient) {
+        CountDownLatch latch = new CountDownLatch(1);
+
+        Thread.startVirtualThread(() -> {
+            try {
+                // 使用 LockSupport.parkNanos 进行极短时间的停放
+                // 1_000_000 纳秒 = 1 毫秒
+                final long parkTimeNanos = 1_000_000L;
+                while (!hostClient.isUDPEnabled()) {
+                    // 停放当前线程 1 毫秒。这比 sleep 更底层，开销可能更小。
+                    LockSupport.parkNanos(parkTimeNanos);
+                }
+                // 条件满足，立即唤醒主线程
+                latch.countDown();
+            } catch (Exception e) {
+                debugOperation(e);
+            }
+        });
+
+        // 主线程在这里高效等待，直到被唤醒
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            debugOperation(e);
+        }
     }
 }

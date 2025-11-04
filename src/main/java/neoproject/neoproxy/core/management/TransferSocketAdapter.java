@@ -12,7 +12,8 @@ import java.io.IOException;
 import java.net.SocketTimeoutException;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-import static neoproject.neoproxy.NeoProxyServer.*;
+import static neoproject.neoproxy.NeoProxyServer.debugOperation;
+import static neoproject.neoproxy.NeoProxyServer.isStopped;
 import static neoproject.neoproxy.core.InternetOperator.close;
 
 public class TransferSocketAdapter implements Runnable {

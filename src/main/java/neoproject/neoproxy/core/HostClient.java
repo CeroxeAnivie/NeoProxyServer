@@ -15,7 +15,6 @@ import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static neoproject.neoproxy.NeoProxyServer.*;
-import static neoproject.neoproxy.core.ServerLogger.alert;
 import static neoproject.neoproxy.core.ServerLogger.sayHostClientDiscInfo;
 import static neoproject.neoproxy.core.management.SequenceKey.saveToDB;
 
@@ -38,6 +37,9 @@ public final class HostClient implements Closeable {
     // 用于缓存地理位置信息的字段
     private String cachedLocation;
     private String cachedISP;
+
+    private boolean isTCPEnabled = true;
+    private boolean isUDPEnabled = true;
 
     public HostClient(SecureSocket hostServerHook) throws IOException {
         this.hostServerHook = hostServerHook;
@@ -117,10 +119,11 @@ public final class HostClient implements Closeable {
                         // 1. 收到的是有效心跳包 "PING"
                         lastValidHeartbeatTime = System.currentTimeMillis(); // 更新最后有效心跳时间
                     } else {
-                        // 2. 收到的是无效数据包，按需求丢弃，什么都不做（除了记录日志）
-                        if (alert) {
-                            myConsole.warn(Thread.currentThread().getName(), "Detected invalid packet, discarding: " + message);
+                        handleHostClientCommand(message);
+                        if (IS_DEBUG_MODE) {
+                            myConsole.log("HostClient-" + getKey().getName(), "Receive message: " + message);
                         }
+
                         // 注意：这里绝对不能更新 lastValidHeartbeatTime
                     }
 
@@ -158,6 +161,46 @@ public final class HostClient implements Closeable {
         heartbeatCheckThread.setName("HeartbeatCheck-" + hostClient.getKey().getName());
         heartbeatCheckThread.setDaemon(true); // 设置为守护线程，不阻止JVM退出
         heartbeatCheckThread.start();
+    }
+
+    private void handleHostClientCommand(String message) {
+        //TU  T   U
+        if (message.startsWith("T")) {
+            if (clientServerSocket == null) {
+                try {
+                    clientServerSocket = new ServerSocket(getOutPort());
+                } catch (IOException e) {
+                    debugOperation(e);
+                }
+            }
+            setTCPEnabled(true);
+        } else {
+            setTCPEnabled(false);
+            if (clientServerSocket != null) {
+                try {
+                    clientServerSocket.close();
+                    clientServerSocket = null;
+                } catch (IOException e) {
+                    debugOperation(e);
+                }
+            }
+        }
+        if (message.endsWith("U")) {
+            if (clientDatagramSocket == null) {
+                try {
+                    clientDatagramSocket = new DatagramSocket(getOutPort());
+                } catch (IOException e) {
+                    debugOperation(e);
+                }
+            }
+            setUDPEnabled(true);
+        } else {
+            setUDPEnabled(false);
+            if (clientDatagramSocket != null) {
+                clientDatagramSocket.close();
+                clientDatagramSocket = null;
+            }
+        }
     }
 
     /**
@@ -280,8 +323,11 @@ public final class HostClient implements Closeable {
         // 然后执行原有的关闭逻辑
         availableHostClient.remove(this);
         InternetOperator.close(hostServerHook);
-        InternetOperator.close(clientDatagramSocket);
+
+        this.setTCPEnabled(false);
         InternetOperator.close(clientServerSocket);
+        this.setUDPEnabled(false);
+        InternetOperator.close(clientDatagramSocket);
 
         this.isStopped = true;
     }
@@ -304,7 +350,13 @@ public final class HostClient implements Closeable {
     }
 
     public void setClientServerSocket(ServerSocket clientServerSocket) {
-        this.clientServerSocket = clientServerSocket;
+        if (clientServerSocket != null) {
+            this.clientServerSocket = clientServerSocket;
+            setTCPEnabled(true);
+        } else {
+            this.clientServerSocket = null;
+            setTCPEnabled(false);
+        }
     }
 
     public DatagramSocket getClientDatagramSocket() {
@@ -312,7 +364,13 @@ public final class HostClient implements Closeable {
     }
 
     public void setClientDatagramSocket(DatagramSocket clientDatagramSocket) {
-        this.clientDatagramSocket = clientDatagramSocket;
+        if (clientDatagramSocket != null) {
+            this.clientDatagramSocket = clientDatagramSocket;
+            setUDPEnabled(true);
+        } else {
+            this.clientDatagramSocket = null;
+            setUDPEnabled(false);
+        }
     }
 
     public String getAddressAndPort() {
@@ -355,4 +413,21 @@ public final class HostClient implements Closeable {
     public void setCachedISP(String cachedISP) {
         this.cachedISP = cachedISP;
     }
+
+    public boolean isTCPEnabled() {
+        return isTCPEnabled;
+    }
+
+    public void setTCPEnabled(boolean TCPEnabled) {
+        isTCPEnabled = TCPEnabled;
+    }
+
+    public boolean isUDPEnabled() {
+        return isUDPEnabled;
+    }
+
+    public void setUDPEnabled(boolean UDPEnabled) {
+        isUDPEnabled = UDPEnabled;
+    }
+
 }

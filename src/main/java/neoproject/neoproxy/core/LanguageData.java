@@ -3,7 +3,7 @@ package neoproject.neoproxy.core;
 import java.io.Serializable;
 
 public class LanguageData implements Serializable {
-    public String THE_PORT_HAS_ALREADY_BLIND = "This outPort is already occupied.";
+    public String THE_PORT_HAS_ALREADY_BIND = "This outPort is already occupied.";
     public String IF_YOU_SEE_EULA = "If you use this software, you understand and agree with eula .";
     public String VERSION = "Version : ";
     public String PLEASE_ENTER_ACCESS_CODE = "Please enter the access code:";
@@ -60,7 +60,7 @@ public class LanguageData implements Serializable {
         languageData.EXPIRE_AT = "有效期至：";
         languageData.DETECTED_VERSION = "检测到客户端版本：";
         languageData.UNSUPPORTED_VERSION_MSG = "不受支持的版本，应该为:";
-        languageData.THE_PORT_HAS_ALREADY_BLIND = "这个端口已经被占用了。";
+        languageData.THE_PORT_HAS_ALREADY_BIND = "这个端口已经被占用了。";
 
         return languageData;
     }

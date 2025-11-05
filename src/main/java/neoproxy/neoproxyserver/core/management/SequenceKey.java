@@ -1,8 +1,8 @@
-package neoproject.neoproxy.core.management;
+package neoproxy.neoproxyserver.core.management;
 
-import neoproject.neoproxy.NeoProxyServer;
-import neoproject.neoproxy.core.HostClient;
-import neoproject.neoproxy.core.exceptions.NoMoreNetworkFlowException;
+import neoproxy.neoproxyserver.NeoProxyServer;
+import neoproxy.neoproxyserver.core.HostClient;
+import neoproxy.neoproxyserver.core.exceptions.NoMoreNetworkFlowException;
 
 import java.sql.*;
 import java.time.LocalDateTime;
@@ -13,7 +13,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
-import static neoproject.neoproxy.NeoProxyServer.*;
+import static neoproxy.neoproxyserver.NeoProxyServer.*;
 
 /**
  * 表示一个序列密钥（Sequence Key），用于流量控制和授权。

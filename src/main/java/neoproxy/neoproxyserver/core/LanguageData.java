@@ -1,4 +1,4 @@
-package neoproject.neoproxy.core;
+package neoproxy.neoproxyserver.core;
 
 import java.io.Serializable;
 

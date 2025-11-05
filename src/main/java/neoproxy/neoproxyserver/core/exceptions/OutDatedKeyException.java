@@ -1,7 +1,7 @@
-package neoproject.neoproxy.core.exceptions;
+package neoproxy.neoproxyserver.core.exceptions;
 
-import neoproject.neoproxy.core.ServerLogger;
-import neoproject.neoproxy.core.management.SequenceKey;
+import neoproxy.neoproxyserver.core.ServerLogger;
+import neoproxy.neoproxyserver.core.management.SequenceKey;
 
 public class OutDatedKeyException extends Exception {
     public OutDatedKeyException(String message) {

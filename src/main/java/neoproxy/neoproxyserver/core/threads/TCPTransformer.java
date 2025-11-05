@@ -1,11 +1,11 @@
-package neoproject.neoproxy.core.threads;
+package neoproxy.neoproxyserver.core.threads;
 
-import neoproject.neoproxy.core.HostClient;
-import neoproject.neoproxy.core.HostReply;
-import neoproject.neoproxy.core.LanguageData;
-import neoproject.neoproxy.core.ServerLogger;
-import neoproject.neoproxy.core.exceptions.IllegalWebSiteException;
-import neoproject.neoproxy.core.exceptions.NoMoreNetworkFlowException;
+import neoproxy.neoproxyserver.core.HostClient;
+import neoproxy.neoproxyserver.core.HostReply;
+import neoproxy.neoproxyserver.core.LanguageData;
+import neoproxy.neoproxyserver.core.ServerLogger;
+import neoproxy.neoproxyserver.core.exceptions.IllegalWebSiteException;
+import neoproxy.neoproxyserver.core.exceptions.NoMoreNetworkFlowException;
 import plethora.management.bufferedFile.SizeCalculator;
 import plethora.net.SecureSocket;
 import plethora.thread.ThreadManager;
@@ -14,11 +14,11 @@ import java.io.*;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
-import static neoproject.neoproxy.NeoProxyServer.debugOperation;
-import static neoproject.neoproxy.NeoProxyServer.myConsole;
-import static neoproject.neoproxy.core.InternetOperator.*;
-import static neoproject.neoproxy.core.ServerLogger.alert;
-import static neoproject.neoproxy.core.management.SequenceKey.disableKey;
+import static neoproxy.neoproxyserver.NeoProxyServer.debugOperation;
+import static neoproxy.neoproxyserver.NeoProxyServer.myConsole;
+import static neoproxy.neoproxyserver.core.InternetOperator.*;
+import static neoproxy.neoproxyserver.core.ServerLogger.alert;
+import static neoproxy.neoproxyserver.core.management.SequenceKey.disableKey;
 
 /**
  * 【优化版】TCP数据传输器，负责在客户端和目标主机之间双向转发数据。

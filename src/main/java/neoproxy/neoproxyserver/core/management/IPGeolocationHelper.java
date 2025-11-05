@@ -1,8 +1,8 @@
-package neoproject.neoproxy.core.management;
+package neoproxy.neoproxyserver.core.management;
 
 import com.google.gson.Gson;
 import com.google.gson.annotations.SerializedName;
-import neoproject.neoproxy.core.ServerLogger;
+import neoproxy.neoproxyserver.core.ServerLogger;
 
 import java.net.*;
 import java.net.http.HttpClient;
@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
-import static neoproject.neoproxy.NeoProxyServer.IS_DEBUG_MODE;
+import static neoproxy.neoproxyserver.NeoProxyServer.IS_DEBUG_MODE;
 
 public class IPGeolocationHelper {
 

@@ -1,16 +1,16 @@
-package neoproject.neoproxy.core.management;
+package neoproxy.neoproxyserver.core.management;
 
-import neoproject.neoproxy.core.HostClient;
-import neoproject.neoproxy.core.ServerLogger;
+import neoproxy.neoproxyserver.core.HostClient;
+import neoproxy.neoproxyserver.core.ServerLogger;
 
 import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 
-import static neoproject.neoproxy.NeoProxyServer.CURRENT_DIR_PATH;
-import static neoproject.neoproxy.NeoProxyServer.debugOperation;
-import static neoproject.neoproxy.core.ServerLogger.alert;
+import static neoproxy.neoproxyserver.NeoProxyServer.CURRENT_DIR_PATH;
+import static neoproxy.neoproxyserver.NeoProxyServer.debugOperation;
+import static neoproxy.neoproxyserver.core.ServerLogger.alert;
 
 public class UpdateManager {
     public static final String CLIENT_DIR = CURRENT_DIR_PATH + File.separator + "clients";

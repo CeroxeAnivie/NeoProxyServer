@@ -1,9 +1,9 @@
-package neoproject.neoproxy.core.management;
+package neoproxy.neoproxyserver.core.management;
 
-import neoproject.neoproxy.NeoProxyServer;
-import neoproject.neoproxy.core.HostClient;
-import neoproject.neoproxy.core.HostReply;
-import neoproject.neoproxy.core.ServerLogger;
+import neoproxy.neoproxyserver.NeoProxyServer;
+import neoproxy.neoproxyserver.core.HostClient;
+import neoproxy.neoproxyserver.core.HostReply;
+import neoproxy.neoproxyserver.core.ServerLogger;
 import plethora.net.SecureServerSocket;
 import plethora.net.SecureSocket;
 import plethora.utils.Sleeper;
@@ -12,9 +12,9 @@ import java.io.IOException;
 import java.net.SocketTimeoutException;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-import static neoproject.neoproxy.NeoProxyServer.debugOperation;
-import static neoproject.neoproxy.NeoProxyServer.isStopped;
-import static neoproject.neoproxy.core.InternetOperator.close;
+import static neoproxy.neoproxyserver.NeoProxyServer.debugOperation;
+import static neoproxy.neoproxyserver.NeoProxyServer.isStopped;
+import static neoproxy.neoproxyserver.core.InternetOperator.close;
 
 public class TransferSocketAdapter implements Runnable {
     // TCP部分保持不变

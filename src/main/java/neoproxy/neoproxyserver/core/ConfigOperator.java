@@ -1,9 +1,9 @@
-package neoproject.neoproxy.core;
+package neoproxy.neoproxyserver.core;
 
-import neoproject.neoproxy.NeoProxyServer;
-import neoproject.neoproxy.core.management.IPChecker;
-import neoproject.neoproxy.core.management.TransferSocketAdapter;
-import neoproject.neoproxy.core.threads.TCPTransformer;
+import neoproxy.neoproxyserver.NeoProxyServer;
+import neoproxy.neoproxyserver.core.management.IPChecker;
+import neoproxy.neoproxyserver.core.management.TransferSocketAdapter;
+import neoproxy.neoproxyserver.core.threads.TCPTransformer;
 import plethora.utils.config.LineConfigReader;
 
 import java.io.File;

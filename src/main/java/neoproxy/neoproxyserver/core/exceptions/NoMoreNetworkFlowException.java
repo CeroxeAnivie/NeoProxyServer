@@ -1,6 +1,6 @@
-package neoproject.neoproxy.core.exceptions;
+package neoproxy.neoproxyserver.core.exceptions;
 
-import neoproject.neoproxy.core.ServerLogger;
+import neoproxy.neoproxyserver.core.ServerLogger;
 
 public class NoMoreNetworkFlowException extends Exception {
     public NoMoreNetworkFlowException(String message) {

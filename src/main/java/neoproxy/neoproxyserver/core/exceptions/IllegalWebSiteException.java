@@ -1,6 +1,6 @@
-package neoproject.neoproxy.core.exceptions;
+package neoproxy.neoproxyserver.core.exceptions;
 
-import neoproject.neoproxy.core.ServerLogger;
+import neoproxy.neoproxyserver.core.ServerLogger;
 
 /**
  * 当客户端尝试访问被禁止的网页内容时抛出此异常。

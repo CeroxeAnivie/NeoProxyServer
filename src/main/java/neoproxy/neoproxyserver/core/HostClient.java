@@ -1,7 +1,7 @@
-package neoproject.neoproxy.core;
+package neoproxy.neoproxyserver.core;
 
-import neoproject.neoproxy.core.management.SequenceKey;
-import neoproject.neoproxy.core.threads.UDPTransformer;
+import neoproxy.neoproxyserver.core.management.SequenceKey;
+import neoproxy.neoproxyserver.core.threads.UDPTransformer;
 import plethora.net.SecureSocket;
 import plethora.utils.Sleeper;
 
@@ -14,9 +14,9 @@ import java.net.SocketTimeoutException;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-import static neoproject.neoproxy.NeoProxyServer.*;
-import static neoproject.neoproxy.core.ServerLogger.sayHostClientDiscInfo;
-import static neoproject.neoproxy.core.management.SequenceKey.saveToDB;
+import static neoproxy.neoproxyserver.NeoProxyServer.*;
+import static neoproxy.neoproxyserver.core.ServerLogger.sayHostClientDiscInfo;
+import static neoproxy.neoproxyserver.core.management.SequenceKey.saveToDB;
 
 public final class HostClient implements Closeable {
     // 心跳验证相关常量

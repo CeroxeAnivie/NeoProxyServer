@@ -1,7 +1,7 @@
-package neoproject.neoproxy.core.management;
+package neoproxy.neoproxyserver.core.management;
 
-import neoproject.neoproxy.core.HostClient;
-import neoproject.neoproxy.core.ServerLogger;
+import neoproxy.neoproxyserver.core.HostClient;
+import neoproxy.neoproxyserver.core.ServerLogger;
 import plethora.utils.MyConsole;
 
 import java.util.ArrayList;
@@ -11,9 +11,9 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static neoproject.neoproxy.NeoProxyServer.*;
-import static neoproject.neoproxy.core.management.IPChecker.*;
-import static neoproject.neoproxy.core.management.SequenceKey.*;
+import static neoproxy.neoproxyserver.NeoProxyServer.*;
+import static neoproxy.neoproxyserver.core.management.IPChecker.*;
+import static neoproxy.neoproxyserver.core.management.SequenceKey.*;
 
 
 public class ConsoleManager {

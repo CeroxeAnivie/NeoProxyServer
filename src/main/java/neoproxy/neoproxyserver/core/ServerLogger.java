@@ -1,6 +1,6 @@
-package neoproject.neoproxy.core;
+package neoproxy.neoproxyserver.core;
 
-import neoproject.neoproxy.NeoProxyServer;
+import neoproxy.neoproxyserver.NeoProxyServer;
 
 import java.net.DatagramPacket;
 import java.net.Socket;

@@ -1,7 +1,7 @@
-package neoproject.neoproxy.core.management;
+package neoproxy.neoproxyserver.core.management;
 
-import neoproject.neoproxy.core.HostClient;
-import neoproject.neoproxy.core.ServerLogger;
+import neoproxy.neoproxyserver.core.HostClient;
+import neoproxy.neoproxyserver.core.ServerLogger;
 
 import java.io.*;
 import java.net.InetAddress;
@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-import static neoproject.neoproxy.NeoProxyServer.*;
+import static neoproxy.neoproxyserver.NeoProxyServer.*;
 
 /**
  * IP 封禁管理器。

@@ -1,10 +1,13 @@
-package neoproject.neoproxy;
+package neoproxy.neoproxyserver;
 
 import neoproject.neoproxy.core.*;
 import neoproject.neoproxy.core.exceptions.*;
 import neoproject.neoproxy.core.management.*;
-import neoproject.neoproxy.core.threads.TCPTransformer;
-import neoproject.neoproxy.core.threads.UDPTransformer;
+import neoproxy.neoproxyserver.core.*;
+import neoproxy.neoproxyserver.core.exceptions.*;
+import neoproxy.neoproxyserver.core.management.*;
+import neoproxy.neoproxyserver.core.threads.TCPTransformer;
+import neoproxy.neoproxyserver.core.threads.UDPTransformer;
 import plethora.management.bufferedFile.SizeCalculator;
 import plethora.net.SecureServerSocket;
 import plethora.net.SecureSocket;
@@ -27,12 +30,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.locks.LockSupport;
 
-import static neoproject.neoproxy.core.InternetOperator.*;
-import static neoproject.neoproxy.core.ServerLogger.alert;
-import static neoproject.neoproxy.core.management.IPChecker.loadBannedIPs;
-import static neoproject.neoproxy.core.management.SequenceKey.DYNAMIC_PORT;
-import static neoproject.neoproxy.core.management.SequenceKey.initKeyDatabase;
-import static neoproject.neoproxy.core.threads.TCPTransformer.BUFFER_LEN;
+import static neoproxy.neoproxyserver.core.InternetOperator.*;
+import static neoproxy.neoproxyserver.core.ServerLogger.alert;
+import static neoproxy.neoproxyserver.core.management.IPChecker.loadBannedIPs;
+import static neoproxy.neoproxyserver.core.management.SequenceKey.DYNAMIC_PORT;
+import static neoproxy.neoproxyserver.core.management.SequenceKey.initKeyDatabase;
+import static neoproxy.neoproxyserver.core.threads.TCPTransformer.BUFFER_LEN;
 
 public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = getJarDirOrUserDir();

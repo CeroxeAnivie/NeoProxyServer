@@ -24,7 +24,7 @@
             <configuration>
               <transformers>
                 <transformer>
-                  <mainClass>neoproject.neoproxy.NeoProxyServer</mainClass>
+                  <mainClass>neoproxy.neoproxyserver.NeoProxyServer</mainClass>
                 </transformer>
               </transformers>
             </configuration>

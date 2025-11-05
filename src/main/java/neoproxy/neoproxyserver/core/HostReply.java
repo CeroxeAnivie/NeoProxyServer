@@ -1,4 +1,4 @@
-package neoproject.neoproxy.core;
+package neoproxy.neoproxyserver.core;
 
 import plethora.net.SecureSocket;
 

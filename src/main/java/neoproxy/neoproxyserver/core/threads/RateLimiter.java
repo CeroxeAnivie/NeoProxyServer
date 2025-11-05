@@ -1,6 +1,6 @@
-package neoproject.neoproxy.core.threads;
+package neoproxy.neoproxyserver.core.threads;
 
-import static neoproject.neoproxy.NeoProxyServer.debugOperation;
+import static neoproxy.neoproxyserver.NeoProxyServer.debugOperation;
 
 public class RateLimiter {
     private final long startTime = System.nanoTime();

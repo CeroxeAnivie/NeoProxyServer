@@ -1,4 +1,4 @@
-package neoproject.neoproxy.core.exceptions;
+package neoproxy.neoproxyserver.core.exceptions;
 
 public class SlientException extends Exception {
     private SlientException() {

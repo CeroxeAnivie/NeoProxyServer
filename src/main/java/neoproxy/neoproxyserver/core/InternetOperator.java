@@ -1,6 +1,6 @@
-package neoproject.neoproxy.core;
+package neoproxy.neoproxyserver.core;
 
-import neoproject.neoproxy.core.exceptions.NoMoreNetworkFlowException;
+import neoproxy.neoproxyserver.core.exceptions.NoMoreNetworkFlowException;
 import plethora.management.bufferedFile.SizeCalculator;
 import plethora.net.SecureSocket;
 
@@ -8,7 +8,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.net.*;
 
-import static neoproject.neoproxy.NeoProxyServer.debugOperation;
+import static neoproxy.neoproxyserver.NeoProxyServer.debugOperation;
 
 public final class InternetOperator {
     public static final String COMMAND_PREFIX = ":>";

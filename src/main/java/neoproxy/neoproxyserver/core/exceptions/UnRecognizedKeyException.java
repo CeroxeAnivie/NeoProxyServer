@@ -8,7 +8,7 @@ public class UnRecognizedKeyException extends Exception {
      *
      * @param message 异常消息
      */
-    public UnRecognizedKeyException(String message) {
+    private UnRecognizedKeyException(String message) {
         super(message);
         // 注意：构造函数内不记录日志，由静态方法 throwException 负责
     }

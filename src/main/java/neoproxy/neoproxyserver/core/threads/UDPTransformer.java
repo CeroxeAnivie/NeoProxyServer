@@ -1,6 +1,5 @@
 package neoproxy.neoproxyserver.core.threads;
 
-import neoproject.neoproxy.core.*;
 import neoproxy.neoproxyserver.core.*;
 import neoproxy.neoproxyserver.core.exceptions.NoMoreNetworkFlowException;
 import plethora.management.bufferedFile.SizeCalculator;
@@ -34,7 +33,6 @@ public class UDPTransformer implements Runnable {
     private final ArrayBlockingQueue<byte[]> sendQueue = new ArrayBlockingQueue<>(100);
     private volatile boolean isRunning = true;
 
-    // 私有构造函数，防止外部直接实例化
     public UDPTransformer(HostClient hostClient, HostReply hostReply, DatagramSocket sharedDatagramSocket, String clientIP, int clientOutPort) {
         this.hostClient = hostClient;
         this.hostReply = hostReply;
@@ -43,13 +41,7 @@ public class UDPTransformer implements Runnable {
         this.clientOutPort = clientOutPort;
     }
 
-    /**
-     * 将一个 {@link DatagramPacket} 序列化为字节数组。
-     * 序列化格式：[Magic(4)] [DataLen(4)] [IPLen(4)] [IPBytes(n)] [Port(2)] [Data(len)]
-     *
-     * @param packet 要序列化的UDP数据包。
-     * @return 包含完整数据包信息的字节数组。
-     */
+    // --- 以下静态方法保持不变 ---
     public static byte[] serializeDatagramPacket(DatagramPacket packet) {
         byte[] data = packet.getData();
         int offset = packet.getOffset();
@@ -74,14 +66,8 @@ public class UDPTransformer implements Runnable {
         return buffer.array();
     }
 
-    /**
-     * 将字节数组反序列化为一个 {@link DatagramPacket}。
-     *
-     * @param serializedData 序列化后的字节数组。
-     * @return 重建的DatagramPacket，如果数据无效则返回null。
-     */
     public static DatagramPacket deserializeToDatagramPacket(byte[] serializedData) {
-        if (serializedData == null || serializedData.length < 14) { // 最小长度检查: 4+4+4+2
+        if (serializedData == null || serializedData.length < 14) {
             debugOperation(new IllegalArgumentException("Serialized data is too short or null"));
             return null;
         }
@@ -98,13 +84,11 @@ public class UDPTransformer implements Runnable {
         int dataLen = buffer.getInt();
         int ipLen = buffer.getInt();
 
-        // 防御性检查
         if (dataLen < 0 || dataLen > 65507 || ipLen != 4 && ipLen != 16) {
             debugOperation(new IllegalArgumentException("Invalid data or IP length in serialized data"));
             return null;
         }
 
-        // 检查缓冲区是否有足够的数据
         int expectedLength = 4 + 4 + 4 + ipLen + 2 + dataLen;
         if (serializedData.length < expectedLength) {
             debugOperation(new IllegalArgumentException("Incomplete serialized data"));
@@ -120,7 +104,7 @@ public class UDPTransformer implements Runnable {
             debugOperation(e);
             return null;
         }
-        int port = buffer.getShort() & 0xFFFF; // Convert unsigned short
+        int port = buffer.getShort() & 0xFFFF;
         byte[] data = new byte[dataLen];
         buffer.get(data);
 
@@ -141,7 +125,6 @@ public class UDPTransformer implements Runnable {
     }
 
     public static void kickAllWithMsg(HostClient hostClient, SecureSocket host) {
-        // 注意：不能关闭共享的 clientSocket，只能关闭到客户端A的连接和整个HostClient
         close(host);
         try {
             InternetOperator.sendCommand(hostClient, "exitNoFlow");
@@ -152,11 +135,10 @@ public class UDPTransformer implements Runnable {
         close(hostClient);
     }
 
+    // --- 实例方法 ---
     public HostClient getHostClient() {
         return hostClient;
     }
-
-    // --- 实例方法 ---
 
     public int getClientOutPort() {
         return clientOutPort;
@@ -170,12 +152,8 @@ public class UDPTransformer implements Runnable {
         return isRunning;
     }
 
-    /**
-     * 主线程调用此方法，将序列化后的数据包放入队列
-     */
     public boolean addPacketToSend(byte[] serializedPacket) {
         if (isRunning) {
-            // 满了的包会被丢弃
             return sendQueue.offer(serializedPacket);
         }
         return false;
@@ -183,7 +161,6 @@ public class UDPTransformer implements Runnable {
 
     /**
      * 从队列中消费数据包并发送给客户端A (C -> B -> A)
-     * 对应 TCPTransformer.HostToClient
      */
     private void outClientToHostClient(double[] aTenMibSize) {
         try {
@@ -191,17 +168,15 @@ public class UDPTransformer implements Runnable {
             byte[] data;
             while (isRunning && (data = sendQueue.poll(1, TimeUnit.SECONDS)) != null) {
                 int enLength = hostReply.host().sendByte(data);
-
-                hostClient.getKey().mineMib("UDP-Transformer", SizeCalculator.byteToMib(enLength + 10)); // +10 for protocol overhead
+                // 【关键】mineMib 会抛出 NoMoreNetworkFlowException
+                hostClient.getKey().mineMib("UDP-Transformer", SizeCalculator.byteToMib(enLength + 10));
                 tellRestBalance(hostClient, aTenMibSize, enLength, hostClient.getLangData());
-
                 RateLimiter.setMaxMbps(limiter, hostClient.getKey().getRate());
                 limiter.onBytesTransferred(enLength);
             }
-        } catch (NoMoreNetworkFlowException e) {
-            // 流量耗尽，踢下线
-            kickAllWithMsg(hostClient, hostReply.host());
         } catch (Exception e) {
+            // 【关键】捕获所有异常，包括 NoMoreNetworkFlowException 和 IOException
+            // 不在这里处理，而是让 ThreadManager 收集，在 run 方法中统一处理
             debugOperation(e);
         } finally {
             stop();
@@ -210,7 +185,6 @@ public class UDPTransformer implements Runnable {
 
     /**
      * 从客户端A接收数据，并发送给外部客户端C (A -> B -> C)
-     * 对应 TCPTransformer.ClientToHost
      */
     private void hostClientToOutClient(double[] aTenMibSize) {
         try {
@@ -219,11 +193,10 @@ public class UDPTransformer implements Runnable {
             while (isRunning && (data = hostReply.host().receiveByte()) != null) {
                 DatagramPacket packetToClient = deserializeToDatagramPacket(data);
                 if (packetToClient != null) {
-                    // 扣费和限速在发送前进行
                     int packetLength = packetToClient.getLength();
-                    hostClient.getKey().mineMib("UDP-Transformer", SizeCalculator.byteToMib(packetLength + 10)); // +10 for protocol overhead
+                    // 【关键】mineMib 会抛出 NoMoreNetworkFlowException
+                    hostClient.getKey().mineMib("UDP-Transformer", SizeCalculator.byteToMib(packetLength + 10));
                     tellRestBalance(hostClient, aTenMibSize, packetLength, hostClient.getLangData());
-
                     RateLimiter.setMaxMbps(limiter, hostClient.getKey().getRate());
                     limiter.onBytesTransferred(packetLength);
 
@@ -233,12 +206,11 @@ public class UDPTransformer implements Runnable {
                             InetAddress.getByName(clientIP),
                             clientOutPort
                     );
-                    sharedDatagramSocket.send(outgoingPacket);
+                    sharedDatagramSocket.send(outgoingPacket); // 【关键】这里也会抛出 IOException
                 }
             }
-        } catch (NoMoreNetworkFlowException e) {
-            kickAllWithMsg(hostClient, hostReply.host());
         } catch (Exception e) {
+            // 【关键】捕获所有异常，包括 NoMoreNetworkFlowException 和 IOException
             debugOperation(e);
         } finally {
             stop();
@@ -251,21 +223,25 @@ public class UDPTransformer implements Runnable {
             final double[] aTenMibSize = {0};
             Runnable clientToHostClientThread = () -> outClientToHostClient(aTenMibSize);
             Runnable hostClientToClientThread = () -> hostClientToOutClient(aTenMibSize);
+
             ThreadManager threadManager = new ThreadManager(clientToHostClientThread, hostClientToClientThread);
+            // 【关键】阻塞等待，直到两个数据流任务都结束（无论是正常结束还是异常结束）
             List<Throwable> exceptions = threadManager.start();
 
-            // 检查是否有流量耗尽的异常
+            // 【关键】检查 ThreadManager 收集到的异常
             for (Throwable t : exceptions) {
                 if (t instanceof NoMoreNetworkFlowException) {
+                    // 如果是流量耗尽异常，执行踢下线操作
                     kickAllWithMsg(hostClient, hostReply.host());
-                    break;
+                    // 注意：kickAllWithMsg 已经包含了 close(hostClient) 的逻辑，所以可以提前返回
+                    return;
                 }
             }
-
         } catch (Exception ignore) {
-            // ThreadManager 会捕获大部分异常，这里通常不会执行
+            // ThreadManager.start() 本身很少会抛异常，这里通常不会执行
         } finally {
-            // 确保资源被释放
+            // 【关键】无论何种原因结束，都执行常规的资源清理
+            // 如果不是因为流量耗尽而退出，这里的清理是必要的
             close(hostReply.host());
             udpClientConnections.remove(this);
             ServerLogger.sayClientUDPConnectDestroyInfo(hostClient, clientIP + ":" + clientOutPort);
@@ -275,8 +251,8 @@ public class UDPTransformer implements Runnable {
     private void stop() {
         if (isRunning) {
             isRunning = false;
-            udpClientConnections.remove(this);
-            close(hostReply.host());
+            // 注意：这里不立即从 udpClientConnections 移除，也不关闭 hostReply.host()
+            // 让 run 方法的 finally 块来统一处理，避免重复操作
         }
     }
 }

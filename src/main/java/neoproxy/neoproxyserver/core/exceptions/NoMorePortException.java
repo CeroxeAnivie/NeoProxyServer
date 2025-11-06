@@ -3,7 +3,7 @@ package neoproxy.neoproxyserver.core.exceptions;
 import neoproxy.neoproxyserver.core.ServerLogger;
 
 public class NoMorePortException extends Exception {
-    public NoMorePortException(String message) {
+    private NoMorePortException(String message) {
         super(message);
         ServerLogger.error("NoMorePortException", "exception.noMorePort.message", message);
     }

@@ -651,6 +651,7 @@ public class SequenceKey {
         try {
             if (mib < 0) {
                 debugOperation(new IllegalArgumentException("mib must be non-negative"));
+                // 使用静态方法抛出异常，并记录日志
                 NoMoreNetworkFlowException.throwException("SK-Manager", "exception.invalidMibValue", name);
             }
             if (this.isOutOfDate()) {
@@ -664,6 +665,7 @@ public class SequenceKey {
                 this.balance = 0;
             }
         } catch (NoMoreNetworkFlowException e) {
+            // 捕获异常，执行副作用（禁用密钥），然后重新抛出
             debugOperation(e);
             disableKey(this.name);
             throw e;

@@ -3,7 +3,7 @@ package neoproxy.neoproxyserver.core.exceptions;
 import neoproxy.neoproxyserver.core.ServerLogger;
 
 public class UnSupportHostVersionException extends Exception {
-    public UnSupportHostVersionException(String ip, String version) {
+    private UnSupportHostVersionException(String ip, String version) {
         ServerLogger.errorWithSource("VER-CHECKER", "exception.unSupportHostVersion.message", ip, version);
     }
 

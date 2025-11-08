@@ -43,7 +43,7 @@ public final class ConfigOperator {
             
             #设置服务端最大等待客户端响应的时间，单位为毫秒
             #Set the maximum waiting time for the server to respond to the client, in milliseconds
-            SO_TIMEOUT=1000
+            SO_TIMEOUT=2000
             
             #当多少流量被消耗时告诉客户端剩余的流量
             #When how much traffic is consumed, tell the client the remaining traffic

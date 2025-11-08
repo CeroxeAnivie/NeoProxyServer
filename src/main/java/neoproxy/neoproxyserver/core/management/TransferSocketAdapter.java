@@ -22,7 +22,7 @@ public class TransferSocketAdapter implements Runnable {
     // UDP部分：使用ConcurrentHashMap进行非阻塞匹配
     private static final CopyOnWriteArrayList<HostReply> udpHostReply = new CopyOnWriteArrayList<>();
 
-    public static int SO_TIMEOUT = 1000;
+    public static int SO_TIMEOUT = 2000;
 
     public static void startThread() {
         new Thread(new TransferSocketAdapter()).start();
@@ -69,6 +69,7 @@ public class TransferSocketAdapter implements Runnable {
             SecureSocket host;
             try {
                 host = NeoProxyServer.hostServerTransferServerSocket.accept();
+                host.setSoTimeout(SO_TIMEOUT);
             } catch (IOException e) {
                 if (isStopped) break;
                 debugOperation(e);

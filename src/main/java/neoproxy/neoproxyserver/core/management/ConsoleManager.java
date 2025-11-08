@@ -87,6 +87,24 @@ public class ConsoleManager {
                 ServerLogger.errorWithSource("Admin", "consoleManager.invalidIPFormate", ipToUnban);
             }
         });
+        myConsole.registerCommand("find", "Find the location and ISP of an IP address", (List<String> params) -> {
+            if (params.size() != 1) {
+                myConsole.warn("Admin", "Usage: find <ip_address>");
+                return;
+            }
+            String ipToFind = params.getFirst();
+            if (isValidIP(ipToFind)) {
+                IPGeolocationHelper.LocationInfo locationInfo = IPGeolocationHelper.getLocationInfo(ipToFind);
+                if (locationInfo.success()) {
+                    ServerLogger.infoWithSource("Admin", "consoleManager.ipLocationInfo",
+                            ipToFind, locationInfo.location(), locationInfo.isp());
+                } else {
+                    ServerLogger.errorWithSource("Admin", "consoleManager.ipLocationQueryFailed", ipToFind);
+                }
+            } else {
+                ServerLogger.errorWithSource("Admin", "consoleManager.invalidIPFormate", ipToFind);
+            }
+        });
 
         myConsole.registerCommand("listbans", "List all banned IP addresses", (List<String> params) -> {
             listBannedIPs();
@@ -757,6 +775,7 @@ public class ConsoleManager {
         myConsole.warn("Admin", "  ban <ip_address> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.banCmd"));
         myConsole.warn("Admin", "  unban <ip_address> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.unbanCmd"));
         myConsole.warn("Admin", "  listbans -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.listbansCmd"));
+        myConsole.warn("Admin", "  find <ip_address> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.findCmd"));
         myConsole.warn("Admin", ServerLogger.getMessage("consoleManager.printKeyUsage.portNote"));
     }
 

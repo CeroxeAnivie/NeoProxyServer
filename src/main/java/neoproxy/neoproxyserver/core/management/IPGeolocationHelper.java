@@ -7,10 +7,10 @@ import com.mashape.unirest.http.exceptions.UnirestException;
 import neoproxy.neoproxyserver.core.ServerLogger;
 
 import java.net.InetAddress;
+import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
 import java.util.List;
 import java.util.concurrent.*;
-import java.util.stream.Collectors;
 
 public class IPGeolocationHelper {
 
@@ -18,11 +18,18 @@ public class IPGeolocationHelper {
     private static final ExecutorService executor = Executors.newCachedThreadPool();
 
     // 芯&API 的免费接口地址（无需密钥）
-    private static final String COREX_IP_API_URL = "http://api.corexwear.com/ip/index.php";
+    private static final String COREXWEAR_IP_API_URL = "http://api.corexwear.com/ip/index.php";
 
-    // 核心：API服务列表，这里简化为只使用芯&API的IP归属地接口
-    private static final List<APIService> API_SERVICES = List.of(
-            new APIService("CorexIP", COREX_IP_API_URL, IPGeolocationHelper::parseCorexIpResponse, 1, null)
+    // ip.sb API 地址（用于 IPv6 查询）
+    private static final String IP_SB_API_URL = "https://api.ip.sb/geoip/";
+
+    // API服务列表，包含 IPv4 和 IPv6 的服务
+    private static final List<APIService> IPV4_API_SERVICES = List.of(
+            new APIService("CorexIP", COREXWEAR_IP_API_URL, IPGeolocationHelper::parseCorexIpResponse, 1, null, 300)
+    );
+
+    private static final List<APIService> IPV6_API_SERVICES = List.of(
+            new APIService("IPSb", IP_SB_API_URL, IPGeolocationHelper::parseIpSbResponse, 1, null, 2000)
     );
 
     static {
@@ -37,7 +44,7 @@ public class IPGeolocationHelper {
             }
         });
 
-        // 为Unirest设置全局超时（兼容Unirest 1.x）
+        // 为Unirest设置默认全局超时（兼容Unirest 1.x）
         Unirest.setTimeouts(300, 300);
     }
 
@@ -56,16 +63,29 @@ public class IPGeolocationHelper {
 
         ServerLogger.info("ipGeolocation.querying", ip);
 
+        // 判断IP类型并选择相应的API服务
+        boolean isIPv6 = isIPv6Address(ip);
+        List<APIService> apiServices = isIPv6 ? IPV6_API_SERVICES : IPV4_API_SERVICES;
+        ServerLogger.info(isIPv6 ? "ipGeolocation.ipv6Detected" : "ipGeolocation.ipv4Detected", ip);
+
         // --- 核心：竞速逻辑 ---
         CompletableFuture<LocationInfo> finalResult = new CompletableFuture<>();
-        List<CompletableFuture<LocationInfo>> apiFutures = API_SERVICES.stream()
+        List<CompletableFuture<LocationInfo>> apiFutures = apiServices.stream()
                 .map(api -> CompletableFuture.supplyAsync(() -> queryAPIService(api, ip), executor)
                         .exceptionally(e -> {
-                            String errorMsg = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
-                            ServerLogger.error("ipGeolocation.apiErrorException", api.name, ip, errorMsg);
+                            Throwable cause = e.getCause() != null ? e.getCause() : e;
+                            String errorMsg = cause.getMessage();
+
+                            // 检查是否是超时异常
+                            if (cause instanceof SocketTimeoutException ||
+                                    (errorMsg != null && errorMsg.contains("timeout"))) {
+                                ServerLogger.warn("ipGeolocation.apiTimeout", api.name, ip);
+                            } else {
+                                ServerLogger.error("ipGeolocation.apiErrorException", api.name, ip, errorMsg);
+                            }
                             return null;
                         }))
-                .collect(Collectors.toList());
+                .toList();
 
         for (CompletableFuture<LocationInfo> apiFuture : apiFutures) {
             apiFuture.thenAccept(result -> {
@@ -95,11 +115,31 @@ public class IPGeolocationHelper {
         }
     }
 
+    /**
+     * 判断IP地址是否为IPv6
+     */
+    private static boolean isIPv6Address(String ip) {
+        return ip.contains(":");
+    }
+
     private static LocationInfo queryAPIService(APIService apiService, String ip) {
         try {
-            HttpResponse<String> response = Unirest.get(apiService.baseUrl)
-                    .queryString("ip", ip)
-                    .asString();
+            // 为当前API服务设置特定的超时时间
+            Unirest.setTimeouts(apiService.timeout, apiService.timeout);
+
+            HttpResponse<String> response;
+
+            // 根据API类型构建不同的请求
+            if ("IPSb".equals(apiService.name)) {
+                // IPv6 使用 ip.sb API，直接在URL中包含IP
+                response = Unirest.get(apiService.baseUrl + ip)
+                        .asString();
+            } else {
+                // IPv4 使用原来的API，通过查询参数传递IP
+                response = Unirest.get(apiService.baseUrl)
+                        .queryString("ip", ip)
+                        .asString();
+            }
 
             if (response.getStatus() == 200) {
                 LocationInfo result = apiService.parser.apply(response.getBody());
@@ -111,8 +151,18 @@ public class IPGeolocationHelper {
                 ServerLogger.warn("ipGeolocation.apiErrorStatus", apiService.name, response.getStatus(), ip);
             }
         } catch (UnirestException e) {
-            // Exception is handled by the exceptionally block in getLocationInfo
-            throw new RuntimeException(e);
+            // 检查是否是超时异常
+            if (e.getCause() instanceof SocketTimeoutException ||
+                    (e.getMessage() != null && e.getMessage().contains("timeout"))) {
+                // 抛出带有超时标记的异常，以便在上层处理
+                throw new RuntimeException("API timeout", e);
+            } else {
+                // 抛出普通异常
+                throw new RuntimeException(e);
+            }
+        } finally {
+            // 恢复默认超时设置
+            Unirest.setTimeouts(300, 300);
         }
         return null;
     }
@@ -148,13 +198,15 @@ public class IPGeolocationHelper {
         java.util.function.Function<String, LocationInfo> parser;
         int priority;
         String apiKey;
+        int timeout; // 添加超时时间字段（毫秒）
 
-        APIService(String name, String baseUrl, java.util.function.Function<String, LocationInfo> parser, int priority, String apiKey) {
+        APIService(String name, String baseUrl, java.util.function.Function<String, LocationInfo> parser, int priority, String apiKey, int timeout) {
             this.name = name;
             this.baseUrl = baseUrl;
             this.parser = parser;
             this.priority = priority;
             this.apiKey = apiKey;
+            this.timeout = timeout;
         }
     }
 
@@ -173,6 +225,21 @@ public class IPGeolocationHelper {
         return LocationInfo.failed();
     }
 
+    // --- ip.sb API的响应解析器 ---
+    private static LocationInfo parseIpSbResponse(String jsonResponse) {
+        try {
+            IpSbResponse response = gson.fromJson(jsonResponse, IpSbResponse.class);
+            if (response != null) {
+                String location = response.country != null ? response.country : "N/A";
+                String isp = response.isp != null ? response.isp : "N/A";
+                return new LocationInfo(location, isp, true);
+            }
+        } catch (Exception e) {
+            ServerLogger.error("ipGeolocation.parseError", "IPSb", e.getMessage());
+        }
+        return LocationInfo.failed();
+    }
+
     // --- 芯&API的响应模型 ---
     private static class CorexIpResponse {
         int code;
@@ -187,5 +254,20 @@ public class IPGeolocationHelper {
         String endip;
         String country;
         String area;
+    }
+
+    // --- ip.sb API的响应模型 ---
+    private static class IpSbResponse {
+        String ip;
+        String country;
+        String country_code;
+        String region;
+        String region_code;
+        String city;
+        double latitude;
+        double longitude;
+        String isp;
+        String asn;
+        String organization;
     }
 }

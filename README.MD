@@ -173,7 +173,7 @@ NeoProxyServer 提供多层安全保护：
     - 检查速率限制设置。
     - 查看实时流量监控日志。
 
-📖 **更多故障排除指南请查看 [GitHub Wiki - 故障排除](https://github.com/CeroxeAnivie/NeoProxyServer/wiki/Troubleshooting)**
+📖 **更多故障排除指南请查看 [GitHub Wiki - 故障排除](https://github.com/CeroxeAnivie/NeoProxyServer/wiki/常见问题)**
 
 ---
 

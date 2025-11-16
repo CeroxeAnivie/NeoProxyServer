@@ -1,5 +1,6 @@
 package neoproxy.neoproxyserver.core.management;
 
+import neoproxy.neoproxyserver.core.ConfigOperator; // 导入 ConfigOperator
 import neoproxy.neoproxyserver.core.HostClient;
 import neoproxy.neoproxyserver.core.ServerLogger;
 import plethora.print.log.Loggist;
@@ -216,6 +217,15 @@ public class ConsoleManager {
                 ServerLogger.errorWithSource("Admin", "consoleManager.criticalDbError", keyName);
             }
         });
+
+        // 添加新的 reload 命令
+        myConsole.registerCommand("reload", "Reload configurations from config.cfg", (List<String> params) -> {
+            if (!params.isEmpty()) {
+                myConsole.warn("Admin", "Usage: reload");
+                return;
+            }
+            handleReloadCommand();
+        });
     }
 
     private static void handleAlert(boolean b) {
@@ -225,6 +235,13 @@ public class ConsoleManager {
         } else {
             ServerLogger.infoWithSource("Admin", "consoleManager.alertDisabled");
         }
+    }
+
+    // 新增的 reload 命令处理方法
+    private static void handleReloadCommand() {
+        ServerLogger.infoWithSource("Admin", "consoleManager.reloadingConfig");
+        ConfigOperator.readAndSetValue();
+        ServerLogger.infoWithSource("Admin", "consoleManager.configReloaded");
     }
 
     // ==================== Manual Table Printing Method ====================
@@ -783,6 +800,7 @@ public class ConsoleManager {
         myConsole.warn("Admin", "  unban <ip_address> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.unbanCmd"));
         myConsole.warn("Admin", "  listbans -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.listbansCmd"));
         myConsole.warn("Admin", "  find <ip_address> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.findCmd"));
+        myConsole.warn("Admin", "  reload -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.reloadCmd")); // 添加 reload 命令说明
         myConsole.warn("Admin", ServerLogger.getMessage("consoleManager.printKeyUsage.portNote"));
     }
 

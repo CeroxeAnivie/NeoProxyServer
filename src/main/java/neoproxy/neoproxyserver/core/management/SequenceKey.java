@@ -65,7 +65,7 @@ public class SequenceKey {
      * @return 数据库连接
      * @throws SQLException 如果获取连接失败
      */
-    protected static Connection getConnection() throws SQLException {
+    public static Connection getConnection() throws SQLException {
         return DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
     }
 

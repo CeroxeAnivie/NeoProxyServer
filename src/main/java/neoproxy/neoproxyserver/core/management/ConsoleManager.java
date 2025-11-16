@@ -2,6 +2,7 @@ package neoproxy.neoproxyserver.core.management;
 
 import neoproxy.neoproxyserver.core.HostClient;
 import neoproxy.neoproxyserver.core.ServerLogger;
+import plethora.print.log.Loggist;
 import plethora.utils.MyConsole;
 
 import java.util.ArrayList;
@@ -53,7 +54,13 @@ public class ConsoleManager {
                 default -> myConsole.warn("Admin", "Usage: alert <enable|disable>");
             }
         });
-
+//        myConsole.registerCommand("webadmin", "Generate a temporary URL for the web admin console", (List<String> params) -> {
+//            String url = WebAdminManager.getInstance().generateNewSessionUrl();
+//            myConsole.log("Admin", "==============================================");
+//            myConsole.log("Admin", "临时网页控制台链接已生成，5分钟内有效:");
+//            myConsole.log("Admin", url);
+//            myConsole.log("Admin", "==============================================");
+//        });
         myConsole.registerCommand("ban", "Ban a specific IP address", (List<String> params) -> {
             if (params.size() != 1) {
                 myConsole.warn("Admin", "Usage: ban <ip_address>");

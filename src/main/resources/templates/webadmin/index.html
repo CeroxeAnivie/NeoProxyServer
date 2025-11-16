@@ -1,0 +1,643 @@
+<!-- src/main/resources/templates/webadmin/index.html -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>NeoProxyServer Web Admin</title>
+    <style>
+        :root {
+            --sidebar-width: 220px;
+            --primary-color: #2c3e50;
+            --secondary-color: #3498db;
+            --background-color: #f4f7f6;
+            --content-bg: #fff;
+            --border-color: #ddd;
+            --text-color: #333;
+            --hover-bg: #ecf0f1;
+            --success-color: #28a745;
+            --danger-color: #dc3545;
+        }
+
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            display: flex;
+            height: 100vh;
+        }
+
+        .sidebar {
+            width: var(--sidebar-width);
+            background-color: var(--primary-color);
+            color: white;
+            padding-top: 20px;
+            flex-shrink: 0;
+        }
+
+        .sidebar h2 {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .sidebar a {
+            display: block;
+            padding: 15px 20px;
+            color: white;
+            text-decoration: none;
+            transition: background-color 0.3s;
+        }
+
+        .sidebar a:hover, .sidebar a.active {
+            background-color: var(--secondary-color);
+        }
+
+        .main-content {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            overflow: hidden;
+        }
+
+        .view {
+            display: none;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        .view.active {
+            display: flex;
+        }
+
+        .status-bar {
+            background-color: #ecf0f1;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+
+        .status-bar.success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+
+        .status-bar.error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+
+        /* Console View */
+        .console-output {
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: 'Courier New', Courier, monospace;
+            white-space: pre-wrap;
+            flex-grow: 1;
+            overflow-y: auto;
+        }
+
+        .command-area {
+            display: flex;
+            margin-top: 10px;
+        }
+
+        #commandInput {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+        }
+
+        #executeBtn {
+            padding: 10px 20px;
+            background-color: var(--secondary-color);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-left: 10px;
+        }
+
+        /* Table View */
+        .data-table-container {
+            flex-grow: 1;
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .data-table th, .data-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .data-table th {
+            background-color: var(--hover-bg);
+            font-weight: bold;
+            position: sticky;
+            top: 0;
+        }
+
+        .data-table tr:hover {
+            background-color: var(--hover-bg);
+        }
+
+        .btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            color: white;
+            margin-right: 5px;
+        }
+
+        .btn-primary {
+            background-color: var(--secondary-color);
+        }
+
+        .btn-success {
+            background-color: var(--success-color);
+        }
+
+        .btn-danger {
+            background-color: var(--danger-color);
+        }
+
+        .btn:hover {
+            opacity: 0.9;
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0, 0, 0, 0.4);
+        }
+
+        .modal-content {
+            background-color: var(--content-bg);
+            margin: 10% auto;
+            padding: 20px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            width: 80%;
+            max-width: 500px;
+        }
+
+        .modal-header, .modal-footer {
+            padding: 10px 0;
+        }
+
+        .modal-body {
+            display: grid;
+            gap: 15px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-group label {
+            margin-bottom: 5px;
+        }
+
+        .form-group input {
+            padding: 8px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="sidebar">
+    <h2>NeoProxy Admin</h2>
+    <a href="#" class="nav-link active" data-view="console">控制台</a>
+    <a href="#" class="nav-link" data-view="keys">序列号管理</a>
+    <a href="#" class="nav-link" data-view="clients">客户端管理</a>
+</div>
+
+<div class="main-content">
+    <div id="statusBar" class="status-bar">正在连接...</div>
+
+    <!-- Console View -->
+    <div id="console-view" class="view active">
+        <div id="console-output" class="console-output">加载历史日志中...</div>
+        <div class="command-area">
+            <input type="text" id="commandInput" placeholder="输入命令...">
+            <button id="executeBtn">执行</button>
+        </div>
+    </div>
+
+    <!-- Keys View -->
+    <div id="keys-view" class="view">
+        <button id="add-key-btn" class="btn btn-primary" style="margin-bottom: 15px;">添加新序列号</button>
+        <div class="data-table-container">
+            <table class="data-table" id="keys-table">
+                <thead><tr><th>序列号</th><th>流量</th><th>过期时间</th><th>端口</th><th>速率</th><th>已启用</th><th>启用网页</th><th>操作</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Clients View -->
+    <div id="clients-view" class="view">
+        <div class="data-table-container">
+            <table class="data-table" id="clients-table">
+                <thead><tr><th>地址:端口</th><th>序列号</th><th>位置</th><th>运营商</th><th>外部端口</th><th>TCP</th><th>UDP</th><th>操作</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Key Modal -->
+<div id="key-modal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header"><h2 id="key-modal-title">添加新序列号</h2></div>
+        <div class="modal-body">
+            <div class="form-group"><label for="key-name">名称</label><input type="text" id="key-name" required></div>
+            <div class="form-group"><label for="key-balance">流量</label><input type="number" step="0.01" id="key-balance" required></div>
+            <div class="form-group"><label for="key-expiretime">过期时间 (yyyy/MM/dd-HH:mm)</label><input type="text" id="key-expiretime" required></div>
+            <div class="form-group"><label for="key-port">端口 (e.g., 8080 or 3344-3350)</label><input type="text" id="key-port" required></div>
+            <div class="form-group"><label for="key-rate">速率</label><input type="number" step="0.01" id="key-rate" required></div>
+            <div class="form-group">
+                <label for="key-enable-html">
+                    <input type="checkbox" id="key-enable-html" name="key-enable-html">
+                    启用网页
+                </label>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button id="save-key-btn" class="btn btn-success">保存</button>
+            <button id="cancel-key-btn" class="btn">取消</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ==================== 调试开关 ====================
+    // 设置为 true 以在浏览器控制台查看详细日志
+    const DEBUG = true;
+
+    function debugLog(...args) {
+        if (DEBUG) {
+            console.log('[Frontend-DEBUG]', ...args);
+        }
+    }
+
+    // ==================== 初始化 ====================
+    const tokenId = "{{TOKEN_ID}}";
+    const statusBar = document.getElementById('statusBar');
+    let clientId = localStorage.getItem('webAdminClientId') || generateClientId();
+    localStorage.setItem('webAdminClientId', clientId);
+
+    debugLog('Token ID:', tokenId);
+    debugLog('Client ID:', clientId);
+
+    function generateClientId() {
+        return 'client-' + Math.random().toString(36).substr(2, 9);
+    }
+
+    function updateStatus(message, type) {
+        debugLog('Status updated:', message, type);
+        statusBar.textContent = message;
+        statusBar.className = `status-bar ${type}`;
+    }
+
+    function showView(viewId) {
+        debugLog('Switching to view:', viewId);
+        document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+        document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+        document.getElementById(`${viewId}-view`).classList.add('active');
+        document.querySelector(`[data-view="${viewId}"]`).classList.add('active');
+    }
+
+    // --- Navigation ---
+    document.querySelectorAll('.nav-link').forEach(link => {
+        link.addEventListener('click', (e) => {
+            e.preventDefault();
+            const viewId = e.target.dataset.view;
+            showView(viewId);
+            if (viewId === 'keys') loadKeys();
+            if (viewId === 'clients') loadClients();
+        });
+    });
+
+    // --- API Helpers ---
+    async function apiCall(action, method = 'POST', body = null) {
+        const url = `/api/${tokenId}/${action}`;
+        debugLog('API Call:', method, url, body);
+
+        const response = await fetch(url, {
+            method,
+            headers: {
+                'X-Client-ID': clientId,
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body
+        });
+
+        debugLog('API Response Status:', response.status, response.statusText);
+        if (!response.ok) {
+            const errorText = await response.text();
+            debugLog('API Response Body (Error):', errorText);
+            throw new Error(`API call failed: ${response.statusText} - ${errorText}`);
+        }
+
+        const responseText = await response.text();
+        debugLog('API Response Body (Success):', responseText);
+        return method === 'GET' ? JSON.parse(responseText) : responseText;
+    }
+
+    // --- Console View Logic ---
+    const consoleOutput = document.getElementById('console-output');
+    const commandInput = document.getElementById('commandInput');
+    const executeBtn = document.getElementById('executeBtn');
+
+    async function fetchHistory() {
+        debugLog('Fetching history...');
+        try {
+            const data = await apiCall('logs', 'GET');
+            consoleOutput.textContent = data.history || '无历史记录';
+            debugLog('History fetched successfully.');
+        } catch (e) {
+            debugLog('Failed to fetch history:', e);
+            consoleOutput.textContent = `错误: 无法加载历史日志 - ${e.message}`;
+        }
+    }
+
+    function connectSSE() {
+        debugLog('Attempting to connect to SSE stream...');
+        const eventSource = new EventSource(`/api/${tokenId}/logs/stream`);
+
+        eventSource.onopen = () => {
+            debugLog('SSE connection opened successfully.');
+            updateStatus('已连接 (实时日志)', 'success');
+        };
+
+        eventSource.onmessage = (event) => {
+            if (event.data === '"CONNECTED"') {
+                debugLog('SSE initial CONNECTED message received.');
+                return; // Initial message is handled by onopen
+            }
+            const log = JSON.parse(event.data);
+            debugLog('SSE log received:', log);
+            consoleOutput.textContent += log + '\n';
+            consoleOutput.scrollTop = consoleOutput.scrollHeight;
+        };
+
+        eventSource.onerror = (e) => {
+            debugLog('SSE connection error:', e);
+            debugLog('EventSource readyState:', eventSource.readyState); // 0: CONNECTING, 1: OPEN, 2: CLOSED
+            updateStatus('实时日志连接断开，尝试重连...', 'error');
+            // The browser will automatically try to reconnect after a short delay.
+            // We add a longer setTimeout to prevent immediate reconnection attempts.
+            setTimeout(connectSSE, 5000);
+        };
+    }
+
+    async function executeCommand() {
+        const command = commandInput.value.trim();
+        if (!command) return;
+        commandInput.value = '';
+        consoleOutput.textContent += `\n> ${command}\n`;
+        try {
+            const responseText = await apiCall(`command`, 'POST', new URLSearchParams({cmd: command}));
+            const result = JSON.parse(responseText);
+            consoleOutput.textContent += result.output;
+        } catch (e) {
+            debugLog('Failed to execute command:', e);
+            consoleOutput.textContent += `错误: ${e.message}`;
+        }
+        consoleOutput.scrollTop = consoleOutput.scrollHeight;
+    }
+
+    executeBtn.addEventListener('click', executeCommand);
+    commandInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') executeCommand();
+    });
+
+    // --- Keys View Logic ---
+    const keyModal = document.getElementById('key-modal');
+    const keyModalTitle = document.getElementById('key-modal-title');
+    const addKeyBtn = document.getElementById('add-key-btn');
+    const saveKeyBtn = document.getElementById('save-key-btn');
+    const cancelKeyBtn = document.getElementById('cancel-key-btn');
+    let isEditing = false;
+    let editingKeyName = '';
+
+    addKeyBtn.onclick = () => openAddKeyModal();
+    cancelKeyBtn.onclick = () => keyModal.style.display = 'none';
+
+    saveKeyBtn.onclick = async () => {
+        const formData = new URLSearchParams({
+            name: document.getElementById('key-name').value,
+            balance: document.getElementById('key-balance').value,
+            expireTime: document.getElementById('key-expiretime').value,
+            port: document.getElementById('key-port').value,
+            rate: document.getElementById('key-rate').value,
+            enableWebHTML: document.getElementById('key-enable-html').checked
+        });
+        try {
+            let responseText;
+            if (isEditing) {
+                responseText = await apiCall(`keys/${editingKeyName}`, 'PUT', formData.toString());
+            } else {
+                responseText = await apiCall('keys', 'POST', formData.toString());
+            }
+            const result = JSON.parse(responseText);
+            if (result.success) {
+                keyModal.style.display = 'none';
+                loadKeys();
+            } else {
+                alert(isEditing ? '更新失败，请检查控制台输出' : '添加失败，请检查控制台输出');
+            }
+        } catch (e) {
+            debugLog('Failed to save key:', e);
+            alert(`操作失败: ${e.message}`);
+        }
+    };
+
+    function openAddKeyModal() {
+        isEditing = false;
+        editingKeyName = '';
+        keyModalTitle.textContent = '添加新序列号';
+        document.getElementById('key-name').value = '';
+        document.getElementById('key-balance').value = '';
+        document.getElementById('key-expiretime').value = '';
+        document.getElementById('key-port').value = '';
+        document.getElementById('key-rate').value = '';
+        document.getElementById('key-enable-html').checked = false;
+        keyModal.style.display = 'block';
+    }
+
+    async function openEditKeyModal(name) {
+        debugLog('Opening edit modal for key:', name);
+        try {
+            const keyData = await apiCall(`keys/${name}`, 'GET');
+            isEditing = true;
+            editingKeyName = name;
+            keyModalTitle.textContent = '编辑序列号';
+            document.getElementById('key-name').value = keyData.name;
+            document.getElementById('key-balance').value = keyData.balance;
+            document.getElementById('key-expiretime').value = keyData.expireTime;
+            document.getElementById('key-port').value = keyData.port;
+            document.getElementById('key-rate').value = keyData.rate;
+            document.getElementById('key-enable-html').checked = keyData.enableWebHTML === 'true';
+            keyModal.style.display = 'block';
+        } catch (e) {
+            debugLog('Failed to load key data for editing:', e);
+            alert(`加载密钥数据失败: ${e.message}`);
+        }
+    }
+
+    async function loadKeys() {
+        debugLog('Loading keys...');
+        const tbody = document.querySelector('#keys-table tbody');
+        tbody.innerHTML = '';
+        try {
+            const keys = await apiCall('keys', 'GET');
+            debugLog('Keys loaded:', keys);
+            keys.forEach(key => {
+                const row = tbody.insertRow();
+                row.insertCell().textContent = key.name;
+                row.insertCell().textContent = key.balance;
+                row.insertCell().textContent = key.expireTime;
+                row.insertCell().textContent = key.port;
+                row.insertCell().textContent = key.rate;
+                row.insertCell().textContent = key.isEnable;
+                row.insertCell().textContent = key.enableWebHTML;
+                const actionCell = row.insertCell();
+
+                const editBtn = document.createElement('button');
+                editBtn.textContent = '编辑';
+                editBtn.className = 'btn btn-primary';
+                editBtn.onclick = () => openEditKeyModal(key.name);
+                actionCell.appendChild(editBtn);
+
+                const enableBtn = document.createElement('button');
+                enableBtn.textContent = key.isEnable === 'true' ? '禁用' : '启用';
+                enableBtn.className = `btn ${key.isEnable === 'true' ? 'btn-danger' : 'btn-success'}`;
+                enableBtn.onclick = () => toggleKey(key.name, key.isEnable !== 'true');
+                actionCell.appendChild(enableBtn);
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.textContent = '删除';
+                deleteBtn.className = 'btn btn-danger';
+                deleteBtn.onclick = () => deleteKey(key.name);
+                actionCell.appendChild(deleteBtn);
+            });
+        } catch (e) {
+            debugLog('Failed to load keys:', e);
+            tbody.innerHTML = `<tr><td colspan="8">加载失败: ${e.message}</td></tr>`;
+        }
+    }
+
+    async function toggleKey(name, enable) {
+        const command = `key ${enable ? 'enable' : 'disable'} ${name}`;
+        debugLog('Toggling key with command:', command);
+        try {
+            const output = NeoProxyServer.myConsole.execute(command.trim());
+            const success = output.includes(enable ? '已启用' : '已禁用');
+            if (success) {
+                loadKeys();
+            } else {
+                alert('操作失败，请检查控制台输出');
+            }
+        } catch (e) {
+            debugLog('Failed to toggle key:', e);
+            alert(`操作失败: ${e.message}`);
+        }
+    }
+
+    async function deleteKey(name) {
+        if (!confirm(`确定要删除序列号 ${name} 吗？`)) return;
+        try {
+            const responseText = await apiCall(`keys/${name}`, 'DELETE');
+            const result = JSON.parse(responseText);
+            if (result.success) {
+                loadKeys();
+            } else {
+                alert('删除失败，请检查控制台输出');
+            }
+        } catch (e) {
+            debugLog('Failed to delete key:', e);
+            alert(`操作失败: ${e.message}`);
+        }
+    }
+
+    // --- Clients View Logic ---
+    async function loadClients() {
+        debugLog('Loading clients...');
+        const tbody = document.querySelector('#clients-table tbody');
+        tbody.innerHTML = '';
+        try {
+            const clients = await apiCall('clients', 'GET');
+            debugLog('Clients loaded:', clients);
+            clients.forEach(client => {
+                const row = tbody.insertRow();
+                Object.values(client).slice(0, -1).forEach(val => row.insertCell().textContent = val);
+                const actionCell = row.insertCell();
+                const btn = document.createElement('button');
+                btn.textContent = '踢下线';
+                btn.className = 'btn btn-danger';
+                btn.onclick = () => disconnectClient(client.addressAndPort);
+                actionCell.appendChild(btn);
+            });
+        } catch (e) {
+            debugLog('Failed to load clients:', e);
+            tbody.innerHTML = `<tr><td colspan="8">加载失败: ${e.message}</td></tr>`;
+        }
+    }
+
+    async function disconnectClient(addressAndPort) {
+        if (!confirm(`确定要断开客户端 ${addressAndPort} 吗？`)) return;
+        try {
+            await apiCall('clients/disconnect', 'POST', new URLSearchParams({addressAndPort}));
+            loadClients();
+        } catch (e) {
+            debugLog('Failed to disconnect client:', e);
+            alert(`操作失败: ${e.message}`);
+        }
+    }
+
+    // --- Initialization ---
+    (async () => {
+        debugLog('Initializing application...');
+        try {
+            const claimed = await apiCall('claim');
+            if (claimed) {
+                debugLog('Session claimed successfully.');
+                fetchHistory();
+                connectSSE();
+            } else {
+                debugLog('Failed to claim session.');
+                updateStatus('无法占用会话', 'error');
+            }
+        } catch (e) {
+            debugLog('Initialization failed:', e);
+            updateStatus(`初始化失败: ${e.message}`, 'error');
+        }
+    })();
+</script>
+
+</body>
+</html>

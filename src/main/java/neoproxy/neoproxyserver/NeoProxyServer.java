@@ -26,6 +26,7 @@ import java.util.Locale;
 import java.util.Properties;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import static java.net.SocketOptions.SO_TIMEOUT;
 import static neoproxy.neoproxyserver.core.HostClient.waitForTcpEnabled;
 import static neoproxy.neoproxyserver.core.HostClient.waitForUDPEnabled;
 import static neoproxy.neoproxyserver.core.InternetOperator.*;
@@ -72,10 +73,6 @@ public class NeoProxyServer {
         return version.trim();
     }
 
-    public static void initConsole() {
-        ConsoleManager.init();
-    }
-
     public static void initStructure() {
         try {
             copyResourceToJarDirectory("eula.txt");
@@ -83,7 +80,7 @@ public class NeoProxyServer {
             e.printStackTrace();
             System.exit(-2);
         }
-        initConsole();
+        ConsoleManager.init();
         printLogo();
         initKeyDatabase();
         ConfigOperator.readAndSetValue();
@@ -190,6 +187,8 @@ public class NeoProxyServer {
         if (hostServerHook == null) {
             SlientException.throwException();
         }
+        hostServerHook.setSoTimeout(SO_TIMEOUT);
+
         String clientAddress = hostServerHook.getInetAddress().getHostAddress();
 
         if (IPChecker.exec(clientAddress, IPChecker.CHECK_IS_BAN)) {
@@ -213,6 +212,7 @@ public class NeoProxyServer {
                 Socket client;
                 try {
                     client = hostClient.getClientServerSocket().accept();
+                    client.setSoTimeout(SO_TIMEOUT);
                     if (IPChecker.exec(client.getInetAddress().getHostAddress(), IPChecker.CHECK_IS_BAN)) {
                         client.close();
                         continue;

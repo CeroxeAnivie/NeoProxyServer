@@ -150,7 +150,7 @@ public final class HostClient implements Closeable {
                     String message = hostClient.hostServerHook.receiveStr(1000);
 
                     if (message == null) {
-                        sayHostClientDiscInfo(hostClient, "HC-Checker:"+getKey().getName());
+                        sayHostClientDiscInfo(hostClient, "HC-Checker:" + getKey().getName());
                         hostClient.close();
                         break;
                     } else if (EXPECTED_HEARTBEAT.equals(message)) {
@@ -169,14 +169,14 @@ public final class HostClient implements Closeable {
 
                     if (timeSinceLastValidHeartbeat >= HEARTBEAT_TIMEOUT) {
                         debugOperation(e);
-                        sayHostClientDiscInfo(hostClient, "HC-Checker:"+getKey().getName());
+                        sayHostClientDiscInfo(hostClient, "HC-Checker:" + getKey().getName());
                         hostClient.close();
                         break;
                     }
 
                 } catch (Exception e) {
                     debugOperation(e);
-                    sayHostClientDiscInfo(hostClient, "HC-Checker:"+getKey().getName());
+                    sayHostClientDiscInfo(hostClient, "HC-Checker:" + getKey().getName());
                     hostClient.close();
                     break;
                 }

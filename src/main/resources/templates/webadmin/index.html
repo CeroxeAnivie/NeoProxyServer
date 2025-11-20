@@ -229,39 +229,61 @@
 
 <div class="sidebar">
     <h2>NeoProxy Admin</h2>
-    <a href="#" class="nav-link active" data-view="console">控制台</a>
-    <a href="#" class="nav-link" data-view="keys">序列号管理</a>
-    <a href="#" class="nav-link" data-view="clients">客户端管理</a>
+    <a class="nav-link active" data-view="console" href="#">控制台</a>
+    <a class="nav-link" data-view="keys" href="#">序列号管理</a>
+    <a class="nav-link" data-view="clients" href="#">客户端管理</a>
 </div>
 
 <div class="main-content">
-    <div id="statusBar" class="status-bar">正在连接...</div>
+    <div class="status-bar" id="statusBar">正在连接...</div>
 
     <!-- Console View -->
-    <div id="console-view" class="view active">
-        <div id="console-output" class="console-output">加载历史日志中...</div>
+    <div class="view active" id="console-view">
+        <div class="console-output" id="console-output">加载历史日志中...</div>
         <div class="command-area">
-            <input type="text" id="commandInput" placeholder="输入命令...">
+            <input id="commandInput" placeholder="输入命令..." type="text">
             <button id="executeBtn">执行</button>
         </div>
     </div>
 
     <!-- Keys View -->
-    <div id="keys-view" class="view">
-        <button id="add-key-btn" class="btn btn-primary" style="margin-bottom: 15px;">添加新序列号</button>
+    <div class="view" id="keys-view">
+        <button class="btn btn-primary" id="add-key-btn" style="margin-bottom: 15px;">添加新序列号</button>
         <div class="data-table-container">
             <table class="data-table" id="keys-table">
-                <thead><tr><th>序列号</th><th>流量</th><th>过期时间</th><th>端口</th><th>速率</th><th>已启用</th><th>启用网页</th><th>操作</th></tr></thead>
+                <thead>
+                <tr>
+                    <th>序列号</th>
+                    <th>流量</th>
+                    <th>过期时间</th>
+                    <th>端口</th>
+                    <th>速率</th>
+                    <th>已启用</th>
+                    <th>启用网页</th>
+                    <th>操作</th>
+                </tr>
+                </thead>
                 <tbody></tbody>
             </table>
         </div>
     </div>
 
     <!-- Clients View -->
-    <div id="clients-view" class="view">
+    <div class="view" id="clients-view">
         <div class="data-table-container">
             <table class="data-table" id="clients-table">
-                <thead><tr><th>地址:端口</th><th>序列号</th><th>位置</th><th>运营商</th><th>外部端口</th><th>TCP</th><th>UDP</th><th>操作</th></tr></thead>
+                <thead>
+                <tr>
+                    <th>地址:端口</th>
+                    <th>序列号</th>
+                    <th>位置</th>
+                    <th>运营商</th>
+                    <th>外部端口</th>
+                    <th>TCP</th>
+                    <th>UDP</th>
+                    <th>操作</th>
+                </tr>
+                </thead>
                 <tbody></tbody>
             </table>
         </div>
@@ -269,25 +291,32 @@
 </div>
 
 <!-- Key Modal -->
-<div id="key-modal" class="modal">
+<div class="modal" id="key-modal">
     <div class="modal-content">
         <div class="modal-header"><h2 id="key-modal-title">添加新序列号</h2></div>
         <div class="modal-body">
-            <div class="form-group"><label for="key-name">名称</label><input type="text" id="key-name" required></div>
-            <div class="form-group"><label for="key-balance">流量</label><input type="number" step="0.01" id="key-balance" required></div>
-            <div class="form-group"><label for="key-expiretime">过期时间 (yyyy/MM/dd-HH:mm)</label><input type="text" id="key-expiretime" required></div>
-            <div class="form-group"><label for="key-port">端口 (e.g., 8080 or 3344-3350)</label><input type="text" id="key-port" required></div>
-            <div class="form-group"><label for="key-rate">速率</label><input type="number" step="0.01" id="key-rate" required></div>
+            <div class="form-group"><label for="key-name">名称</label><input id="key-name" required type="text"></div>
+            <div class="form-group"><label for="key-balance">流量</label><input id="key-balance" required
+                                                                                step="0.01" type="number"></div>
+            <div class="form-group"><label for="key-expiretime">过期时间 (yyyy/MM/dd-HH:mm)</label><input id="key-expiretime"
+                                                                                                          required
+                                                                                                          type="text">
+            </div>
+            <div class="form-group"><label for="key-port">端口 (e.g., 8080 or 3344-3350)</label><input id="key-port"
+                                                                                                       required
+                                                                                                       type="text"></div>
+            <div class="form-group"><label for="key-rate">速率</label><input id="key-rate" required step="0.01"
+                                                                             type="number"></div>
             <div class="form-group">
                 <label for="key-enable-html">
-                    <input type="checkbox" id="key-enable-html" name="key-enable-html">
+                    <input id="key-enable-html" name="key-enable-html" type="checkbox">
                     启用网页
                 </label>
             </div>
         </div>
         <div class="modal-footer">
-            <button id="save-key-btn" class="btn btn-success">保存</button>
-            <button id="cancel-key-btn" class="btn">取消</button>
+            <button class="btn btn-success" id="save-key-btn">保存</button>
+            <button class="btn" id="cancel-key-btn">取消</button>
         </div>
     </div>
 </div>

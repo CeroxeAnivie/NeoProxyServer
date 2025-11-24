@@ -88,8 +88,6 @@ public class WebAdminServer extends NanoWSD {
         saveAndBroadcast(String.format("{\"type\": \"log\", \"payload\": \"%s\"}", safeLog));
     }
 
-    // ... handleCheckExists, handleFileUpload, handleFileDownload, zipFile 保持原样 ...
-
     private static void broadcastJson(String json) {
         synchronized (LOCK) {
             if (activeTempSocket != null && activeTempSocket.isOpen()) {
@@ -179,7 +177,6 @@ public class WebAdminServer extends NanoWSD {
             if (filenameEncoded == null)
                 return newFixedLengthResponse(Status.BAD_REQUEST, "application/json", "{\"status\":\"error\",\"msg\":\"Missing filename\"}");
             if (relPath == null) relPath = "";
-            // 安全检查
             if (relPath.contains("..") || filenameEncoded.contains("..") || filenameEncoded.contains("/") || filenameEncoded.contains("\\"))
                 return newFixedLengthResponse(Status.FORBIDDEN, "application/json", "{\"status\":\"error\",\"msg\":\"Invalid Path\"}");
 
@@ -202,58 +199,42 @@ public class WebAdminServer extends NanoWSD {
 
             InputStream in = session.getInputStream();
 
-            // try-with-resources 自动关闭 out，这对于后续能成功删除文件至关重要
             try (OutputStream out = new FileOutputStream(targetFile)) {
                 if (expectedSize >= 0) {
                     byte[] buf = new byte[8192];
                     long remaining = expectedSize;
                     while (remaining > 0) {
                         int read = in.read(buf, 0, (int) Math.min(remaining, buf.length));
-
-                        // 【核心修复】: 还没读完（remaining > 0）就遇到流结束（read == -1）
-                        // 说明是客户端取消了上传，或者网络中断
                         if (read == -1) {
                             throw new IOException("Premature End of Stream: Upload Cancelled");
                         }
-
                         out.write(buf, 0, read);
                         remaining -= read;
                     }
                 } else {
-                    // 如果没有 content-length（罕见），则读到流结束为止
                     byte[] buf = new byte[8192];
                     int read;
                     while ((read = in.read(buf)) != -1) {
                         out.write(buf, 0, read);
                     }
                 }
-
-                // 只有代码能走到这里，没有抛出异常，才算成功
                 isUploadSuccessful = true;
             }
 
-            // 通知前端刷新
             broadcastJson("{\"type\":\"action\", \"payload\":\"refresh_files\"}");
-
             return newFixedLengthResponse(Status.OK, "application/json", "{\"status\":\"success\"}");
 
         } catch (Exception e) {
-            // 异常处理：删除僵尸文件
-            // 必须确保 try-with-resources 已经结束，out 流已关闭，文件锁已释放
             if (!isUploadSuccessful && targetFile != null && targetFile.exists()) {
                 try {
-                    // 稍微等待一下 OS 释放文件句柄（针对某些 Windows 环境的防御性编程）
-                    // Thread.sleep(10);
                     boolean deleted = targetFile.delete();
                     if (deleted) {
                         ServerLogger.infoWithSource("WebAdmin", "webAdmin.uploadCancelled", targetFile.getName());
                     } else {
-                        // 如果删除失败，尝试在 JVM 退出时删除
                         targetFile.deleteOnExit();
                         ServerLogger.warnWithSource("WebAdmin", "Failed to delete zombie file immediately: " + targetFile.getName());
                     }
                 } catch (Exception deleteEx) {
-                    // 忽略删除过程中的错误
                 }
             }
 
@@ -338,9 +319,8 @@ public class WebAdminServer extends NanoWSD {
     }
 
     /**
-     * 【修复核心】检查冲突并检测僵尸连接
-     * 返回 true 表示有冲突（且对方活着，应该拦截）
-     * 返回 false 表示无冲突（或者是僵尸连接被踢掉了，可以通行）
+     * 【修复版】检查冲突并检测僵尸连接
+     * 优化：移除同步 Ping 操作，将 Socket 关闭操作移至异步线程，防止 TCP 超时阻塞主线程
      */
     private boolean checkConflictWithZombieDetection(int tokenType, String remoteIp) {
         synchronized (LOCK) {
@@ -350,31 +330,26 @@ public class WebAdminServer extends NanoWSD {
             if (targetSocket == null) return false;
 
             // 2. 如果有连接，开始判断是否为僵尸
-            // 2.1 检查心跳超时
             long lastActive = targetSocket.getLastActiveTime();
             long now = System.currentTimeMillis();
+            // 只要超时，直接判定为僵尸，不再尝试 Ping (因为 Ping 会导致几十秒的阻塞)
             boolean isZombie = (now - lastActive) > ZOMBIE_TIMEOUT_MS;
 
-            // 2.2 如果时间还没超时，尝试主动 Ping 一下确认（双重保险）
-            if (!isZombie) {
-                try {
-                    targetSocket.ping(new byte[0]);
-                } catch (IOException e) {
-                    // Ping 失败（Broken pipe），确认为僵尸
-                    isZombie = true;
-                }
-            }
-
             if (isZombie) {
-                // 是僵尸连接：记录日志，清理它，然后允许新连接进入
                 ServerLogger.warnWithSource("WebAdmin", "webAdmin.clientOffline", targetSocket.getRemoteIp());
-                // 强制关闭旧连接（防止资源泄漏）
-                try {
-                    targetSocket.close(WebSocketFrame.CloseCode.GoingAway, "Zombie Timeout", false);
-                } catch (Exception ignored) {
-                }
 
-                // 清理引用
+                // 【核心修改点】：将关闭操作移入异步线程
+                // 为什么要这样做？因为向死掉的 TCP 连接发送 Close 帧会阻塞几十秒等待 ACK
+                final AdminWebSocket socketToClose = targetSocket;
+                ThreadManager.runAsync(() -> {
+                    try {
+                        // 强制断开，不等待
+                        socketToClose.close(WebSocketFrame.CloseCode.GoingAway, "Zombie Timeout", false);
+                    } catch (Exception ignored) {
+                    }
+                });
+
+                // 立即清理引用，让当前新请求马上通过
                 if (tokenType == 1) {
                     activeTempSocket = null;
                     activeTempSessionId = null;
@@ -382,11 +357,11 @@ public class WebAdminServer extends NanoWSD {
                     activePermSocket = null;
                     activePermSessionId = null;
                 }
-                // 返回 false，表示冲突已解除
+                // 返回 false，表示冲突已解除，允许访问
                 return false;
             }
 
-            // 3. 如果连接活着（心跳正常且 Ping 成功）
+            // 3. 如果连接活着（在有效期内）
             // 无论 IP 是否相同，只要已存在活跃连接，就拒绝新连接（严格单例）
             if (!targetSocket.getRemoteIp().equals(remoteIp)) {
                 logConflictWarning(remoteIp, "http");
@@ -465,18 +440,17 @@ public class WebAdminServer extends NanoWSD {
             String token = this.getHandshakeRequest().getParms().get("token");
             this.sessionType = WebAdminManager.verifyTokenAndGetType(token);
             synchronized (LOCK) {
-                // 这里也使用 checkConflictWithZombieDetection 的逻辑，防止极短时间内的竞态
-                // 但 WebSocket 握手阶段主要依靠 active*Socket 的检查
-
+                // WebSocket 握手阶段的检查，同样应用异步清理优化
                 if (sessionType == 1) {
                     if (activeTempSocket != null && activeTempSocket != this) {
                         // 再次检查僵尸（防止 HTTP 检查漏网）
                         if (System.currentTimeMillis() - activeTempSocket.getLastActiveTime() > ZOMBIE_TIMEOUT_MS) {
-                            try {
-                                activeTempSocket.close(WebSocketFrame.CloseCode.GoingAway, "Zombie", false);
-                            } catch (Exception ignored) {
-                            }
-                            activeTempSocket = null; // 踢掉僵尸
+                            AdminWebSocket deadSocket = activeTempSocket;
+                            // 异步清理
+                            ThreadManager.runAsync(() -> {
+                                try { deadSocket.close(WebSocketFrame.CloseCode.GoingAway, "Zombie", false); } catch (Exception ignored) {}
+                            });
+                            activeTempSocket = null; // 立即踢掉僵尸
                         } else {
                             if (!activeTempSocket.getRemoteIp().equals(this.remoteIp))
                                 logConflictWarning(remoteIp, "ws");
@@ -490,11 +464,12 @@ public class WebAdminServer extends NanoWSD {
                     if (activePermSocket != null && activePermSocket != this) {
                         // 再次检查僵尸
                         if (System.currentTimeMillis() - activePermSocket.getLastActiveTime() > ZOMBIE_TIMEOUT_MS) {
-                            try {
-                                activePermSocket.close(WebSocketFrame.CloseCode.GoingAway, "Zombie", false);
-                            } catch (Exception e) {
-                            }
-                            activePermSocket = null; // 踢掉僵尸
+                            AdminWebSocket deadSocket = activePermSocket;
+                            // 异步清理
+                            ThreadManager.runAsync(() -> {
+                                try { deadSocket.close(WebSocketFrame.CloseCode.GoingAway, "Zombie", false); } catch (Exception ignored) {}
+                            });
+                            activePermSocket = null; // 立即踢掉僵尸
                         } else {
                             if (!activePermSocket.getRemoteIp().equals(this.remoteIp))
                                 logConflictWarning(remoteIp, "ws");
@@ -565,7 +540,6 @@ public class WebAdminServer extends NanoWSD {
             }
             if (text.isEmpty()) return;
 
-            // ... 具体的命令处理逻辑保持不变 ...
             ThreadManager.runAsync(() -> {
                 try {
                     if (text.startsWith("#GET_PERFORMANCE")) {
@@ -634,11 +608,7 @@ public class WebAdminServer extends NanoWSD {
             });
         }
 
-        // ... handleMoveFiles, handleListFiles 等所有私有处理方法保持不变 ...
-        // (省略中间未修改的代码块)
-
         private void handleMoveFiles(String payload) {
-            // 保持原样
             try {
                 String[] parts = payload.split("\\|");
                 if (parts.length < 2) return;

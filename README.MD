@@ -1,9 +1,16 @@
 # 🌐 NeoProxyServer – 高性能内网穿透服务端
 
 > 💡 **NeoProxyServer** 是一个基于 Java 21 构建的现代化、高性能、支持流量控制与动态端口分配的内网穿透服务端，适用于开发者、运维人员及个人用户快速暴露本地服务至公网。
-
-![img.png](img.png)
 ---
+![Java](https://img.shields.io/badge/Java-21%2B-orange?logo=openjdk&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](#许可证)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?logo=windows&logoColor=white)
+![GUI](https://img.shields.io/badge/Interface-JavaFX-blueviolet?logo=javafx)
+![Build](https://img.shields.io/badge/Build-GraalVM%20Native-lightblue?logo=graalvm)
+![Status](https://img.shields.io/badge/Status-Stable-success?logo=github)
+![Made with Love](https://img.shields.io/badge/Made%20with-%E2%9D%A4-red)
+---
+![img.png](img.png)
 
 ## 📦 特性亮点
 

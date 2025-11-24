@@ -5,6 +5,7 @@ import neoproxy.neoproxyserver.core.exceptions.*;
 import neoproxy.neoproxyserver.core.management.*;
 import neoproxy.neoproxyserver.core.threads.TCPTransformer;
 import neoproxy.neoproxyserver.core.threads.UDPTransformer;
+import neoproxy.neoproxyserver.core.webadmin.WebAdminManager;
 import plethora.management.bufferedFile.SizeCalculator;
 import plethora.net.SecureServerSocket;
 import plethora.net.SecureSocket;
@@ -39,8 +40,19 @@ import static neoproxy.neoproxyserver.core.threads.TCPTransformer.BUFFER_LEN;
 public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = getJarDirOrUserDir();
     public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
-    public static String VERSION = getAppVersion();
-    public static String EXPECTED_CLIENT_VERSION = "4.7.4|4.8.4|4.8.5|4.8.6|4.8.7|4.8.8";
+    public static final String ASCII_LOGO = """
+            
+               _____                                    \s
+              / ____|                                   \s
+             | |        ___   _ __    ___   __  __   ___\s
+             | |       / _ \\ | '__|  / _ \\  \\ \\/ /  / _ \\
+             | |____  |  __/ | |    | (_) |  >  <  |  __/
+              \\_____|  \\___| |_|     \\___/  /_/\\_\\  \\___|
+                                                        \s
+                                                         \
+            """;
+    public static String VERSION = getFromAppProperties("app.version");
+    public static String EXPECTED_CLIENT_VERSION = getFromAppProperties("app.expected.client.version");
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.toCopyOnWriteArrayListWithLoop(EXPECTED_CLIENT_VERSION.split("\\|"));
     public static int HOST_HOOK_PORT = 44801;
     public static int HOST_CONNECT_PORT = 44802;
@@ -51,7 +63,7 @@ public class NeoProxyServer {
     public static MyConsole myConsole;
     public static boolean isStopped = false;
 
-    private static String getAppVersion() {
+    private static String getFromAppProperties(String name) {
         Properties props = new Properties();
         try (InputStream is = NeoProxyServer.class.getClassLoader()
                 .getResourceAsStream("app.properties")) {
@@ -64,10 +76,10 @@ public class NeoProxyServer {
             throw new IllegalStateException("Failed to read " + "app.properties", e);
         }
 
-        String version = props.getProperty("app.version");
+        String version = props.getProperty(name);
         if (version == null || version.trim().isEmpty()) {
             throw new IllegalStateException(
-                    "Property '" + "app.version" + "' is missing or empty in " + "app.properties");
+                    "Property '" + name + "' is missing or empty in " + "app.properties");
         }
 
         return version.trim();
@@ -80,10 +92,13 @@ public class NeoProxyServer {
             e.printStackTrace();
             System.exit(-2);
         }
-        ConsoleManager.init();
+
+        //以下顺序不能错
+        ConsoleManager.init(); // 初始化控制台
+        ConfigOperator.readAndSetValue(); // 读取配置 (此时会加载 WEB_ADMIN_PORT)
+        WebAdminManager.init(); // 使用配置中的端口启动 WebAdmin
         printLogo();
         initKeyDatabase();
-        ConfigOperator.readAndSetValue();
         UpdateManager.init();
         SecureSocket.setMaxAllowedPacketSize((int) SizeCalculator.mibToByte(200));
 
@@ -96,6 +111,8 @@ public class NeoProxyServer {
             System.exit(-1);
         }
         loadBannedIPs();
+
+        WebAdminManager.init();
     }
 
     private static void checkARGS(String[] args) {
@@ -115,17 +132,7 @@ public class NeoProxyServer {
 
     private static void printLogo() {
         ServerLogger.info("neoProxyServer.logo");
-        myConsole.log("NeoProxyServer", """
-                
-                   _____                                    \s
-                  / ____|                                   \s
-                 | |        ___   _ __    ___   __  __   ___\s
-                 | |       / _ \\ | '__|  / _ \\  \\ \\/ /  / _ \\
-                 | |____  |  __/ | |    | (_) |  >  <  |  __/
-                  \\_____|  \\___| |_|     \\___/  /_/\\_\\  \\___|
-                                                            \s
-                                                             \
-                """);
+        myConsole.log("NeoProxyServer", ASCII_LOGO);
     }
 
     public static void main(String[] args) {
@@ -212,7 +219,6 @@ public class NeoProxyServer {
                 Socket client;
                 try {
                     client = hostClient.getClientServerSocket().accept();
-                    client.setSoTimeout(SO_TIMEOUT);
                     if (IPChecker.exec(client.getInetAddress().getHostAddress(), IPChecker.CHECK_IS_BAN)) {
                         client.close();
                         continue;

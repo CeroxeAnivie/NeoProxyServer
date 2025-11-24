@@ -6,7 +6,7 @@
 
     <groupId>neoproxy</groupId>
     <artifactId>NeoProxyServer</artifactId>
-    <version>4.10.13</version>
+    <version>4.11.14</version>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>
@@ -14,26 +14,64 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     </properties>
+
     <dependencies>
         <dependency>
             <groupId>fun.ceroxe</groupId>
             <artifactId>plethora-api</artifactId>
-            <version>0.2.2</version>
+            <version>0.2.3</version>
         </dependency>
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
             <version>2.4.240</version>
         </dependency>
+        <dependency>
+            <groupId>org.nanohttpd</groupId>
+            <artifactId>nanohttpd-websocket</artifactId>
+            <version>2.3.1</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.oshi</groupId>
+            <artifactId>oshi-core</artifactId>
+            <version>6.9.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-nop</artifactId>
+            <version>2.0.17</version>
+        </dependency>
+        <dependency>
+            <groupId>org.lionsoul</groupId>
+            <artifactId>ip2region</artifactId>
+            <version>3.1.1</version>
+        </dependency>
     </dependencies>
 
     <build>
         <resources>
+            <!-- 策略 1: 对配置文件启用过滤 (为了让 app.version 能读取到 pom 中的版本号) -->
             <resource>
                 <directory>src/main/resources</directory>
+                <includes>
+                    <include>**/*.properties</include>
+                    <include>**/*.xml</include>
+                </includes>
                 <filtering>true</filtering>
             </resource>
+
+            <!-- 策略 2: 对 HTML/JS/CSS 禁用过滤 (核心修复！！！) -->
+            <!-- 防止 Maven 破坏 JS 中的 ${var} 模板字符串 -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <excludes>
+                    <exclude>**/*.properties</exclude>
+                    <exclude>**/*.xml</exclude>
+                </excludes>
+                <filtering>false</filtering>
+            </resource>
         </resources>
+
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

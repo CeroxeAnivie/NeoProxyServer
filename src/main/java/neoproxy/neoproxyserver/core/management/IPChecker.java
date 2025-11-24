@@ -12,6 +12,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.regex.Pattern;
 
 import static neoproxy.neoproxyserver.NeoProxyServer.*;
 
@@ -27,6 +28,10 @@ public class IPChecker {
 
     private static final File BAN_LIST_FILE = new File(System.getProperty("user.dir"), "banList.txt");
     private static final Set<String> bannedIPSet = new HashSet<>(); // 内存缓存，用于快速查询
+    // IPv4地址的正则表达式
+    private static final String IPV4_REGEX =
+            "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$";
+    private static final Pattern IPV4_PATTERN = Pattern.compile(IPV4_REGEX);
     public static volatile boolean ENABLE_BAN = true;
 
     /**
@@ -176,16 +181,16 @@ public class IPChecker {
             return false;
         }
 
-        try {
-            // 尝试将字符串解析为 InetAddress
-            InetAddress inetAddress = InetAddress.getByName(ip);
+        // 首先使用正则表达式快速验证格式
+        if (!IPV4_PATTERN.matcher(ip).matches()) {
+            return false;
+        }
 
-            // 关键检查：解析后的规范地址必须与原始输入相同。
-            // 这可以过滤掉像 "www.google.com" 这样的主机名，
-            // 因为 getHostAddress() 会返回其 IP 地址，而不是原始字符串。
+        // 然后进行更严格的验证
+        try {
+            InetAddress inetAddress = InetAddress.getByName(ip);
             return ip.equals(inetAddress.getHostAddress());
         } catch (UnknownHostException e) {
-            // 如果字符串既不是有效的 IP 地址，也不是可解析的主机名，则会抛出此异常。
             return false;
         }
     }

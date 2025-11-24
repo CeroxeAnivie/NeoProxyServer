@@ -1,154 +1,200 @@
 package neoproxy.neoproxyserver.core.management;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import neoproxy.neoproxyserver.core.ServerLogger;
+import org.lionsoul.ip2region.xdb.LongByteArray;
+import org.lionsoul.ip2region.xdb.Searcher;
+import org.lionsoul.ip2region.xdb.Version;
 
-import java.net.InetAddress;
-import java.net.URI;
-import java.net.UnknownHostException;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Arrays;
+import java.util.stream.Collectors;
 
-/**
- * IP 地理位置查询助手 - 适配 ServerLogger (MessageFormat)
- * 集成 HttpClient 连接池，默认超时 1000ms
- */
 public class IPGeolocationHelper {
 
-    private static final ObjectMapper objectMapper = new ObjectMapper();
+    private static Searcher searcherV4;
+    private static Searcher searcherV6;
 
-    // ZXinc API 地址模板
-    private static final String API_URL_TEMPLATE = "https://ip.zxinc.org/api.php?type=json&ip=%s";
+    private static boolean v4Loaded = false;
+    private static boolean v6Loaded = false;
 
-    // 性能关键：全局复用 HttpClient 以启用连接池 (Keep-Alive)
-    // 强制 HTTP/1.1 以获得更好的兼容性和握手速度
-    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
-            .version(HttpClient.Version.HTTP_1_1)
-            .connectTimeout(Duration.ofMillis(1000)) // 连接超时 1s
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .build();
+    // 定义文件名常量
+    private static final String FILE_V4 = "ip2region_v4.xdb";
+    private static final String FILE_V6 = "ip2region_v6.xdb";
 
-    // 读取超时设置 (1000ms)
-    private static final Duration REQUEST_TIMEOUT = Duration.ofMillis(1000);
+    static {
+        initialize();
+    }
+
+    private static void initialize() {
+        // -------------------------------------------------
+        // 1. 加载 IPv4
+        // -------------------------------------------------
+        byte[] v4Data = loadFileToBytes(FILE_V4);
+        if (v4Data != null) {
+            try {
+                // v3.1.1 API: Version.IPv4 + LongByteArray
+                searcherV4 = Searcher.newWithBuffer(Version.IPv4, new LongByteArray(v4Data));
+                v4Loaded = true;
+                // [Key Used]: ipGeolocationHelper.init.v4.success
+                ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.v4.success", String.valueOf(v4Data.length));
+            } catch (IOException e) {
+                // [Key Used]: ipGeolocationHelper.init.v4.failed
+                ServerLogger.errorWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.v4.failed", e.getMessage());
+            }
+        } else {
+            // [Key Used]: ipGeolocationHelper.init.v4.notFound
+            ServerLogger.warnWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.v4.notFound", null);
+        }
+
+        // -------------------------------------------------
+        // 2. 加载 IPv6
+        // -------------------------------------------------
+        byte[] v6Data = loadFileToBytes(FILE_V6);
+        if (v6Data != null) {
+            try {
+                // v3.1.1 API: Version.IPv6 + LongByteArray
+                searcherV6 = Searcher.newWithBuffer(Version.IPv6, new LongByteArray(v6Data));
+                v6Loaded = true;
+                // [Key Used]: ipGeolocationHelper.init.v6.success
+                ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.v6.success", String.valueOf(v6Data.length));
+            } catch (IOException e) {
+                // [Key Used]: ipGeolocationHelper.init.v6.failed
+                ServerLogger.errorWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.v6.failed", e.getMessage());
+            }
+        } else {
+            // [Key Used]: ipGeolocationHelper.init.v6.notFound
+            ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.v6.notFound", null);
+        }
+    }
 
     /**
-     * 获取 IP 地理位置信息
-     *
-     * @param ip 目标 IP (支持 IPv4 和 IPv6)
-     * @return LocationInfo 对象
+     * 读取 classpath 下的文件到 byte[]
      */
-    public static LocationInfo getLocationInfo(String ip) {
-        // 1. 预检查私有 IP 地址
-        try {
-            InetAddress address = InetAddress.getByName(ip);
-            if (address.isLoopbackAddress() || address.isSiteLocalAddress() || address.isLinkLocalAddress()) {
-                // 对应 properties: {0}
-                ServerLogger.info("ipGeolocation.privateIpSkipped", ip);
-                return new LocationInfo("Localhost", "N/A", true, "Local Detection");
+    private static byte[] loadFileToBytes(String fileName) {
+        try (InputStream inputStream = IPGeolocationHelper.class.getClassLoader().getResourceAsStream(fileName)) {
+            if (inputStream == null) {
+                // 这里返回 null，由调用方打印具体的 notFound 日志，避免重复
+                return null;
             }
-        } catch (UnknownHostException e) {
-            // 对应 properties: {0}
-            ServerLogger.error("ipGeolocation.invalidIpFormat", ip);
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+            int nRead;
+            byte[] data = new byte[16384];
+            while ((nRead = inputStream.read(data, 0, data.length)) != -1) {
+                buffer.write(data, 0, nRead);
+            }
+            return buffer.toByteArray();
+        } catch (IOException e) {
+            // [Key Used]: ipGeolocationHelper.init.ioError
+            // 记录具体是哪个文件读取失败
+            ServerLogger.errorWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.ioError", fileName + ", " + e.getMessage());
+            return null;
+        }
+    }
+
+    public static LocationInfo getLocationInfo(String ip) {
+        if (ip == null || ip.isBlank()) {
+            return LocationInfo.failed("Empty IP");
+        }
+
+        try {
+            // 简单内网判断
+            if (isInternalIp(ip)) {
+                return new LocationInfo("Localhost", "Intranet", true, "Local");
+            }
+
+            String region = null;
+            String usedSource = "Unknown";
+
+            // 判断是否为 IPv6 (包含冒号)
+            boolean isIpv6 = ip.indexOf(':') > -1;
+
+            if (isIpv6) {
+                if (v6Loaded && searcherV6 != null) {
+                    region = searcherV6.search(ip);
+                    usedSource = "Ip2region-v6";
+                } else {
+                    return LocationInfo.failed("IPv6 DB not loaded");
+                }
+            } else {
+                if (v4Loaded && searcherV4 != null) {
+                    region = searcherV4.search(ip);
+                    usedSource = "Ip2region-v4";
+                } else {
+                    return LocationInfo.failed("IPv4 DB not loaded");
+                }
+            }
+
+            if (region == null || region.isEmpty()) {
+                return LocationInfo.failed();
+            }
+
+            return parseRegionStr(region, usedSource);
+
+        } catch (Exception e) {
+            // [Key Used]: ipGeolocationHelper.query.error
+            ServerLogger.warnWithSource("IPGeolocationHelper", "ipGeolocationHelper.query.error", ip + ", " + e.getMessage());
             return LocationInfo.failed();
         }
-
-        // 对应 properties: {0}
-        ServerLogger.info("ipGeolocation.querying", ip);
-
-        // 2. 执行查询
-        return queryZxincApi(ip);
     }
 
     /**
-     * 使用 HttpClient 请求 ZXinc API
+     * 智能解析：兼容 5段式 和 4段式 数据
+     * 5段式: 国家|区域|省份|城市|ISP
+     * 4段式: 国家|省份|城市|ISP
      */
-    private static LocationInfo queryZxincApi(String ip) {
-        try {
-            // 构建请求 (伪装成 Chrome 浏览器)
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(String.format(API_URL_TEMPLATE, ip)))
-                    .timeout(REQUEST_TIMEOUT) // 读取超时 1s
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-                    .header("Accept", "application/json, text/plain, */*")
-                    .GET()
-                    .build();
+    private static LocationInfo parseRegionStr(String region, String sourceName) {
+        String[] parts = region.split("\\|");
+        String location = "";
+        String isp = "Unknown";
 
-            // 发送请求 (利用连接池)
-            HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() == 200) {
-                LocationInfo info = parseZxincResponse(response.body());
-                if (info.success()) {
-                    // 对应 properties: {0}=IP, {1}=Location, {2}=ISP
-                    ServerLogger.info("ipGeolocation.success", ip, info.location(), info.isp());
-                    return info;
-                }
-            } else {
-                // 对应 properties: {0}=Provider, {1}=StatusCode, {2}=IP
-                ServerLogger.warn("ipGeolocation.apiErrorStatus", "ZXinc", response.statusCode(), ip);
-            }
-
-        } catch (java.net.http.HttpTimeoutException e) {
-            // 对应 properties: {0}=Provider, {1}=IP
-            ServerLogger.warn("ipGeolocation.timeout", "ZXinc", ip);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } catch (Exception e) {
-            // 对应 properties: {0}=IP, {1}=ErrorMsg
-            ServerLogger.error("ipGeolocation.requestError", ip, e.getMessage());
+        if (parts.length == 5) {
+            location = Arrays.stream(new String[]{parts[0], parts[2], parts[3]})
+                    .filter(s -> s != null && !"0".equals(s) && !"Unknown".equalsIgnoreCase(s))
+                    .distinct()
+                    .collect(Collectors.joining(" "));
+            isp = parts[4];
+        } else if (parts.length == 4) {
+            location = Arrays.stream(new String[]{parts[0], parts[1], parts[2]})
+                    .filter(s -> s != null && !"0".equals(s) && !"Unknown".equalsIgnoreCase(s))
+                    .distinct()
+                    .collect(Collectors.joining(" "));
+            isp = parts[3];
+        } else {
+            return new LocationInfo(region, "Unknown", true, sourceName);
         }
 
-        return LocationInfo.failed();
+        if (location.isBlank()) {
+            location = "Unknown Region";
+        }
+        if (isp == null || "0".equals(isp)) {
+            isp = "Unknown";
+        }
+
+        return new LocationInfo(location, isp, true, sourceName);
     }
 
-    /**
-     * 解析 ZXinc JSON 响应
-     */
-    private static LocationInfo parseZxincResponse(String jsonResult) {
-        try {
-            JsonNode rootNode = objectMapper.readTree(jsonResult);
-            int code = rootNode.path("code").asInt(-1);
-
-            if (code == 0) {
-                JsonNode dataNode = rootNode.path("data");
-
-                // 提取地理位置 (country 字段: "中国–广东–广州")
-                String locationStr = dataNode.path("country").asText("");
-
-                // 兜底：如果 country 为空，尝试取 location 字段
-                if (locationStr.isEmpty()) {
-                    locationStr = dataNode.path("location").asText("Unknown");
-                }
-
-                // 提取 ISP (local 字段: "电信")
-                String ispStr = dataNode.path("local").asText("Unknown");
-
-                return new LocationInfo(locationStr, ispStr, true, "ZXinc");
-            } else {
-                // 对应 properties: {0}=ErrorCode
-                ServerLogger.warn("ipGeolocation.apiLogicError", "ZXinc returned code: " + code);
-            }
-        } catch (Exception e) {
-            // 对应 properties: {0}=Provider, {1}=ErrorMsg
-            ServerLogger.error("ipGeolocation.parseError", "ZXinc", e.getMessage());
-        }
-        return LocationInfo.failed();
+    private static boolean isInternalIp(String ip) {
+        return ip.startsWith("127.") || ip.startsWith("10.") || ip.startsWith("192.168.")
+                || "::1".equals(ip) || "0:0:0:0:0:0:0:1".equals(ip);
     }
 
     public static void shutdown() {
-        // HttpClient 资源由 JVM 自动管理
+        try {
+            if (searcherV4 != null) searcherV4.close();
+            if (searcherV6 != null) searcherV6.close();
+        } catch (IOException e) {
+            // ignore
+        }
     }
 
     public record LocationInfo(String location, String isp, boolean success, String source) {
-        public LocationInfo(String location, String isp, boolean success) {
-            this(location, isp, success, "Unknown");
-        }
-
         public static LocationInfo failed() {
             return new LocationInfo("N/A", "N/A", false, "Failed");
+        }
+        public static LocationInfo failed(String reason) {
+            return new LocationInfo("N/A", "N/A", false, reason);
         }
     }
 }

@@ -11,6 +11,7 @@
           <option value="NeoProxyServer" />
           <option value="NeoProxyServer" />
           <option value="NeoProxyServer" />
+          <option value="NeoProxyServer" />
         </list>
       </option>
       <option name="ignoredPackages">
@@ -18,10 +19,12 @@
           <option value="org.apache.httpcomponents:httpclient:4.5.2" />
           <option value="commons-codec:commons-codec:1.9" />
           <option value="org.json:json:20160212" />
+          <option value="org.nanohttpd:nanohttpd:2.3.1" />
         </list>
       </option>
       <option name="ignoredReasons">
         <list>
+          <option value="不可利用" />
           <option value="不可利用" />
           <option value="不可利用" />
           <option value="不可利用" />

@@ -5,7 +5,6 @@
 ![Java](https://img.shields.io/badge/Java-21%2B-orange?logo=openjdk&logoColor=white)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](#许可证)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?logo=windows&logoColor=white)
-![GUI](https://img.shields.io/badge/Interface-JavaFX-blueviolet?logo=javafx)
 ![Build](https://img.shields.io/badge/Build-GraalVM%20Native-lightblue?logo=graalvm)
 ![Status](https://img.shields.io/badge/Status-Stable-success?logo=github)
 ![Made with Love](https://img.shields.io/badge/Made%20with-%E2%9D%A4-red)

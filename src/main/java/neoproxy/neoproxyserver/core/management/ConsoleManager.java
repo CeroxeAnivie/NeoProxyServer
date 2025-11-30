@@ -690,7 +690,7 @@ public class ConsoleManager {
             ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.keyCreated", name);
             if (enableWebHTML) {
                 myConsole.execute("web enable " + name);
-            }else{
+            } else {
                 myConsole.execute("web disable " + name);
             }
         } else {

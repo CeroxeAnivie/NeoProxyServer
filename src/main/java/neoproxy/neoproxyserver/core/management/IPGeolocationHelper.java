@@ -13,15 +13,13 @@ import java.util.stream.Collectors;
 
 public class IPGeolocationHelper {
 
-    private static Searcher searcherV4;
-    private static Searcher searcherV6;
-
-    private static boolean v4Loaded = false;
-    private static boolean v6Loaded = false;
-
     // 定义文件名常量
     private static final String FILE_V4 = "ip2region_v4.xdb";
     private static final String FILE_V6 = "ip2region_v6.xdb";
+    private static Searcher searcherV4;
+    private static Searcher searcherV6;
+    private static boolean v4Loaded = false;
+    private static boolean v6Loaded = false;
 
     static {
         initialize();
@@ -193,6 +191,7 @@ public class IPGeolocationHelper {
         public static LocationInfo failed() {
             return new LocationInfo("N/A", "N/A", false, "Failed");
         }
+
         public static LocationInfo failed(String reason) {
             return new LocationInfo("N/A", "N/A", false, reason);
         }

@@ -52,18 +52,25 @@ public class WebAdminServer extends NanoWSD {
                     return msg == null || (!msg.contains("Socket closed") && !msg.contains("Broken pipe"));
                 }
             });
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
     }
 
     public WebAdminServer(int port) {
         super(port);
         setAsyncRunner(new AsyncRunner() {
             @Override
-            public void closeAll() {}
+            public void closeAll() {
+            }
+
             @Override
-            public void closed(ClientHandler clientHandler) {}
+            public void closed(ClientHandler clientHandler) {
+            }
+
             @Override
-            public void exec(ClientHandler code) { ThreadManager.runAsync(code); }
+            public void exec(ClientHandler code) {
+                ThreadManager.runAsync(code);
+            }
         });
     }
 
@@ -82,10 +89,16 @@ public class WebAdminServer extends NanoWSD {
     private static void broadcastJson(String json) {
         synchronized (LOCK) {
             if (activeTempSocket != null && activeTempSocket.isOpen()) {
-                try { activeTempSocket.send(json); } catch (IOException ignored) {}
+                try {
+                    activeTempSocket.send(json);
+                } catch (IOException ignored) {
+                }
             }
             if (activePermSocket != null && activePermSocket.isOpen()) {
-                try { activePermSocket.send(json); } catch (IOException ignored) {}
+                try {
+                    activePermSocket.send(json);
+                } catch (IOException ignored) {
+                }
             }
         }
     }
@@ -124,7 +137,8 @@ public class WebAdminServer extends NanoWSD {
         if (Method.GET.equals(method) && "/download".equals(uri)) return handleFileDownload(session);
 
         String html = loadResourceString("templates/webadmin/index.html");
-        if (html == null) return newFixedLengthResponse(Status.INTERNAL_ERROR, NanoHTTPD.MIME_PLAINTEXT, "Error: index.html missing");
+        if (html == null)
+            return newFixedLengthResponse(Status.INTERNAL_ERROR, NanoHTTPD.MIME_PLAINTEXT, "Error: index.html missing");
         return newFixedLengthResponse(Status.OK, NanoHTTPD.MIME_HTML, html);
     }
 
@@ -133,7 +147,8 @@ public class WebAdminServer extends NanoWSD {
         String relPath = params.get("path");
         String filename = params.get("filename");
         if (relPath == null) relPath = "";
-        if (filename == null || filename.trim().isEmpty()) return newFixedLengthResponse(Status.BAD_REQUEST, NanoHTTPD.MIME_PLAINTEXT, "No filename");
+        if (filename == null || filename.trim().isEmpty())
+            return newFixedLengthResponse(Status.BAD_REQUEST, NanoHTTPD.MIME_PLAINTEXT, "No filename");
         if (relPath.contains("..") || filename.contains("..") || filename.contains("/") || filename.contains("\\"))
             return newFixedLengthResponse(Status.FORBIDDEN, NanoHTTPD.MIME_PLAINTEXT, "Invalid Path");
         File target = new File(new File(NeoProxyServer.CURRENT_DIR_PATH, relPath), filename);
@@ -147,12 +162,14 @@ public class WebAdminServer extends NanoWSD {
             Map<String, String> params = session.getParms();
             String filenameEncoded = params.get("filename");
             String relPath = params.get("path");
-            if (filenameEncoded == null) return newFixedLengthResponse(Status.BAD_REQUEST, "application/json", "{\"status\":\"error\",\"msg\":\"Missing filename\"}");
+            if (filenameEncoded == null)
+                return newFixedLengthResponse(Status.BAD_REQUEST, "application/json", "{\"status\":\"error\",\"msg\":\"Missing filename\"}");
             if (relPath == null) relPath = "";
             if (relPath.contains("..") || filenameEncoded.contains("..") || filenameEncoded.contains("/") || filenameEncoded.contains("\\"))
                 return newFixedLengthResponse(Status.FORBIDDEN, "application/json", "{\"status\":\"error\",\"msg\":\"Invalid Path\"}");
             String filename = new File(filenameEncoded).getName();
-            if (filename.trim().isEmpty()) return newFixedLengthResponse(Status.BAD_REQUEST, "application/json", "{\"status\":\"error\",\"msg\":\"Empty filename\"}");
+            if (filename.trim().isEmpty())
+                return newFixedLengthResponse(Status.BAD_REQUEST, "application/json", "{\"status\":\"error\",\"msg\":\"Empty filename\"}");
 
             File targetDir = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
             if (!targetDir.exists()) targetDir.mkdirs();
@@ -160,7 +177,10 @@ public class WebAdminServer extends NanoWSD {
 
             long expectedSize = -1;
             if (session.getHeaders().containsKey("content-length")) {
-                try { expectedSize = Long.parseLong(session.getHeaders().get("content-length")); } catch (NumberFormatException ignored) {}
+                try {
+                    expectedSize = Long.parseLong(session.getHeaders().get("content-length"));
+                } catch (NumberFormatException ignored) {
+                }
             }
             InputStream in = session.getInputStream();
             try (OutputStream out = new FileOutputStream(targetFile)) {
@@ -186,7 +206,8 @@ public class WebAdminServer extends NanoWSD {
             if (!isUploadSuccessful && targetFile != null && targetFile.exists()) {
                 try {
                     if (!targetFile.delete()) targetFile.deleteOnExit();
-                } catch (Exception ignored) {}
+                } catch (Exception ignored) {
+                }
             }
             if (!(e instanceof SocketException) && !(e instanceof IOException && e.getMessage().contains("Cancel"))) {
                 if (NeoProxyServer.IS_DEBUG_MODE) e.printStackTrace();
@@ -198,7 +219,8 @@ public class WebAdminServer extends NanoWSD {
 
     private Response handleFileDownload(IHTTPSession session) {
         String relPath = session.getParms().get("file");
-        if (relPath == null || relPath.contains("..")) return newFixedLengthResponse(Status.FORBIDDEN, NanoHTTPD.MIME_PLAINTEXT, "Invalid File");
+        if (relPath == null || relPath.contains(".."))
+            return newFixedLengthResponse(Status.FORBIDDEN, NanoHTTPD.MIME_PLAINTEXT, "Invalid File");
         File f = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
         if (!f.exists()) return newFixedLengthResponse(Status.NOT_FOUND, NanoHTTPD.MIME_PLAINTEXT, "Not Found");
         try {
@@ -207,9 +229,16 @@ public class WebAdminServer extends NanoWSD {
                 PipedInputStream in = new PipedInputStream();
                 PipedOutputStream out = new PipedOutputStream(in);
                 ThreadManager.runAsync(() -> {
-                    try (ZipOutputStream zos = new ZipOutputStream(out)) { zipFile(f, f.getName(), zos); }
-                    catch (Exception e) { ServerLogger.errorWithSource("WebAdmin", "Zip Error", e); }
-                    finally { try { out.close(); } catch (IOException e) {} }
+                    try (ZipOutputStream zos = new ZipOutputStream(out)) {
+                        zipFile(f, f.getName(), zos);
+                    } catch (Exception e) {
+                        ServerLogger.errorWithSource("WebAdmin", "Zip Error", e);
+                    } finally {
+                        try {
+                            out.close();
+                        } catch (IOException e) {
+                        }
+                    }
                 });
                 Response res = newFixedLengthResponse(Status.OK, "application/zip", in, -1);
                 res.addHeader("Content-Disposition", "attachment; filename=\"" + encodedFileName + ".zip\"");
@@ -218,7 +247,8 @@ public class WebAdminServer extends NanoWSD {
                 String mime = determineMimeType(f.getName());
                 InputStream fis = new FileInputStream(f);
                 Response res = newFixedLengthResponse(Status.OK, mime, fis, f.length());
-                if (mime.equals("application/octet-stream")) res.addHeader("Content-Disposition", "attachment; filename=\"" + encodedFileName + "\"");
+                if (mime.equals("application/octet-stream"))
+                    res.addHeader("Content-Disposition", "attachment; filename=\"" + encodedFileName + "\"");
                 else res.addHeader("Content-Disposition", "inline; filename=\"" + encodedFileName + "\"");
                 return res;
             }
@@ -233,7 +263,8 @@ public class WebAdminServer extends NanoWSD {
         if (name.endsWith(".css")) return "text/css";
         if (name.endsWith(".js")) return "text/javascript";
         if (name.endsWith(".json")) return "application/json";
-        if (name.endsWith(".txt") || name.endsWith(".log") || name.endsWith(".cfg") || name.endsWith(".properties")) return "text/plain";
+        if (name.endsWith(".txt") || name.endsWith(".log") || name.endsWith(".cfg") || name.endsWith(".properties"))
+            return "text/plain";
         if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
         if (name.endsWith(".png")) return "image/png";
         if (name.endsWith(".gif")) return "image/gif";
@@ -250,7 +281,8 @@ public class WebAdminServer extends NanoWSD {
             else zipOut.putNextEntry(new ZipEntry(fileName + "/"));
             zipOut.closeEntry();
             File[] children = fileToZip.listFiles();
-            if (children != null) for (File childFile : children) zipFile(childFile, fileName + "/" + childFile.getName(), zipOut);
+            if (children != null)
+                for (File childFile : children) zipFile(childFile, fileName + "/" + childFile.getName(), zipOut);
             return;
         }
         try (FileInputStream fis = new FileInputStream(fileToZip)) {
@@ -271,9 +303,19 @@ public class WebAdminServer extends NanoWSD {
             if ((now - lastActive) > ZOMBIE_TIMEOUT_MS) {
                 ServerLogger.warnWithSource("WebAdmin", "webAdmin.clientOffline", targetSocket.getRemoteIp());
                 final AdminWebSocket socketToClose = targetSocket;
-                ThreadManager.runAsync(() -> { try { socketToClose.close(WebSocketFrame.CloseCode.GoingAway, "Zombie Timeout", false); } catch (Exception ignored) {} });
-                if (tokenType == 1) { activeTempSocket = null; activeTempSessionId = null; }
-                else { activePermSocket = null; activePermSessionId = null; }
+                ThreadManager.runAsync(() -> {
+                    try {
+                        socketToClose.close(WebSocketFrame.CloseCode.GoingAway, "Zombie Timeout", false);
+                    } catch (Exception ignored) {
+                    }
+                });
+                if (tokenType == 1) {
+                    activeTempSocket = null;
+                    activeTempSessionId = null;
+                } else {
+                    activePermSocket = null;
+                    activePermSessionId = null;
+                }
                 return false;
             }
             if (!targetSocket.getRemoteIp().equals(remoteIp)) {
@@ -301,17 +343,25 @@ public class WebAdminServer extends NanoWSD {
         try (InputStream is = getClass().getClassLoader().getResourceAsStream(path)) {
             if (is == null) return null;
             return new String(is.readAllBytes(), StandardCharsets.UTF_8);
-        } catch (IOException e) { return null; }
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     @Override
-    protected WebSocket openWebSocket(IHTTPSession handshake) { return new AdminWebSocket(handshake); }
+    protected WebSocket openWebSocket(IHTTPSession handshake) {
+        return new AdminWebSocket(handshake);
+    }
 
     public void closeTempConnections() {
         synchronized (LOCK) {
             if (activeTempSocket != null) {
-                try { activeTempSocket.close(WebSocketFrame.CloseCode.NormalClosure, "Token Reset", false); } catch (Exception ignored) {}
-                activeTempSocket = null; activeTempSessionId = null;
+                try {
+                    activeTempSocket.close(WebSocketFrame.CloseCode.NormalClosure, "Token Reset", false);
+                } catch (Exception ignored) {
+                }
+                activeTempSocket = null;
+                activeTempSessionId = null;
             }
         }
     }
@@ -322,9 +372,18 @@ public class WebAdminServer extends NanoWSD {
         private int sessionType = 0;
         private volatile long lastActiveTime = System.currentTimeMillis();
 
-        public AdminWebSocket(IHTTPSession handshakeRequest) { super(handshakeRequest); this.remoteIp = handshakeRequest.getRemoteIpAddress(); }
-        public String getRemoteIp() { return remoteIp; }
-        public long getLastActiveTime() { return lastActiveTime; }
+        public AdminWebSocket(IHTTPSession handshakeRequest) {
+            super(handshakeRequest);
+            this.remoteIp = handshakeRequest.getRemoteIpAddress();
+        }
+
+        public String getRemoteIp() {
+            return remoteIp;
+        }
+
+        public long getLastActiveTime() {
+            return lastActiveTime;
+        }
 
         @Override
         protected void onOpen() {
@@ -335,54 +394,84 @@ public class WebAdminServer extends NanoWSD {
                     if (activeTempSocket != null && activeTempSocket != this) {
                         if (System.currentTimeMillis() - activeTempSocket.getLastActiveTime() > ZOMBIE_TIMEOUT_MS) {
                             AdminWebSocket deadSocket = activeTempSocket;
-                            ThreadManager.runAsync(() -> { try { deadSocket.close(WebSocketFrame.CloseCode.GoingAway, "Zombie", false); } catch (Exception ignored) {} });
+                            ThreadManager.runAsync(() -> {
+                                try {
+                                    deadSocket.close(WebSocketFrame.CloseCode.GoingAway, "Zombie", false);
+                                } catch (Exception ignored) {
+                                }
+                            });
                             activeTempSocket = null;
                         } else {
-                            if (!activeTempSocket.getRemoteIp().equals(this.remoteIp)) ServerLogger.warnWithSource("WebAdmin", "webAdmin.conflict", remoteIp);
-                            closeSocket("Conflict"); return;
+                            if (!activeTempSocket.getRemoteIp().equals(this.remoteIp))
+                                ServerLogger.warnWithSource("WebAdmin", "webAdmin.conflict", remoteIp);
+                            closeSocket("Conflict");
+                            return;
                         }
                     }
-                    activeTempSocket = this; activeTempSessionId = myId;
+                    activeTempSocket = this;
+                    activeTempSessionId = myId;
                 } else if (sessionType == 2) {
                     if (activePermSocket != null && activePermSocket != this) {
                         if (System.currentTimeMillis() - activePermSocket.getLastActiveTime() > ZOMBIE_TIMEOUT_MS) {
                             AdminWebSocket deadSocket = activePermSocket;
-                            ThreadManager.runAsync(() -> { try { deadSocket.close(WebSocketFrame.CloseCode.GoingAway, "Zombie", false); } catch (Exception ignored) {} });
+                            ThreadManager.runAsync(() -> {
+                                try {
+                                    deadSocket.close(WebSocketFrame.CloseCode.GoingAway, "Zombie", false);
+                                } catch (Exception ignored) {
+                                }
+                            });
                             activePermSocket = null;
                         } else {
-                            if (!activePermSocket.getRemoteIp().equals(this.remoteIp)) ServerLogger.warnWithSource("WebAdmin", "webAdmin.conflict", remoteIp);
-                            closeSocket("Conflict"); return;
+                            if (!activePermSocket.getRemoteIp().equals(this.remoteIp))
+                                ServerLogger.warnWithSource("WebAdmin", "webAdmin.conflict", remoteIp);
+                            closeSocket("Conflict");
+                            return;
                         }
                     }
-                    activePermSocket = this; activePermSessionId = myId;
-                } else { closeSocket("Auth Failed"); return; }
+                    activePermSocket = this;
+                    activePermSessionId = myId;
+                } else {
+                    closeSocket("Auth Failed");
+                    return;
+                }
                 lastConflictWarning.remove(remoteIp);
             }
             ServerLogger.infoWithSource("WebAdmin", "webAdmin.session.connected", remoteIp);
             sendJson("logo", NeoProxyServer.ASCII_LOGO);
             String msg = ServerLogger.getMessage("webAdmin.connected", remoteIp + (sessionType == 2 ? " (Perm)" : " (Temp)"));
             sendJson("log", formatLog(msg));
-            synchronized (logHistory) { for (String json : logHistory) sendJsonRaw(json); }
+            synchronized (logHistory) {
+                for (String json : logHistory) sendJsonRaw(json);
+            }
             lastActiveTime = System.currentTimeMillis();
         }
 
-        private void closeSocket(String reason) { try { this.close(WebSocketFrame.CloseCode.PolicyViolation, reason, false); } catch (Exception ignored) {} }
+        private void closeSocket(String reason) {
+            try {
+                this.close(WebSocketFrame.CloseCode.PolicyViolation, reason, false);
+            } catch (Exception ignored) {
+            }
+        }
 
         @Override
         protected void onClose(WebSocketFrame.CloseCode code, String reason, boolean initiatedByRemote) {
             synchronized (LOCK) {
                 if (sessionType == 1 && myId.equals(activeTempSessionId)) {
-                    activeTempSocket = null; activeTempSessionId = null;
+                    activeTempSocket = null;
+                    activeTempSessionId = null;
                     ServerLogger.infoWithSource("WebAdmin", "webAdmin.session.disconnected");
                 } else if (sessionType == 2 && myId.equals(activePermSessionId)) {
-                    activePermSocket = null; activePermSessionId = null;
+                    activePermSocket = null;
+                    activePermSessionId = null;
                     ServerLogger.infoWithSource("WebAdmin", "webAdmin.session.disconnected");
                 }
             }
         }
 
         @Override
-        protected void onPong(WebSocketFrame pong) { lastActiveTime = System.currentTimeMillis(); }
+        protected void onPong(WebSocketFrame pong) {
+            lastActiveTime = System.currentTimeMillis();
+        }
 
         @Override
         protected void onMessage(WebSocketFrame message) {
@@ -397,17 +486,35 @@ public class WebAdminServer extends NanoWSD {
 
             ThreadManager.runAsync(() -> {
                 try {
-                    if (text.startsWith("#GET_PERFORMANCE")) { sendJsonRaw("{\"type\":\"perf_sys\",\"payload\":" + SystemInfoHelper.getSystemSnapshotJson() + "}"); return; }
-                    if (text.startsWith("#GET_PORTS")) { sendJsonRaw("{\"type\":\"perf_ports\",\"payload\":" + SystemInfoHelper.getPortUsageJson() + "}"); return; }
-                    if (text.startsWith("#GET_FILES:")) { handleListFiles(text.substring(11)); return; }
-                    if (text.startsWith("#READ_FILE:")) { handleReadFile(text.substring(11)); return; }
+                    if (text.startsWith("#GET_PERFORMANCE")) {
+                        sendJsonRaw("{\"type\":\"perf_sys\",\"payload\":" + SystemInfoHelper.getSystemSnapshotJson() + "}");
+                        return;
+                    }
+                    if (text.startsWith("#GET_PORTS")) {
+                        sendJsonRaw("{\"type\":\"perf_ports\",\"payload\":" + SystemInfoHelper.getPortUsageJson() + "}");
+                        return;
+                    }
+                    if (text.startsWith("#GET_FILES:")) {
+                        handleListFiles(text.substring(11));
+                        return;
+                    }
+                    if (text.startsWith("#READ_FILE:")) {
+                        handleReadFile(text.substring(11));
+                        return;
+                    }
                     if (text.startsWith("#SAVE_FILE:")) {
                         int split = text.indexOf('|', 11);
                         if (split > 0) handleSaveFile(text.substring(11, split), text.substring(split + 1));
                         return;
                     }
-                    if (text.startsWith("#DELETE_FILE:")) { handleDeleteFile(text.substring(13)); return; }
-                    if (text.startsWith("#RENAME_FILE:")) { handleRenameFile(text.substring(13)); return; }
+                    if (text.startsWith("#DELETE_FILE:")) {
+                        handleDeleteFile(text.substring(13));
+                        return;
+                    }
+                    if (text.startsWith("#RENAME_FILE:")) {
+                        handleRenameFile(text.substring(13));
+                        return;
+                    }
                     if (text.startsWith("#CREATE_FILE:")) {
                         int split = text.indexOf('|', 13);
                         if (split > 0) handleCreateFile(text.substring(13, split), text.substring(split + 1), false);
@@ -418,14 +525,28 @@ public class WebAdminServer extends NanoWSD {
                         if (split > 0) handleCreateFile(text.substring(12, split), text.substring(split + 1), true);
                         return;
                     }
-                    if (text.startsWith("#MOVE_FILES:")) { handleMoveFiles(text.substring(12)); return; }
-                    if (text.startsWith("#GET_DASHBOARD")) { handleGetDashboard(); return; }
-                    if (text.startsWith("#REFRESH_LOC:")) { handleRefreshLocation(text.substring(13)); return; }
-                    if (text.startsWith("#REFRESH_BAN_LOC:")) { handleRefreshBanLocation(text.substring(17)); return; }
+                    if (text.startsWith("#MOVE_FILES:")) {
+                        handleMoveFiles(text.substring(12));
+                        return;
+                    }
+                    if (text.startsWith("#GET_DASHBOARD")) {
+                        handleGetDashboard();
+                        return;
+                    }
+                    if (text.startsWith("#REFRESH_LOC:")) {
+                        handleRefreshLocation(text.substring(13));
+                        return;
+                    }
+                    if (text.startsWith("#REFRESH_BAN_LOC:")) {
+                        handleRefreshBanLocation(text.substring(17));
+                        return;
+                    }
 
                     String result = NeoProxyServer.myConsole.execute(text);
                     if (result != null && !result.isEmpty()) sendJson("cmd_result", result);
-                } catch (Exception e) { if (NeoProxyServer.IS_DEBUG_MODE) debugOperation(e); }
+                } catch (Exception e) {
+                    if (NeoProxyServer.IS_DEBUG_MODE) debugOperation(e);
+                }
             });
         }
 
@@ -436,15 +557,26 @@ public class WebAdminServer extends NanoWSD {
                 String relPath = parts[0];
                 String oldName = parts[1];
                 String newName = parts[2];
-                if (relPath.contains("..") || oldName.contains("..") || newName.contains("..") || newName.contains("/") || newName.contains("\\")) { sendJson("error", "Invalid filename"); return; }
+                if (relPath.contains("..") || oldName.contains("..") || newName.contains("..") || newName.contains("/") || newName.contains("\\")) {
+                    sendJson("error", "Invalid filename");
+                    return;
+                }
                 File dir = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
                 File src = new File(dir, oldName);
                 File dst = new File(dir, newName);
-                if (!src.exists()) { sendJson("error", "Source file not found"); return; }
-                if (dst.exists()) { sendJson("error", "Destination already exists"); return; }
+                if (!src.exists()) {
+                    sendJson("error", "Source file not found");
+                    return;
+                }
+                if (dst.exists()) {
+                    sendJson("error", "Destination already exists");
+                    return;
+                }
                 Files.move(src.toPath(), dst.toPath());
                 sendJson("action", "refresh_files");
-            } catch (Exception e) { sendJson("error", "Rename failed: " + e.getMessage()); }
+            } catch (Exception e) {
+                sendJson("error", "Rename failed: " + e.getMessage());
+            }
         }
 
         private void handleMoveFiles(String payload) {
@@ -455,33 +587,51 @@ public class WebAdminServer extends NanoWSD {
                 if (targetRelPath.contains("..")) throw new SecurityException("Invalid target path");
                 File targetDir = new File(NeoProxyServer.CURRENT_DIR_PATH, targetRelPath);
                 if (!targetDir.exists()) targetDir.mkdirs();
-                int success = 0; int fail = 0;
+                int success = 0;
+                int fail = 0;
                 for (int i = 1; i < parts.length; i++) {
                     String sourceRelPath = parts[i];
-                    if (sourceRelPath.contains("..")) { fail++; continue; }
+                    if (sourceRelPath.contains("..")) {
+                        fail++;
+                        continue;
+                    }
                     File sourceFile = new File(NeoProxyServer.CURRENT_DIR_PATH, sourceRelPath);
-                    if (!sourceFile.exists()) { fail++; continue; }
+                    if (!sourceFile.exists()) {
+                        fail++;
+                        continue;
+                    }
                     File destFile = new File(targetDir, sourceFile.getName());
                     if (destFile.exists()) {
                         String name = destFile.getName();
                         int dot = name.lastIndexOf('.');
                         String newName;
-                        if (dot > 0) newName = name.substring(0, dot) + "_moved_" + System.currentTimeMillis() + name.substring(dot);
+                        if (dot > 0)
+                            newName = name.substring(0, dot) + "_moved_" + System.currentTimeMillis() + name.substring(dot);
                         else newName = name + "_moved_" + System.currentTimeMillis();
                         destFile = new File(targetDir, newName);
                     }
-                    try { Files.move(sourceFile.toPath(), destFile.toPath(), StandardCopyOption.REPLACE_EXISTING); success++; } catch (Exception e) { fail++; }
+                    try {
+                        Files.move(sourceFile.toPath(), destFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                        success++;
+                    } catch (Exception e) {
+                        fail++;
+                    }
                 }
                 sendJson("action", "refresh_files");
                 sendJson("toast", "Moved: " + success + ", Failed: " + fail);
-            } catch (Exception e) { sendJson("error", "Move failed: " + e.getMessage()); }
+            } catch (Exception e) {
+                sendJson("error", "Move failed: " + e.getMessage());
+            }
         }
 
         private void handleListFiles(String relPath) {
             try {
                 if (relPath.contains("..")) throw new SecurityException("Access Denied");
                 File dir = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
-                if (!dir.exists()) { sendJson("error", "Directory not found"); return; }
+                if (!dir.exists()) {
+                    sendJson("error", "Directory not found");
+                    return;
+                }
                 File[] files = dir.listFiles();
                 if (files == null) files = new File[0];
 
@@ -502,18 +652,28 @@ public class WebAdminServer extends NanoWSD {
                 }
                 sb.append("]");
                 sendJsonRaw("{\"type\":\"file_list\",\"path\":\"" + escapeJson(relPath) + "\",\"payload\":" + sb.toString() + "}");
-            } catch (Exception e) { sendJson("error", e.getMessage()); }
+            } catch (Exception e) {
+                sendJson("error", e.getMessage());
+            }
         }
 
         private void handleReadFile(String relPath) {
             try {
                 if (relPath.contains("..")) throw new SecurityException("Access Denied");
                 File f = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
-                if (!f.exists() || f.isDirectory()) { sendJson("error", "Invalid file"); return; }
-                if (f.length() > 512 * 1024) { sendJsonRaw("{\"type\":\"file_too_large\",\"path\":\"" + escapeJson(relPath) + "\"}"); return; }
+                if (!f.exists() || f.isDirectory()) {
+                    sendJson("error", "Invalid file");
+                    return;
+                }
+                if (f.length() > 512 * 1024) {
+                    sendJsonRaw("{\"type\":\"file_too_large\",\"path\":\"" + escapeJson(relPath) + "\"}");
+                    return;
+                }
                 String content = Files.readString(f.toPath(), StandardCharsets.UTF_8);
                 sendJsonRaw("{\"type\":\"file_content\",\"path\":\"" + escapeJson(relPath) + "\",\"payload\":\"" + escapeJson(content) + "\"}");
-            } catch (Exception e) { sendJson("error", "Read failed: " + e.getMessage()); }
+            } catch (Exception e) {
+                sendJson("error", "Read failed: " + e.getMessage());
+            }
         }
 
         private void handleSaveFile(String relPath, String content) {
@@ -522,16 +682,22 @@ public class WebAdminServer extends NanoWSD {
                 File f = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
                 Files.writeString(f.toPath(), content, StandardCharsets.UTF_8);
                 sendJson("toast", "File saved successfully.");
-            } catch (Exception e) { sendJson("error", "Save failed: " + e.getMessage()); }
+            } catch (Exception e) {
+                sendJson("error", "Save failed: " + e.getMessage());
+            }
         }
 
         private void handleDeleteFile(String relPath) {
             try {
                 if (relPath.contains("..")) throw new SecurityException("Access Denied");
                 File f = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
-                if (deleteRecursively(f)) { sendJson("action", "refresh_files"); sendJson("toast", "Deleted: " + f.getName()); }
-                else sendJson("error", "Delete failed");
-            } catch (Exception e) { sendJson("error", e.getMessage()); }
+                if (deleteRecursively(f)) {
+                    sendJson("action", "refresh_files");
+                    sendJson("toast", "Deleted: " + f.getName());
+                } else sendJson("error", "Delete failed");
+            } catch (Exception e) {
+                sendJson("error", e.getMessage());
+            }
         }
 
         private boolean deleteRecursively(File f) {
@@ -544,13 +710,20 @@ public class WebAdminServer extends NanoWSD {
 
         private void handleCreateFile(String relPath, String name, boolean isDir) {
             try {
-                if (relPath.contains("..") || name.contains("..") || name.contains("/") || name.contains("\\")) throw new SecurityException("Invalid name");
+                if (relPath.contains("..") || name.contains("..") || name.contains("/") || name.contains("\\"))
+                    throw new SecurityException("Invalid name");
                 File f = new File(new File(NeoProxyServer.CURRENT_DIR_PATH, relPath), name);
-                if (f.exists()) { sendJson("error", "Exists already"); return; }
-                if (isDir) f.mkdirs(); else f.createNewFile();
+                if (f.exists()) {
+                    sendJson("error", "Exists already");
+                    return;
+                }
+                if (isDir) f.mkdirs();
+                else f.createNewFile();
                 sendJson("action", "refresh_files");
                 sendJson("toast", "Created: " + name);
-            } catch (Exception e) { sendJson("error", e.getMessage()); }
+            } catch (Exception e) {
+                sendJson("error", e.getMessage());
+            }
         }
 
         private void handleGetDashboard() {
@@ -574,7 +747,10 @@ public class WebAdminServer extends NanoWSD {
             ServerLogger.infoWithSource("WebAdmin", "webAdmin.refreshingLoc", remoteIp);
             HostClient target = null;
             for (HostClient hc : NeoProxyServer.availableHostClient) {
-                if (hc.getHostServerHook().getInetAddress().getHostAddress().equals(ip)) { target = hc; break; }
+                if (hc.getHostServerHook().getInetAddress().getHostAddress().equals(ip)) {
+                    target = hc;
+                    break;
+                }
             }
             if (target != null) {
                 IPGeolocationHelper.LocationInfo info = IPGeolocationHelper.getLocationInfo(ip);
@@ -595,12 +771,22 @@ public class WebAdminServer extends NanoWSD {
 
         public void sendJson(String type, String payload) {
             String json = String.format("{\"type\": \"%s\", \"payload\": \"%s\"}", type, escapeJson(payload));
-            try { send(json); } catch (IOException ignored) {}
+            try {
+                send(json);
+            } catch (IOException ignored) {
+            }
         }
 
-        public void sendJsonRaw(String json) { try { send(json); } catch (IOException ignored) {} }
+        public void sendJsonRaw(String json) {
+            try {
+                send(json);
+            } catch (IOException ignored) {
+            }
+        }
 
         @Override
-        protected void onException(IOException exception) { if (NeoProxyServer.IS_DEBUG_MODE) ServerLogger.errorWithSource("WebAdmin", "webAdmin.conflict", exception); }
+        protected void onException(IOException exception) {
+            if (NeoProxyServer.IS_DEBUG_MODE) ServerLogger.errorWithSource("WebAdmin", "webAdmin.conflict", exception);
+        }
     }
 }

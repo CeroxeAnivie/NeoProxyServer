@@ -22,9 +22,7 @@ import static neoproxy.neoproxyserver.core.InternetOperator.close;
 import static neoproxy.neoproxyserver.core.threads.TCPTransformer.TELL_BALANCE_MIB;
 
 public class UDPTransformer implements Runnable {
-    // 存储所有活跃的UDP连接实例
     public static final CopyOnWriteArrayList<UDPTransformer> udpClientConnections = new CopyOnWriteArrayList<>();
-    // 实例字段
     private final HostClient hostClient;
     private final HostReply hostReply;
     private final DatagramSocket sharedDatagramSocket;
@@ -41,7 +39,6 @@ public class UDPTransformer implements Runnable {
         this.clientOutPort = clientOutPort;
     }
 
-    // --- 以下静态方法保持不变 ---
     public static byte[] serializeDatagramPacket(DatagramPacket packet) {
         byte[] data = packet.getData();
         int offset = packet.getOffset();
@@ -135,7 +132,6 @@ public class UDPTransformer implements Runnable {
         close(hostClient);
     }
 
-    // --- 实例方法 ---
     public HostClient getHostClient() {
         return hostClient;
     }
@@ -159,58 +155,57 @@ public class UDPTransformer implements Runnable {
         return false;
     }
 
-    /**
-     * 从队列中消费数据包并发送给客户端A (C -> B -> A)
-     */
     private void outClientToHostClient(double[] aTenMibSize) {
         try {
             RateLimiter limiter = new RateLimiter(hostClient.getKey().getRate());
             byte[] data;
             while (isRunning && (data = sendQueue.poll(1, TimeUnit.SECONDS)) != null) {
                 int enLength = hostReply.host().sendByte(data);
-                // 【关键】mineMib 会抛出 NoMoreNetworkFlowException
-                hostClient.getKey().mineMib("UDP-Transformer", SizeCalculator.byteToMib(enLength + 10));
-                tellRestBalance(hostClient, aTenMibSize, enLength, hostClient.getLangData());
-                RateLimiter.setMaxMbps(limiter, hostClient.getKey().getRate());
-                limiter.onBytesTransferred(enLength);
+
+                // 【修复】防止负数流量
+                if (enLength > 0) {
+                    hostClient.getKey().mineMib("UDP-Transformer", SizeCalculator.byteToMib(enLength + 10));
+                    tellRestBalance(hostClient, aTenMibSize, enLength, hostClient.getLangData());
+                    RateLimiter.setMaxMbps(limiter, hostClient.getKey().getRate());
+                    limiter.onBytesTransferred(enLength);
+                }
             }
         } catch (Exception e) {
-            // 【关键】捕获所有异常，包括 NoMoreNetworkFlowException 和 IOException
-            // 不在这里处理，而是让 ThreadManager 收集，在 run 方法中统一处理
             debugOperation(e);
         } finally {
             stop();
         }
     }
 
-    /**
-     * 从客户端A接收数据，并发送给外部客户端C (A -> B -> C)
-     */
     private void hostClientToOutClient(double[] aTenMibSize) {
         try {
             RateLimiter limiter = new RateLimiter(hostClient.getKey().getRate());
             byte[] data;
             while (isRunning && (data = hostReply.host().receiveByte()) != null) {
+                if (data.length <= 0) continue;
+
                 DatagramPacket packetToClient = deserializeToDatagramPacket(data);
                 if (packetToClient != null) {
                     int packetLength = packetToClient.getLength();
-                    // 【关键】mineMib 会抛出 NoMoreNetworkFlowException
-                    hostClient.getKey().mineMib("UDP-Transformer", SizeCalculator.byteToMib(packetLength + 10));
-                    tellRestBalance(hostClient, aTenMibSize, packetLength, hostClient.getLangData());
-                    RateLimiter.setMaxMbps(limiter, hostClient.getKey().getRate());
-                    limiter.onBytesTransferred(packetLength);
 
-                    DatagramPacket outgoingPacket = new DatagramPacket(
-                            packetToClient.getData(),
-                            packetToClient.getLength(),
-                            InetAddress.getByName(clientIP),
-                            clientOutPort
-                    );
-                    sharedDatagramSocket.send(outgoingPacket); // 【关键】这里也会抛出 IOException
+                    // 【修复】校验包长度
+                    if (packetLength > 0) {
+                        hostClient.getKey().mineMib("UDP-Transformer", SizeCalculator.byteToMib(packetLength + 10));
+                        tellRestBalance(hostClient, aTenMibSize, packetLength, hostClient.getLangData());
+                        RateLimiter.setMaxMbps(limiter, hostClient.getKey().getRate());
+                        limiter.onBytesTransferred(packetLength);
+
+                        DatagramPacket outgoingPacket = new DatagramPacket(
+                                packetToClient.getData(),
+                                packetToClient.getLength(),
+                                InetAddress.getByName(clientIP),
+                                clientOutPort
+                        );
+                        sharedDatagramSocket.send(outgoingPacket);
+                    }
                 }
             }
         } catch (Exception e) {
-            // 【关键】捕获所有异常，包括 NoMoreNetworkFlowException 和 IOException
             debugOperation(e);
         } finally {
             stop();
@@ -225,23 +220,16 @@ public class UDPTransformer implements Runnable {
             Runnable hostClientToClientThread = () -> hostClientToOutClient(aTenMibSize);
 
             ThreadManager threadManager = new ThreadManager(clientToHostClientThread, hostClientToClientThread);
-            // 【关键】阻塞等待，直到两个数据流任务都结束（无论是正常结束还是异常结束）
             List<Throwable> exceptions = threadManager.start();
 
-            // 【关键】检查 ThreadManager 收集到的异常
             for (Throwable t : exceptions) {
                 if (t instanceof NoMoreNetworkFlowException) {
-                    // 如果是流量耗尽异常，执行踢下线操作
                     kickAllWithMsg(hostClient, hostReply.host());
-                    // 注意：kickAllWithMsg 已经包含了 close(hostClient) 的逻辑，所以可以提前返回
                     return;
                 }
             }
         } catch (Exception ignore) {
-            // ThreadManager.start() 本身很少会抛异常，这里通常不会执行
         } finally {
-            // 【关键】无论何种原因结束，都执行常规的资源清理
-            // 如果不是因为流量耗尽而退出，这里的清理是必要的
             close(hostReply.host());
             udpClientConnections.remove(this);
             ServerLogger.sayClientUDPConnectDestroyInfo(hostClient, clientIP + ":" + clientOutPort);

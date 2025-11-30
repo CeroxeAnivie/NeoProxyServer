@@ -19,15 +19,6 @@ import static neoproxy.neoproxyserver.NeoProxyServer.myConsole;
 import static neoproxy.neoproxyserver.core.InternetOperator.*;
 import static neoproxy.neoproxyserver.core.ServerLogger.alert;
 
-/**
- * 【最终优化版】TCP数据传输器。
- * <p>
- * 优化点：
- * 1. 【架构重构】不再实现 Runnable，消除了外层对平台线程的依赖。
- * 2. 【异步启动】使用 ThreadManager.startAsyncWithCallback 来管理连接的两个数据流，实现完全的异步非阻塞处理。
- * 3. 【资源管理】将资源清理逻辑移至回调中，确保在连接生命周期结束时才执行，逻辑更清晰、更安全。
- * 4. 【异常传播】不再捕获 NoMoreNetworkFlowException，让其从 mineMib 直接传播到 ThreadManager。
- */
 public class TCPTransformer {
 
     public static int TELL_BALANCE_MIB = 10;
@@ -48,7 +39,6 @@ public class TCPTransformer {
         }
     }
 
-    // --- 实例字段 ---
     private final HostClient hostClient;
     private final Socket client;
     private final HostReply hostReply;
@@ -60,10 +50,6 @@ public class TCPTransformer {
         this.hostReply = hostReply;
     }
 
-    /**
-     * 【优化】静态工厂方法，用于启动一个新的TCP连接转发。
-     * 此方法是非阻塞的，它会立即返回。
-     */
     public static void start(HostClient hostClient, HostReply hostReply, Socket client) {
         hostClient.registerTcpSocket(client);
         TCPTransformer transformer = new TCPTransformer(hostClient, client, hostReply);
@@ -73,26 +59,19 @@ public class TCPTransformer {
         Runnable clientToHostTask = () -> transformer.clientToHost(aTenMibSize);
         Runnable hostToClientTask = () -> transformer.hostToClient(aTenMibSize);
 
-        // 【关键优化】使用 ThreadManager 管理两个数据流，并注册回调
         ThreadManager threadManager = new ThreadManager(clientToHostTask, hostToClientTask);
         threadManager.startAsyncWithCallback(result -> {
-            // 【关键优化】当两个方向的数据流都结束时，此回调会被执行
-            // 1. 检查是否有流量耗尽的异常
             for (Throwable t : result.exceptions()) {
                 if (t instanceof NoMoreNetworkFlowException) {
-                    // 异常已由 mineMib 方法处理（包括禁用密钥），这里只需踢下线
                     kickAllWithMsg(hostClient, hostReply.host(), client);
-                    return; // 已经踢下线，无需继续清理
+                    return;
                 }
             }
-            // 2. 执行常规的资源清理
             hostClient.unregisterTcpSocket(client);
             close(client, hostReply.host());
             ServerLogger.sayClientTCPConnectDestroyInfo(hostClient, client);
         });
     }
-
-    // --- 以下方法保持不变 ---
 
     public static void tellRestBalance(HostClient hostClient, double[] aTenMibSize, int len, LanguageData languageData) throws IOException {
         if (aTenMibSize[0] < TELL_BALANCE_MIB) {
@@ -147,12 +126,18 @@ public class TCPTransformer {
             RateLimiter limiter = new RateLimiter(hostClient.getKey().getRate());
             int len;
             while ((len = bufferedInputStream.read(clientToHostBuffer)) != -1) {
+                // 【修复】校验有效载荷长度
+                if (len <= 0) continue;
+
                 int enLength = hostReply.host().sendByte(clientToHostBuffer, 0, len);
-                // mineMib 会抛出 NoMoreNetworkFlowException，我们不再捕获，让它向上传播
-                hostClient.getKey().mineMib("TCP-Transformer:C->H", SizeCalculator.byteToMib(enLength + 10));
-                tellRestBalance(hostClient, aTenMibSize, enLength, hostClient.getLangData());
-                RateLimiter.setMaxMbps(limiter, hostClient.getKey().getRate());
-                limiter.onBytesTransferred(enLength);
+
+                // 【修复】防止 socket 返回负数错误码导致计算出负流量
+                if (enLength > 0) {
+                    hostClient.getKey().mineMib("TCP-Transformer:C->H", SizeCalculator.byteToMib(enLength + 10));
+                    tellRestBalance(hostClient, aTenMibSize, enLength, hostClient.getLangData());
+                    RateLimiter.setMaxMbps(limiter, hostClient.getKey().getRate());
+                    limiter.onBytesTransferred(enLength);
+                }
             }
             hostReply.host().sendByte(null);
             shutdownOutput(hostReply.host());
@@ -162,7 +147,6 @@ public class TCPTransformer {
             shutdownOutput(hostReply.host());
             shutdownInput(client);
         }
-        // 【移除】 catch (NoMoreNetworkFlowException e) 块
     }
 
     private void hostToClient(double[] aTenMibSize) {
@@ -171,17 +155,22 @@ public class TCPTransformer {
             byte[] data;
             boolean isHtmlResponseChecked = false;
             while ((data = hostReply.host().receiveByte()) != null) {
+                if (data.length <= 0) continue;
+
                 if (!isHtmlResponseChecked && !hostClient.getKey().isHTMLEnabled()) {
                     isHtmlResponseChecked = true;
                     checkAndBlockHtmlResponse(data, bufferedOutputStream, hostReply.host().getRemoteSocketAddress().toString(), hostClient);
                 }
                 bufferedOutputStream.write(data);
                 bufferedOutputStream.flush();
-                // mineMib 会抛出 NoMoreNetworkFlowException，我们不再捕获，让它向上传播
-                hostClient.getKey().mineMib("TCP-Transformer:H->C", SizeCalculator.byteToMib(data.length));
-                tellRestBalance(hostClient, aTenMibSize, data.length, hostClient.getLangData());
-                RateLimiter.setMaxMbps(limiter, hostClient.getKey().getRate());
-                limiter.onBytesTransferred(data.length);
+
+                // 【修复】防止空包
+                if (data.length > 0) {
+                    hostClient.getKey().mineMib("TCP-Transformer:H->C", SizeCalculator.byteToMib(data.length));
+                    tellRestBalance(hostClient, aTenMibSize, data.length, hostClient.getLangData());
+                    RateLimiter.setMaxMbps(limiter, hostClient.getKey().getRate());
+                    limiter.onBytesTransferred(data.length);
+                }
             }
             shutdownInput(hostReply.host());
             shutdownOutput(client);
@@ -190,8 +179,6 @@ public class TCPTransformer {
             shutdownInput(hostReply.host());
             shutdownOutput(client);
         } catch (IllegalWebSiteException e) {
-            // 此异常已被处理，只需确保线程结束
         }
-        // 【移除】 catch (NoMoreNetworkFlowException e) 块
     }
 }

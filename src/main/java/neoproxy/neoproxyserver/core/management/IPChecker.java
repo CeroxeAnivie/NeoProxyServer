@@ -15,7 +15,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static neoproxy.neoproxyserver.NeoProxyServer.*;
+import static neoproxy.neoproxyserver.NeoProxyServer.availableHostClient;
+import static neoproxy.neoproxyserver.NeoProxyServer.hostServerHookServerSocket;
 
 /**
  * IP 封禁管理器 (JSON版 - 格式化存储 - 无时间戳)
@@ -35,19 +36,6 @@ public class IPChecker {
             "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$";
     private static final Pattern IPV4_PATTERN = Pattern.compile(IPV4_REGEX);
     public static volatile boolean ENABLE_BAN = true;
-
-    // 数据结构：仅保留 IP、位置、运营商
-    public static class BanInfo {
-        String ip;
-        String location;
-        String isp;
-
-        public BanInfo(String ip, String location, String isp) {
-            this.ip = ip;
-            this.location = location;
-            this.isp = isp;
-        }
-    }
 
     public static synchronized void loadBannedIPs() {
         if (BAN_LIST_TXT_OLD.exists() && !BAN_LIST_JSON.exists()) {
@@ -279,5 +267,18 @@ public class IPChecker {
             len += (c > 127) ? 2 : 1;
         }
         return len;
+    }
+
+    // 数据结构：仅保留 IP、位置、运营商
+    public static class BanInfo {
+        String ip;
+        String location;
+        String isp;
+
+        public BanInfo(String ip, String location, String isp) {
+            this.ip = ip;
+            this.location = location;
+            this.isp = isp;
+        }
     }
 }

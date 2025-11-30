@@ -26,7 +26,8 @@ public final class HostClient implements Closeable {
     public static int SAVE_DELAY = 3000;
     public static int DETECTION_DELAY = 1000;
     public static int AES_KEY_SIZE = 128;
-    public static int HEARTBEAT_TIMEOUT = 5000;
+    public static int HEARTBEAT_TIMEOUT = 30000; // 30秒超时
+
     private final SecureSocket hostServerHook;
     private final CopyOnWriteArrayList<Socket> activeTcpSockets = new CopyOnWriteArrayList<>();
     private boolean isStopped = false;
@@ -41,16 +42,19 @@ public final class HostClient implements Closeable {
     private boolean isTCPEnabled = true;
     private boolean isUDPEnabled = true;
 
+    // 【核心修改】将心跳时间提升为成员变量，并设为 volatile
+    private volatile long lastValidHeartbeatTime = System.currentTimeMillis();
+
     public HostClient(SecureSocket hostServerHook) throws IOException {
         this.hostServerHook = hostServerHook;
+        // 初始化时间
+        this.lastValidHeartbeatTime = System.currentTimeMillis();
 
         HostClient.enableAutoSaveThread(this);
         HostClient.enableKeyDetectionTread(this);
     }
 
     private static void enableAutoSaveThread(HostClient hostClient) {
-        // 【优化】使用 ThreadManager.runAsync 启动虚拟线程进行周期性保存
-        // 这个任务主要是周期性等待，非常适合虚拟线程
         ThreadManager.runAsync(() -> {
             while (!hostClient.isStopped) {
                 if (hostClient.getKey() != null) {
@@ -62,7 +66,6 @@ public final class HostClient implements Closeable {
     }
 
     private static void enableKeyDetectionTread(HostClient hostClient) {
-        // 【优化】同上，使用虚拟线程进行密钥状态检测
         ThreadManager.runAsync(() -> {
             while (!hostClient.isStopped) {
                 if (hostClient.getKey() != null && hostClient.getKey().isOutOfDate()) {
@@ -91,7 +94,6 @@ public final class HostClient implements Closeable {
 
     public static void waitForTcpEnabled(HostClient hostClient) {
         CountDownLatch latch = new CountDownLatch(1);
-
         Thread.startVirtualThread(() -> {
             try {
                 final long parkTimeNanos = 1_000_000L;
@@ -103,7 +105,6 @@ public final class HostClient implements Closeable {
                 debugOperation(e);
             }
         });
-
         try {
             latch.await();
         } catch (InterruptedException e) {
@@ -113,7 +114,6 @@ public final class HostClient implements Closeable {
 
     public static void waitForUDPEnabled(HostClient hostClient) {
         CountDownLatch latch = new CountDownLatch(1);
-
         Thread.startVirtualThread(() -> {
             try {
                 final long parkTimeNanos = 1_000_000L;
@@ -125,12 +125,17 @@ public final class HostClient implements Closeable {
                 debugOperation(e);
             }
         });
-
         try {
             latch.await();
         } catch (InterruptedException e) {
             debugOperation(e);
         }
+    }
+
+    // 【核心修改】提供外部刷新心跳的方法
+    // 当服务端成功发送 sendCommand 时调用此方法，证明连接是通的
+    public void refreshHeartbeat() {
+        this.lastValidHeartbeatTime = System.currentTimeMillis();
     }
 
     public boolean isStopped() {
@@ -140,10 +145,8 @@ public final class HostClient implements Closeable {
     public void enableCheckAliveThread() {
         HostClient hostClient = this;
 
-        // 【优化】心跳检测线程是典型的 I/O 密集型任务，使用虚拟线程效果极佳
         ThreadManager.runAsync(() -> {
-            long lastValidHeartbeatTime = 0;
-            long connectionEstablishedTime = System.currentTimeMillis();
+            // 【修正】这里不再定义局部变量 lastValidHeartbeatTime，直接使用成员变量
 
             while (!hostClient.isStopped) {
                 try {
@@ -154,8 +157,9 @@ public final class HostClient implements Closeable {
                         hostClient.close();
                         break;
                     } else if (EXPECTED_HEARTBEAT.equals(message)) {
-                        lastValidHeartbeatTime = System.currentTimeMillis();
+                        hostClient.refreshHeartbeat();
                     } else {
+                        hostClient.refreshHeartbeat();
                         handleHostClientCommand(message);
                         if (IS_DEBUG_MODE) {
                             myConsole.log("HostClient-" + getKey().getName(), "Receive message: " + message);
@@ -164,19 +168,27 @@ public final class HostClient implements Closeable {
 
                 } catch (SocketTimeoutException e) {
                     long currentTime = System.currentTimeMillis();
-                    long startTime = (lastValidHeartbeatTime == 0) ? connectionEstablishedTime : lastValidHeartbeatTime;
-                    long timeSinceLastValidHeartbeat = currentTime - startTime;
+                    // 使用成员变量进行判断
+                    long timeSinceLastValidHeartbeat = currentTime - hostClient.lastValidHeartbeatTime;
 
                     if (timeSinceLastValidHeartbeat >= HEARTBEAT_TIMEOUT) {
+
+                        // 忙碌豁免机制 (双重保险)
+                        boolean isBusy = !hostClient.activeTcpSockets.isEmpty();
+                        if (isBusy) {
+                            hostClient.refreshHeartbeat();
+                            continue;
+                        }
+
                         debugOperation(e);
-                        sayHostClientDiscInfo(hostClient, "HC-Checker:" + getKey().getName());
+                        sayHostClientDiscInfo(hostClient, "HC-Checker:Timeout:" + getKey().getName());
                         hostClient.close();
                         break;
                     }
 
                 } catch (Exception e) {
                     debugOperation(e);
-                    sayHostClientDiscInfo(hostClient, "HC-Checker:" + getKey().getName());
+                    sayHostClientDiscInfo(hostClient, "HC-Checker:Exception:" + getKey().getName());
                     hostClient.close();
                     break;
                 }

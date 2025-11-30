@@ -2,6 +2,7 @@ package neoproxy.neoproxyserver.core.management;
 
 import neoproxy.neoproxyserver.core.HostClient;
 import neoproxy.neoproxyserver.core.exceptions.NoMoreNetworkFlowException;
+import plethora.thread.ThreadManager;
 
 import java.sql.*;
 import java.time.LocalDateTime;
@@ -377,11 +378,8 @@ public class SequenceKey {
         }
     }
 
-    // ==================== 核心业务方法 (Flow Control) ====================
+    // ==================== [核心修复] mineMib 方法 ====================
 
-    /**
-     * [重构] 智能同步方法
-     */
     private synchronized void smartSyncWithDB() {
         SequenceKey dbKey = loadKeyFromDatabase(this.name, false);
         if (dbKey != null) {
@@ -399,25 +397,18 @@ public class SequenceKey {
             this.rate = dbKey.rate;
             this.port = dbKey.port;
             this.updateExpireTimestamp(dbKey.expireTime);
-
-            myConsole.log("SK-Manager", "Smart Sync [" + name + "]: DB=" + dbLatestBalance + ", Delta=" + usedSinceLastSync + ", New=" + this.balance);
         }
     }
 
     /**
-     * [保留API] 强制从数据库刷新
-     * 实现改为调用 smartSyncWithDB，以保证安全性，防止旧逻辑导致数据回滚
-     */
-    public synchronized void reloadFromDB() {
-        smartSyncWithDB();
-    }
-
-    /**
-     * 扣除流量（核心优化）
+     * 【修复版】扣除流量
+     * 1. 忽略负数输入，防止因 Socket 错误导致的脏数据踢掉客户端。
+     * 2. 流量耗尽时的 DB 保存改为异步，避免阻塞。
      */
     public synchronized void mineMib(String sourceSubject, double mib) throws NoMoreNetworkFlowException {
-        if (mib < 0) {
-            NoMoreNetworkFlowException.throwException("SK-Manager", "exception.invalidMibValue", name);
+        // 【修复】忽略非法流量值，而不是抛出异常
+        if (mib <= 0) {
+            return;
         }
 
         if (isOutOfDate()) {
@@ -427,14 +418,16 @@ public class SequenceKey {
         double estimatedBalance = this.balance - mib;
 
         if (estimatedBalance < 0) {
-            smartSyncWithDB(); // 尝试获取可能的充值
+            smartSyncWithDB();
             estimatedBalance = this.balance - mib;
         }
 
         if (estimatedBalance < 0) {
             if (this.balance > 0) {
                 this.balance = 0;
-                saveToDB(this); // 归零时强制保存
+                // 【优化】流量归零是低频事件，但为防阻塞，建议异步保存
+                // 这里使用 ThreadManager 的虚拟线程来执行保存，避免卡顿当前数据包处理
+                ThreadManager.runAsync(() -> saveToDB(this));
             }
             NoMoreNetworkFlowException.throwException(sourceSubject, "exception.insufficientBalance", name);
         }
@@ -442,14 +435,14 @@ public class SequenceKey {
         this.balance = estimatedBalance;
 
         if (this.balance == 0) {
-            saveToDB(this);
+            ThreadManager.runAsync(() -> saveToDB(this));
         }
     }
 
     public synchronized void addMib(double mib) {
         if (mib < 0) return;
         this.balance += mib;
-        saveToDB(this);
+        ThreadManager.runAsync(() -> saveToDB(this));
     }
 
     // ==================== Getter / Setter / Util ====================
@@ -516,7 +509,11 @@ public class SequenceKey {
         String p = this.port;
         if (p == null) return DYNAMIC_PORT;
         if (PURE_NUMBER_PATTERN.matcher(p).matches()) {
-            try { return Integer.parseInt(p); } catch (Exception e) { return DYNAMIC_PORT; }
+            try {
+                return Integer.parseInt(p);
+            } catch (Exception e) {
+                return DYNAMIC_PORT;
+            }
         }
         return DYNAMIC_PORT;
     }
@@ -529,8 +526,13 @@ public class SequenceKey {
         return false;
     }
 
-    public int getDyStart() { return parseRange(0); }
-    public int getDyEnd() { return parseRange(1); }
+    public int getDyStart() {
+        return parseRange(0);
+    }
+
+    public int getDyEnd() {
+        return parseRange(1);
+    }
 
     private int parseRange(int index) {
         String p = this.port;
@@ -543,7 +545,8 @@ public class SequenceKey {
                 if (start >= 1 && end <= 65535 && start <= end) {
                     return index == 0 ? start : end;
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }
         return DYNAMIC_PORT;
     }

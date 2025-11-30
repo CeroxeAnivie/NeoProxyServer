@@ -172,7 +172,6 @@ public class NeoProxyServer {
     }
 
     private static void handleNewHostClient(HostClient hostClient) {
-        // 【优化】使用 ThreadManager.runAsync 启动虚拟线程来处理新客户端
         ThreadManager.runAsync(() -> {
             try {
                 NeoProxyServer.checkHostClientLegitimacyAndTellInfo(hostClient);
@@ -211,10 +210,11 @@ public class NeoProxyServer {
         return new HostClient(hostServerHook);
     }
 
+// ... (保留 NeoProxyServer.java 的 imports 和前半部分代码，直到 handleTransformerServiceWithNewThread 方法) ...
+
     public static void handleTransformerServiceWithNewThread(HostClient hostClient) {
-        // 【优化】TCP 和 UDP 服务线程也使用虚拟线程
-        // 这两个线程是长期运行的，但主要工作是阻塞 I/O，非常适合虚拟线程
-        ThreadManager.runAsync(() -> {//tcp
+        // 【TCP 服务线程】
+        ThreadManager.runAsync(() -> {
             while (!hostClient.isStopped()) {
                 Socket client;
                 try {
@@ -231,36 +231,41 @@ public class NeoProxyServer {
                     continue;
                 }
 
-                try {
-                    sendCommand(hostClient, "sendSocket;" + getInternetAddressAndPort(client));
-                } catch (Exception e) {
-                    ServerLogger.sayHostClientDiscInfo(hostClient, "NeoProxyServer");
-                    hostClient.close();
-                    close(client);
-                    break;
-                }
+                ThreadManager.runAsync(() -> {
+                    try {
+                        synchronized (hostClient) {
+                            sendCommand(hostClient, "sendSocket;" + getInternetAddressAndPort(client));
+                            // 【核心修复】发送指令成功，说明连接活着，主动续命！
+                            hostClient.refreshHeartbeat();
+                        }
 
-                HostReply hostReply;
-                try {
-                    hostReply = TransferSocketAdapter.getHostReply(hostClient.getOutPort(), TransferSocketAdapter.CONN_TYPE.TCP);
-                } catch (SocketTimeoutException e) {
-                    ServerLogger.sayClientSuccConnectToChaSerButHostClientTimeOut(hostClient);
-                    ServerLogger.sayKillingClientSideConnection(client);
-                    close(client);
-                    continue;
-                }
+                        HostReply hostReply;
+                        try {
+                            hostReply = TransferSocketAdapter.getHostReply(hostClient.getOutPort(), TransferSocketAdapter.CONN_TYPE.TCP);
+                        } catch (SocketTimeoutException e) {
+                            ServerLogger.sayClientSuccConnectToChaSerButHostClientTimeOut(hostClient);
+                            ServerLogger.sayKillingClientSideConnection(client);
+                            close(client);
+                            return;
+                        }
 
-                // 【修改】调用新的 start 方法
-                TCPTransformer.start(hostClient, hostReply, client);
-                ServerLogger.sayClientTCPConnectBuildUpInfo(hostClient, client);
+                        TCPTransformer.start(hostClient, hostReply, client);
+                        ServerLogger.sayClientTCPConnectBuildUpInfo(hostClient, client);
+                    } catch (Exception e) {
+                        debugOperation(e);
+                        close(client);
+                    }
+                });
             }
         });
 
-        ThreadManager.runAsync(() -> {//udp
+        // 【UDP 服务线程】
+        ThreadManager.runAsync(() -> {
             while (!hostClient.isStopped()) {
-                DatagramSocket datagramSocket = hostClient.getClientDatagramSocket();
                 byte[] buffer = new byte[BUFFER_LEN];
                 DatagramPacket datagramPacket = new DatagramPacket(buffer, buffer.length);
+                DatagramSocket datagramSocket = hostClient.getClientDatagramSocket();
+
                 try {
                     datagramSocket.receive(datagramPacket);
                 } catch (IOException | NullPointerException e) {
@@ -287,10 +292,14 @@ public class NeoProxyServer {
                         byte[] serializedData = UDPTransformer.serializeDatagramPacket(datagramPacket);
                         existingReply.addPacketToSend(serializedData);
                     } else {
-                        // 【优化】为每个新的 UDP 会话创建也使用虚拟线程
                         ThreadManager.runAsync(() -> {
                             try {
-                                sendCommand(hostClient, "sendSocketUDP;" + getInternetAddressAndPort(datagramPacket));
+                                synchronized (hostClient) {
+                                    sendCommand(hostClient, "sendSocketUDP;" + getInternetAddressAndPort(datagramPacket));
+                                    // 【核心修复】UDP 也要续命！
+                                    hostClient.refreshHeartbeat();
+                                }
+
                                 HostReply hostReply;
                                 try {
                                     hostReply = TransferSocketAdapter.getHostReply(hostClient.getOutPort(), TransferSocketAdapter.CONN_TYPE.UDP);
@@ -299,10 +308,11 @@ public class NeoProxyServer {
                                     return;
                                 }
 
-                                // 【修改】使用 ThreadManager.runAsync 启动 UDPTransformer
                                 UDPTransformer newUdpTransformer = new UDPTransformer(hostClient, hostReply, datagramSocket, clientIP, clientOutPort);
-                                UDPTransformer.udpClientConnections.add(newUdpTransformer);
-                                ThreadManager.runAsync(newUdpTransformer); // 使用虚拟线程启动
+                                synchronized (UDPTransformer.udpClientConnections) {
+                                    UDPTransformer.udpClientConnections.add(newUdpTransformer);
+                                }
+                                ThreadManager.runAsync(newUdpTransformer);
 
                                 byte[] firstData = UDPTransformer.serializeDatagramPacket(datagramPacket);
                                 newUdpTransformer.addPacketToSend(firstData);
@@ -318,6 +328,8 @@ public class NeoProxyServer {
             }
         });
     }
+
+// ... (保留 NeoProxyServer.java 剩余部分不变) ...
 
     private static int getCurrentAvailableOutPort(SequenceKey sequenceKey) {
         for (int i = sequenceKey.getDyStart(); i <= sequenceKey.getDyEnd(); i++) {
@@ -361,6 +373,8 @@ public class NeoProxyServer {
         String clientAddress = InternetOperator.getInternetAddressAndPort(hostClient.getHostServerHook());
         ServerLogger.info("neoProxyServer.hostClientRegisterSuccess", clientAddress);
         printClientRegistrationInfo(hostClient);
+
+        // 此处不需要加锁，因为是初始化阶段，单线程执行
         InternetOperator.sendCommand(hostClient, String.valueOf(port));
         InternetOperator.sendStr(hostClient, hostClient.getLangData().THIS_ACCESS_CODE_HAVE +
                 hostClient.getKey().getBalance() + hostClient.getLangData().MB_OF_FLOW_LEFT);

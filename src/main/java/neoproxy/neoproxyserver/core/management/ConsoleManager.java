@@ -4,7 +4,7 @@ import neoproxy.neoproxyserver.core.ConfigOperator;
 import neoproxy.neoproxyserver.core.HostClient;
 import neoproxy.neoproxyserver.core.ServerLogger;
 import neoproxy.neoproxyserver.core.webadmin.WebAdminManager;
-import neoproxy.neoproxyserver.core.webadmin.WebAwareConsole;
+import neoproxy.neoproxyserver.core.webadmin.WebConsole;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -22,14 +22,17 @@ public class ConsoleManager {
 
     // 命令执行主体上下文，默认为 "Admin"
     public static final ThreadLocal<String> COMMAND_SOURCE = ThreadLocal.withInitial(() -> "Admin");
+
+    // 【恢复严格模式】只允许 yyyy/MM/dd-HH:mm 格式
     private static final String TIME_FORMAT_PATTERN = "^(\\d{4})/(\\d{1,2})/(\\d{1,2})-(\\d{1,2}):(\\d{1,2})$";
     private static final Pattern TIME_PATTERN = Pattern.compile(TIME_FORMAT_PATTERN);
+
     private static final String PORT_INPUT_PATTERN = "^(\\d+)(?:-(\\d+))?$";
     private static final Pattern PORT_INPUT_REGEX = Pattern.compile(PORT_INPUT_PATTERN);
 
     public static void init() {
         try {
-            myConsole = new WebAwareConsole("NeoProxyServer");
+            myConsole = new WebConsole("NeoProxyServer");
             initCommand();
             myConsole.start();
         } catch (Exception e) {
@@ -443,9 +446,7 @@ public class ConsoleManager {
 
     private static void handleSetCommand(List<String> params) {
         if (params.size() < 2) {
-            myConsole.warn(COMMAND_SOURCE.get(), "Usage: key set <name> [b=<balance>] [r=<rate>] [p=<outPort>] [t=<expireTime>]");
-            myConsole.warn(COMMAND_SOURCE.get(), "Example: key set mykey b=1000 r=15 p=8080 t=2025/12/31-23:59");
-            myConsole.warn(COMMAND_SOURCE.get(), "Example (Dynamic Port): key set mykey p=3344-3350");
+            myConsole.warn(COMMAND_SOURCE.get(), "Usage: key set <name> [b=<balance>] [r=<rate>] [p=<outPort>] [t=<expireTime>] [w=<webHTML>]");
             return;
         }
         String name = params.get(1);
@@ -471,6 +472,7 @@ public class ConsoleManager {
         }
         boolean hasUpdate = false;
         String newPortStr = null;
+
         for (int i = 2; i < params.size(); i++) {
             String param = params.get(i);
             if (param.startsWith("b=")) {
@@ -514,6 +516,7 @@ public class ConsoleManager {
                 }
             } else if (param.startsWith("t=")) {
                 String expireTimeInput = param.substring(2);
+                // 【修复】移除之前添加的参数合并逻辑，恢复严格模式
                 String expireTime = correctInputTime(expireTimeInput);
                 if (expireTime == null) {
                     ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.illegalTimeInput", expireTimeInput);
@@ -528,6 +531,16 @@ public class ConsoleManager {
                     }
                     hasUpdate = true;
                 }
+            } else if (param.startsWith("w=")) {
+                String webStr = param.substring(2);
+                boolean enable = "true".equalsIgnoreCase(webStr) || "1".equals(webStr) || "on".equalsIgnoreCase(webStr);
+                for (SequenceKey key : inMemoryKeysToUpdate) {
+                    key.setHTMLEnabled(enable);
+                }
+                if (dbKeySnapshot != null) {
+                    dbKeySnapshot.setHTMLEnabled(enable);
+                }
+                hasUpdate = true;
             } else {
                 ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.unknownParameter", param);
             }
@@ -560,7 +573,6 @@ public class ConsoleManager {
         }
     }
 
-    // 【修复】补充了 isPortInRange 方法
     private static boolean isPortInRange(int port, String portRange) {
         if (portRange == null || portRange.isEmpty()) {
             return false;
@@ -633,8 +645,10 @@ public class ConsoleManager {
     }
 
     private static void handleAddCommand(List<String> params) {
-        if (params.size() != 6) {
-            myConsole.warn(COMMAND_SOURCE.get(), "Usage: key add <name> <balance> <expireTime> <port> <rate>");
+        // 【恢复严格模式】不再猜测参数合并，严格按照顺序读取
+        // 允许 6 个 (无Web参数) 或 7 个 (有Web参数)
+        if (params.size() != 6 && params.size() != 7) {
+            myConsole.warn(COMMAND_SOURCE.get(), "Usage: key add <name> <balance> <expireTime> <port> <rate> [webHTML]");
             myConsole.warn(COMMAND_SOURCE.get(), "Note: <port> can be a single number (e.g., 8080) or a range (e.g., 3344-3350).");
             return;
         }
@@ -643,6 +657,14 @@ public class ConsoleManager {
         String expireTimeInput = params.get(3);
         String portStr = params.get(4);
         String rateStr = params.get(5);
+
+        // 解析 WebHTML 参数
+        boolean enableWebHTML = false;
+        if (params.size() == 7) {
+            String webStr = params.get(6);
+            enableWebHTML = "true".equalsIgnoreCase(webStr) || "1".equals(webStr) || "on".equalsIgnoreCase(webStr);
+        }
+
         String expireTime = correctInputTime(expireTimeInput);
         if (expireTime == null) {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.illegalTimeInput");
@@ -662,9 +684,15 @@ public class ConsoleManager {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.invalidPortValue", portStr);
             return;
         }
+
         boolean isCreated = createNewKey(name, balance, expireTime, validatedPortStr, rate);
         if (isCreated) {
             ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.keyCreated", name);
+            if (enableWebHTML) {
+                myConsole.execute("web enable " + name);
+            }else{
+                myConsole.execute("web disable " + name);
+            }
         } else {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyCreateFailed");
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyCreateHint");
@@ -764,7 +792,7 @@ public class ConsoleManager {
     private static void printKeyUsage() {
         myConsole.warn(COMMAND_SOURCE.get(), "Usage:");
         myConsole.warn(COMMAND_SOURCE.get(), "  key add <name> <balance> <expireTime> <port> <rate> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.add"));
-        myConsole.warn(COMMAND_SOURCE.get(), "  key set <name> [b=<balance>] [r=<rate>] [p=<port>] [t=<expireTime>] -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.set"));
+        myConsole.warn(COMMAND_SOURCE.get(), "  key set <name> [b=<balance>] [r=<rate>] [p=<port>] [t=<expireTime>] [w=<webHTML>] -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.set"));
         myConsole.warn(COMMAND_SOURCE.get(), "  key del <name> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.del"));
         myConsole.warn(COMMAND_SOURCE.get(), "  key enable <name> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.enable"));
         myConsole.warn(COMMAND_SOURCE.get(), "  key disable <name> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.disable"));

@@ -251,8 +251,7 @@ public class UDPTransformer implements Runnable {
     private void stop() {
         if (isRunning) {
             isRunning = false;
-            // 注意：这里不立即从 udpClientConnections 移除，也不关闭 hostReply.host()
-            // 让 run 方法的 finally 块来统一处理，避免重复操作
+            InternetOperator.close(hostReply.host());
         }
     }
 }

@@ -7,6 +7,7 @@ import neoproxy.neoproxyserver.NeoProxyServer;
 import neoproxy.neoproxyserver.core.HostClient;
 import neoproxy.neoproxyserver.core.ServerLogger;
 import neoproxy.neoproxyserver.core.management.IPGeolocationHelper;
+import neoproxy.neoproxyserver.core.threads.UDPTransformer;
 import plethora.thread.ThreadManager;
 
 import java.io.*;
@@ -487,7 +488,6 @@ public class WebAdminServer extends NanoWSD {
                 StringBuilder sb = new StringBuilder("[");
                 boolean needComma = false;
 
-                // 修复：使用 needComma 标志位，确保不会产生类似 [{...},] 的错误 JSON
                 if (!relPath.isEmpty()) {
                     sb.append("{\"name\":\"..\",\"isDir\":true,\"size\":0,\"time\":0}");
                     needComma = true;
@@ -555,13 +555,18 @@ public class WebAdminServer extends NanoWSD {
 
         private void handleGetDashboard() {
             int hostClientCount = NeoProxyServer.availableHostClient.size();
-            int extClientCount = 0;
+            int tcpClientCount = 0;
             double totalBalance = 0;
             for (HostClient hc : NeoProxyServer.availableHostClient) {
-                extClientCount += hc.getActiveTcpSockets().size();
+                tcpClientCount += hc.getActiveTcpSockets().size();
                 if (hc.getKey() != null) totalBalance += hc.getKey().getBalance();
             }
-            String json = String.format(Locale.US, "{\"hc\":%d, \"ec\":%d, \"tb\":%.2f, \"v\":\"%s\", \"sv\":\"%s\", \"p\":\"%s\"}", hostClientCount, extClientCount, totalBalance, NeoProxyServer.VERSION, NeoProxyServer.EXPECTED_CLIENT_VERSION, NeoProxyServer.HOST_HOOK_PORT + " / " + NeoProxyServer.HOST_CONNECT_PORT);
+            // 获取 UDP 连接总数
+            int udpClientCount = UDPTransformer.udpClientConnections.size();
+
+            // 在 JSON 中添加 "uc" (UDP Count) 字段
+            String json = String.format(Locale.US, "{\"hc\":%d, \"ec\":%d, \"uc\":%d, \"tb\":%.2f, \"v\":\"%s\", \"sv\":\"%s\", \"p\":\"%s\"}",
+                    hostClientCount, tcpClientCount, udpClientCount, totalBalance, NeoProxyServer.VERSION, NeoProxyServer.EXPECTED_CLIENT_VERSION, NeoProxyServer.HOST_HOOK_PORT + " / " + NeoProxyServer.HOST_CONNECT_PORT);
             sendJson("dashboard_data", json);
         }
 

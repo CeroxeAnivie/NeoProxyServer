@@ -69,7 +69,6 @@ public class TransferSocketAdapter implements Runnable {
             SecureSocket host;
             try {
                 host = NeoProxyServer.hostServerTransferServerSocket.accept();
-                host.setSoTimeout(SO_TIMEOUT);
             } catch (IOException e) {
                 if (isStopped) break;
                 debugOperation(e);

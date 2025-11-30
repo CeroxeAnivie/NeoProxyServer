@@ -8,86 +8,179 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.nio.file.StandardCopyOption;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static neoproxy.neoproxyserver.NeoProxyServer.*;
 
 /**
- * IP 封禁管理器。
- * 所有操作以 banList.txt 为唯一真实源，内存集合 (bannedIPSet) 和 SecureServerSocket.ignoreIPs 均为其同步缓存。
+ * IP 封禁管理器 (JSON版 - 格式化存储 - 无时间戳)
  */
 public class IPChecker {
 
-    public static final int DO_BAN = 0;       // 封禁 IP
-    public static final int UNBAN = 1;        // 解封 IP
-    public static final int CHECK_IS_BAN = 2; // 检查是否被封禁
+    public static final int DO_BAN = 0;
+    public static final int UNBAN = 1;
+    public static final int CHECK_IS_BAN = 2;
 
-    private static final File BAN_LIST_FILE = new File(System.getProperty("user.dir"), "banList.txt");
-    private static final Set<String> bannedIPSet = new HashSet<>(); // 内存缓存，用于快速查询
-    // IPv4地址的正则表达式
+    private static final File BAN_LIST_JSON = new File(System.getProperty("user.dir"), "banList.json");
+    private static final File BAN_LIST_TXT_OLD = new File(System.getProperty("user.dir"), "banList.txt");
+
+    private static final Map<String, BanInfo> bannedIPMap = new ConcurrentHashMap<>();
+
     private static final String IPV4_REGEX =
             "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$";
     private static final Pattern IPV4_PATTERN = Pattern.compile(IPV4_REGEX);
     public static volatile boolean ENABLE_BAN = true;
 
-    /**
-     * 从 banList.txt 重新加载并同步到内存和 SecureServerSocket。
-     * 此方法是同步的，确保一致性。
-     */
-    public static synchronized void reloadFromBanListFile() {
-        Set<String> newSet = new HashSet<>();
-        if (BAN_LIST_FILE.exists()) {
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(new FileInputStream(BAN_LIST_FILE), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    line = line.trim();
-                    if (!line.isEmpty()) {
-                        newSet.add(line);
-                    }
+    // 数据结构：仅保留 IP、位置、运营商
+    public static class BanInfo {
+        String ip;
+        String location;
+        String isp;
+
+        public BanInfo(String ip, String location, String isp) {
+            this.ip = ip;
+            this.location = location;
+            this.isp = isp;
+        }
+    }
+
+    public static synchronized void loadBannedIPs() {
+        if (BAN_LIST_TXT_OLD.exists() && !BAN_LIST_JSON.exists()) {
+            ServerLogger.infoWithSource("IPChecker", "ipChecker.migrating", "banList.txt -> banList.json");
+            migrateTxtToJson();
+        }
+        reloadFromJson();
+    }
+
+    private static void migrateTxtToJson() {
+        List<BanInfo> tempList = new ArrayList<>();
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(new FileInputStream(BAN_LIST_TXT_OLD), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String ip = line.trim();
+                if (!ip.isEmpty() && isValidIP(ip)) {
+                    IPGeolocationHelper.LocationInfo info = IPGeolocationHelper.getLocationInfo(ip);
+                    // 不再记录时间
+                    tempList.add(new BanInfo(ip, info.location(), info.isp()));
                 }
-            } catch (IOException e) {
-                debugOperation(e);
-                ServerLogger.errorWithSource("IPChecker", "ipChecker.failedToReload", e.getMessage());
-                return; // 保持旧状态
             }
+        } catch (IOException e) {
+            ServerLogger.errorWithSource("IPChecker", "ipChecker.migrationFailed", e.getMessage());
+            return;
         }
 
-        // 原子性更新内存集合
-        bannedIPSet.clear();
-        bannedIPSet.addAll(newSet);
+        bannedIPMap.clear();
+        for (BanInfo info : tempList) {
+            bannedIPMap.put(info.ip, info);
+        }
+        saveToJson();
 
-        // 同步到 SecureServerSocket
-        syncIgnoreIPs();
+        try {
+            Files.move(BAN_LIST_TXT_OLD.toPath(),
+                    new File(System.getProperty("user.dir"), "banList.txt.bak").toPath(),
+                    StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            ServerLogger.warnWithSource("IPChecker", "ipChecker.failedToRenameOldTxt");
+        }
+    }
+
+    private static void reloadFromJson() {
+        if (!BAN_LIST_JSON.exists()) {
+            try {
+                BAN_LIST_JSON.createNewFile();
+                saveToJson();
+            } catch (IOException e) {
+                ServerLogger.warnWithSource("IPChecker", "ipChecker.failedToCreateJson");
+            }
+            return;
+        }
+
+        try {
+            String content = Files.readString(BAN_LIST_JSON.toPath(), StandardCharsets.UTF_8);
+            if (content == null || content.isBlank()) return;
+
+            // 简单的正则匹配：只提取 ip, location, isp
+            Pattern pattern = Pattern.compile("\"ip\":\\s*\"(.*?)\"[\\s\\S]*?\"location\":\\s*\"(.*?)\"[\\s\\S]*?\"isp\":\\s*\"(.*?)\"");
+            Matcher matcher = pattern.matcher(content);
+
+            Map<String, BanInfo> newMap = new ConcurrentHashMap<>();
+            while (matcher.find()) {
+                String ip = matcher.group(1);
+                String loc = matcher.group(2);
+                String isp = matcher.group(3);
+                newMap.put(ip, new BanInfo(ip, loc, isp));
+            }
+
+            bannedIPMap.clear();
+            bannedIPMap.putAll(newMap);
+            syncIgnoreIPs();
+
+        } catch (IOException e) {
+            ServerLogger.errorWithSource("IPChecker", "ipChecker.failedToReadJson", e.getMessage());
+        }
     }
 
     /**
-     * 将当前 bannedIPSet 同步到 SecureServerSocket.ignoreIPs。
-     * 若 hostServerHookServerSocket 未初始化，则跳过。
+     * 保存格式化的 JSON (Pretty Print)
      */
+    private static synchronized boolean saveToJson() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[\n");
+
+        Iterator<BanInfo> iterator = bannedIPMap.values().iterator();
+        while (iterator.hasNext()) {
+            BanInfo info = iterator.next();
+            sb.append("  {\n");
+            sb.append(String.format("    \"ip\": \"%s\",\n", info.ip));
+            sb.append(String.format("    \"location\": \"%s\",\n", escapeJson(info.location)));
+            sb.append(String.format("    \"isp\": \"%s\"\n", escapeJson(info.isp))); // 最后一项不带逗号
+            sb.append("  }");
+
+            if (iterator.hasNext()) {
+                sb.append(",\n");
+            } else {
+                sb.append("\n");
+            }
+        }
+        sb.append("]");
+
+        try (BufferedWriter writer = new BufferedWriter(
+                new OutputStreamWriter(new FileOutputStream(BAN_LIST_JSON), StandardCharsets.UTF_8))) {
+            writer.write(sb.toString());
+            writer.flush();
+            return true;
+        } catch (IOException e) {
+            ServerLogger.errorWithSource("IPChecker", "ipChecker.failedToWriteJson", e.getMessage());
+            return false;
+        }
+    }
+
+    private static String escapeJson(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
     private static void syncIgnoreIPs() {
         if (hostServerHookServerSocket == null) return;
         CopyOnWriteArrayList<String> ignoreIPs = hostServerHookServerSocket.getIgnoreIPs();
         ignoreIPs.clear();
-        ignoreIPs.addAll(bannedIPSet);
+        ignoreIPs.addAll(bannedIPMap.keySet());
     }
 
-    /**
-     * 执行封禁/解封/检查操作。
-     */
     public static synchronized boolean exec(String ip, int execMode) {
         if (ip == null || ip.isEmpty()) return false;
 
         switch (execMode) {
             case DO_BAN:
                 if (!ENABLE_BAN) return false;
-                if (bannedIPSet.contains(ip)) return true; // 已存在
+                if (bannedIPMap.containsKey(ip)) return true;
 
-                // 踢出相关客户端
                 for (HostClient client : availableHostClient) {
                     String addr = client.getHostServerHook().getInetAddress().getHostAddress();
                     if (ip.equals(addr)) {
@@ -95,157 +188,96 @@ public class IPChecker {
                     }
                 }
 
-                // 1. 更新内存
-                bannedIPSet.add(ip);
-                // 2. 追加到文件
-                try (BufferedWriter writer = new BufferedWriter(
-                        new OutputStreamWriter(new FileOutputStream(BAN_LIST_FILE, true), StandardCharsets.UTF_8))) {
-                    writer.write(ip);
-                    writer.newLine();
-                    writer.flush();
-                } catch (IOException e) {
-                    // 回滚内存
-                    bannedIPSet.remove(ip);
+                IPGeolocationHelper.LocationInfo locInfo = IPGeolocationHelper.getLocationInfo(ip);
+                // 不记录时间
+                BanInfo info = new BanInfo(ip, locInfo.location(), locInfo.isp());
+
+                bannedIPMap.put(ip, info);
+
+                if (saveToJson()) {
                     syncIgnoreIPs();
-                    debugOperation(e);
-                    ServerLogger.errorWithSource("IPChecker", "ipChecker.failedToBan", ip);
+                    ServerLogger.infoWithSource("IPChecker", "ipChecker.ipBanned", ip + " (" + info.location + ")");
+                    return true;
+                } else {
+                    bannedIPMap.remove(ip);
                     return false;
                 }
-                // 3. 同步到 ignoreIPs
-                syncIgnoreIPs();
-                ServerLogger.infoWithSource("IPChecker", "ipChecker.ipBanned", ip);
-                return true;
 
             case UNBAN:
-                if (!bannedIPSet.contains(ip)) return true; // 不存在即成功
+                if (!bannedIPMap.containsKey(ip)) return true;
 
-                // 1. 从内存移除
-                bannedIPSet.remove(ip);
-                // 2. 重写文件（过滤掉该 IP）
-                try {
-                    List<String> lines = Files.readAllLines(BAN_LIST_FILE.toPath(), StandardCharsets.UTF_8);
-                    try (BufferedWriter writer = new BufferedWriter(
-                            new OutputStreamWriter(new FileOutputStream(BAN_LIST_FILE), StandardCharsets.UTF_8))) {
-                        for (String line : lines) {
-                            if (!ip.equals(line.trim())) {
-                                writer.write(line);
-                                writer.newLine();
-                            }
-                        }
-                    }
-                } catch (IOException e) {
-                    // 回滚内存
-                    bannedIPSet.add(ip);
+                bannedIPMap.remove(ip);
+                if (saveToJson()) {
                     syncIgnoreIPs();
-                    debugOperation(e);
-                    ServerLogger.errorWithSource("IPChecker", "ipChecker.failedToUnban", ip);
+                    ServerLogger.infoWithSource("IPChecker", "ipChecker.ipUnbanned", ip);
+                    return true;
+                } else {
+                    reloadFromJson();
                     return false;
                 }
-                // 3. 同步到 ignoreIPs
-                syncIgnoreIPs();
-                ServerLogger.infoWithSource("IPChecker", "ipChecker.ipUnbanned", ip);
-                return true;
 
             case CHECK_IS_BAN:
-                return ENABLE_BAN && bannedIPSet.contains(ip);
+                return ENABLE_BAN && bannedIPMap.containsKey(ip);
 
             default:
                 return false;
         }
     }
 
-    /**
-     * 启动时加载 banList.txt 并初始化。
-     */
-    public static void loadBannedIPs() {
-        if (!BAN_LIST_FILE.exists()) {
-            try {
-                BAN_LIST_FILE.createNewFile();
-                ServerLogger.infoWithSource("IPChecker", "ipChecker.createdEmptyBanList");
-            } catch (IOException e) {
-                ServerLogger.warnWithSource("IPChecker", "ipChecker.failedToCreateFile");
-            }
-        }
-        reloadFromBanListFile(); // 统一入口
-    }
-
-    /**
-     * 获取当前封禁列表的不可变副本（用于展示）。
-     */
     public static Set<String> getBannedIPs() {
-        return new HashSet<>(bannedIPSet);
+        return new HashSet<>(bannedIPMap.keySet());
     }
 
     public static boolean isValidIP(String ip) {
-        if (ip == null || ip.isEmpty()) {
-            return false;
-        }
-
-        // 首先使用正则表达式快速验证格式
-        if (!IPV4_PATTERN.matcher(ip).matches()) {
-            return false;
-        }
-
-        // 然后进行更严格的验证
+        if (ip == null || ip.isEmpty()) return false;
+        if (!IPV4_PATTERN.matcher(ip).matches()) return false;
         try {
-            InetAddress inetAddress = InetAddress.getByName(ip);
-            return ip.equals(inetAddress.getHostAddress());
+            InetAddress.getByName(ip);
+            return true;
         } catch (UnknownHostException e) {
             return false;
         }
     }
 
-    /**
-     * 控制台打印封禁列表（格式化表格，宽度自适应）。
-     */
     public static void listBannedIPs() {
-        if (!BAN_LIST_FILE.exists()) {
-            ServerLogger.warnWithSource("Admin", "ipChecker.banListFileNotFound");
+        if (bannedIPMap.isEmpty()) {
+            ServerLogger.infoWithSource("Admin", "ipChecker.banListIsEmpty");
             return;
         }
 
-        try {
-            List<String> lines = Files.readAllLines(BAN_LIST_FILE.toPath(), StandardCharsets.UTF_8);
-            lines.removeIf(String::isEmpty);
+        int wIp = 15;
+        int wLoc = 10;
+        int wIsp = 10;
 
-            if (lines.isEmpty()) {
-                ServerLogger.infoWithSource("Admin", "ipChecker.banListIsEmpty");
-                return;
-            }
-
-            // 1. 计算内容的最大宽度
-            String header = "Banned IP";
-            // 使用 Stream API 找到最长的 IP 地址长度
-            int maxIpLength = lines.stream()
-                    .map(String::trim)
-                    .mapToInt(String::length)
-                    .max()
-                    .orElse(0);
-
-            // 表格内容的宽度 = 表头长度 和 最长IP长度 中的较大者
-            int contentWidth = Math.max(header.length(), maxIpLength);
-
-            // 2. 根据最大宽度创建可复用的表格组件
-            // 水平线的长度 = 内容宽度 + 两侧的填充空格
-            String horizontalLine = "─".repeat(contentWidth + 2);
-            // 行格式化字符串，例如 "│ %-20s │\n"
-            String rowFormat = "│ %-" + contentWidth + "s │\n";
-
-            // 3. 使用动态组件构建表格
-            StringBuilder sb = new StringBuilder();
-            sb.append("\n┌").append(horizontalLine).append("┐\n");
-            sb.append(String.format(rowFormat, header)); // 表头
-            sb.append("├").append(horizontalLine).append("┤\n");
-            for (String ip : lines) {
-                sb.append(String.format(rowFormat, ip.trim())); // IP 数据行
-            }
-            sb.append("└").append(horizontalLine).append("┘");
-
-            ServerLogger.logRaw("Admin", sb.toString());
-
-        } catch (IOException e) {
-            debugOperation(e);
-            ServerLogger.errorWithSource("Admin", "ipChecker.failedToReadBanList");
+        for (BanInfo i : bannedIPMap.values()) {
+            wIp = Math.max(wIp, getDisplayWidth(i.ip));
+            wLoc = Math.max(wLoc, getDisplayWidth(i.location));
+            wIsp = Math.max(wIsp, getDisplayWidth(i.isp));
         }
+
+        // 不再显示时间列
+        String format = "│ %-" + wIp + "s │ %-" + wLoc + "s │ %-" + wIsp + "s │\n";
+        String border = "─".repeat(wIp + 2) + "┬" + "─".repeat(wLoc + 2) + "┬" + "─".repeat(wIsp + 2);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("\n┌").append(border.replace("┬", "─")).append("┐\n");
+        sb.append(String.format(format, "IP Address", "Location", "ISP"));
+        sb.append("├").append(border).append("┤\n");
+
+        for (BanInfo i : bannedIPMap.values()) {
+            sb.append(String.format(format, i.ip, i.location, i.isp));
+        }
+        sb.append("└").append(border.replace("┬", "─")).append("┘");
+
+        ServerLogger.logRaw("Admin", sb.toString());
+    }
+
+    private static int getDisplayWidth(String s) {
+        if (s == null) return 0;
+        int len = 0;
+        for (char c : s.toCharArray()) {
+            len += (c > 127) ? 2 : 1;
+        }
+        return len;
     }
 }

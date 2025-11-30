@@ -10,11 +10,11 @@ import java.time.format.DateTimeFormatter;
  * 继承自 MyConsole，拦截日志输出并转发给 WebAdmin。
  * 实现了日志格式的统一标准化。
  */
-public class WebAwareConsole extends MyConsole {
+public class WebConsole extends MyConsole {
 
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-    public WebAwareConsole(String appName) throws IOException {
+    public WebConsole(String appName) throws IOException {
         super(appName);
     }
 

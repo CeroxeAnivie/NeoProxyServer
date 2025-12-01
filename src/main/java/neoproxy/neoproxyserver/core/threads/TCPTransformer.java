@@ -44,15 +44,27 @@ public class TCPTransformer {
     private final HostReply hostReply;
     private final byte[] clientToHostBuffer = new byte[BUFFER_LEN];
 
-    private TCPTransformer(HostClient hostClient, Socket client, HostReply hostReply) {
+    // 【修改 1】新增成员变量，用于持有外部传入的流
+    private final InputStream clientInputStream;
+
+    // 【修改 2】构造函数接收 InputStream
+    private TCPTransformer(HostClient hostClient, Socket client, HostReply hostReply, InputStream clientInputStream) {
         this.hostClient = hostClient;
         this.client = client;
         this.hostReply = hostReply;
+        // 如果外部传了流（比如PushbackInputStream），就用外部的，否则用Socket原生的
+        try {
+            this.clientInputStream = (clientInputStream != null) ? clientInputStream : client.getInputStream();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 
-    public static void start(HostClient hostClient, HostReply hostReply, Socket client) {
+    // 【修改 3】Start 方法接收 InputStream
+    public static void start(HostClient hostClient, HostReply hostReply, Socket client, InputStream preCheckedStream) {
         hostClient.registerTcpSocket(client);
-        TCPTransformer transformer = new TCPTransformer(hostClient, client, hostReply);
+        // 将预处理过的流传入构造函数
+        TCPTransformer transformer = new TCPTransformer(hostClient, client, hostReply, preCheckedStream);
 
         final double[] aTenMibSize = {0};
 
@@ -71,6 +83,11 @@ public class TCPTransformer {
             close(client, hostReply.host());
             ServerLogger.sayClientTCPConnectDestroyInfo(hostClient, client);
         });
+    }
+
+    // 保持旧的 start 方法兼容性（可选）
+    public static void start(HostClient hostClient, HostReply hostReply, Socket client) {
+        start(hostClient, hostReply, client, null);
     }
 
     public static void tellRestBalance(HostClient hostClient, double[] aTenMibSize, int len, LanguageData languageData) throws IOException {
@@ -94,9 +111,7 @@ public class TCPTransformer {
     }
 
     private static void checkAndBlockHtmlResponse(byte[] data, BufferedOutputStream clientOutput, String remoteSocketAddress, HostClient hostClient) throws IllegalWebSiteException, IOException {
-        if (data == null || data.length == 0) {
-            return;
-        }
+        if (data == null || data.length == 0) return;
         String response = new String(data, StandardCharsets.UTF_8);
         int headerEndIndex = response.indexOf("\r\n\r\n");
         String headerPart = (headerEndIndex != -1) ? response.substring(0, headerEndIndex) : response;
@@ -104,9 +119,8 @@ public class TCPTransformer {
             if (alert) {
                 myConsole.log("TCPTransformer", "Detected web HTML from " + remoteSocketAddress.replaceAll("/", ""));
             }
-            if (FORBIDDEN_HTML_TEMPLATE == null) {
-                return;
-            }
+            if (FORBIDDEN_HTML_TEMPLATE == null) return;
+
             String finalHtml = FORBIDDEN_HTML_TEMPLATE.replace("{{CUSTOM_MESSAGE}}", CUSTOM_BLOCKING_MESSAGE != null ? CUSTOM_BLOCKING_MESSAGE : "");
             byte[] errorHtmlBytes = finalHtml.getBytes(StandardCharsets.UTF_8);
             String httpResponseHeader = "HTTP/1.1 403 Forbidden\r\n" +
@@ -122,16 +136,15 @@ public class TCPTransformer {
     }
 
     private void clientToHost(double[] aTenMibSize) {
-        try (BufferedInputStream bufferedInputStream = new BufferedInputStream(client.getInputStream())) {
+        // 【修改 4】使用 this.clientInputStream 而不是 client.getInputStream()
+        try (BufferedInputStream bufferedInputStream = new BufferedInputStream(this.clientInputStream)) {
             RateLimiter limiter = new RateLimiter(hostClient.getKey().getRate());
             int len;
             while ((len = bufferedInputStream.read(clientToHostBuffer)) != -1) {
-                // 【修复】校验有效载荷长度
                 if (len <= 0) continue;
 
                 int enLength = hostReply.host().sendByte(clientToHostBuffer, 0, len);
 
-                // 【修复】防止 socket 返回负数错误码导致计算出负流量
                 if (enLength > 0) {
                     hostClient.getKey().mineMib("TCP-Transformer:C->H", SizeCalculator.byteToMib(enLength + 10));
                     tellRestBalance(hostClient, aTenMibSize, enLength, hostClient.getLangData());
@@ -150,12 +163,13 @@ public class TCPTransformer {
     }
 
     private void hostToClient(double[] aTenMibSize) {
+        // ... 原有逻辑保持不变 ...
         try (BufferedOutputStream bufferedOutputStream = new BufferedOutputStream(client.getOutputStream())) {
             RateLimiter limiter = new RateLimiter(hostClient.getKey().getRate());
             byte[] data;
             boolean isHtmlResponseChecked = false;
             while ((data = hostReply.host().receiveByte()) != null) {
-                if (data.length <= 0) continue;
+                if (data.length == 0) continue;
 
                 if (!isHtmlResponseChecked && !hostClient.getKey().isHTMLEnabled()) {
                     isHtmlResponseChecked = true;
@@ -164,13 +178,10 @@ public class TCPTransformer {
                 bufferedOutputStream.write(data);
                 bufferedOutputStream.flush();
 
-                // 【修复】防止空包
-                if (data.length > 0) {
-                    hostClient.getKey().mineMib("TCP-Transformer:H->C", SizeCalculator.byteToMib(data.length));
-                    tellRestBalance(hostClient, aTenMibSize, data.length, hostClient.getLangData());
-                    RateLimiter.setMaxMbps(limiter, hostClient.getKey().getRate());
-                    limiter.onBytesTransferred(data.length);
-                }
+                hostClient.getKey().mineMib("TCP-Transformer:H->C", SizeCalculator.byteToMib(data.length));
+                tellRestBalance(hostClient, aTenMibSize, data.length, hostClient.getLangData());
+                RateLimiter.setMaxMbps(limiter, hostClient.getKey().getRate());
+                limiter.onBytesTransferred(data.length);
             }
             shutdownInput(hostReply.host());
             shutdownOutput(client);
@@ -178,7 +189,7 @@ public class TCPTransformer {
             debugOperation(e);
             shutdownInput(hostReply.host());
             shutdownOutput(client);
-        } catch (IllegalWebSiteException e) {
+        } catch (IllegalWebSiteException ignored) {
         }
     }
 }

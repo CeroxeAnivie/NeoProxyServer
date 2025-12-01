@@ -9,13 +9,16 @@ import neoproxy.neoproxyserver.core.webadmin.WebAdminManager;
 import plethora.management.bufferedFile.SizeCalculator;
 import plethora.net.SecureServerSocket;
 import plethora.net.SecureSocket;
+import plethora.security.AtomicIdGenerator;
 import plethora.thread.ThreadManager;
 import plethora.utils.ArrayUtils;
 import plethora.utils.MyConsole;
+import plethora.utils.Sleeper;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PushbackInputStream;
 import java.net.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -210,10 +213,7 @@ public class NeoProxyServer {
         return new HostClient(hostServerHook);
     }
 
-// ... (保留 NeoProxyServer.java 的 imports 和前半部分代码，直到 handleTransformerServiceWithNewThread 方法) ...
-
     public static void handleTransformerServiceWithNewThread(HostClient hostClient) {
-        // 【TCP 服务线程】
         ThreadManager.runAsync(() -> {
             while (!hostClient.isStopped()) {
                 Socket client;
@@ -233,15 +233,63 @@ public class NeoProxyServer {
 
                 ThreadManager.runAsync(() -> {
                     try {
-                        synchronized (hostClient) {
-                            sendCommand(hostClient, "sendSocket;" + getInternetAddressAndPort(client));
-                            // 【核心修复】发送指令成功，说明连接活着，主动续命！
-                            hostClient.refreshHeartbeat();
+                        // =========================================================
+                        // 【核心策略：延迟 + 无损嗅探】
+                        // =========================================================
+
+                        // 1. 延迟 200ms。
+                        // 如果是 ITDog TCPing，它通常在连上后立刻记录时间并发送 FIN/RST。
+                        // 200ms 足够让这个断开信号传到服务端。
+                        Sleeper.sleep(200);
+
+                        // 2. 准备 "无损嗅探"
+                        // 为什么不能只用 client.isClosed()?
+                        // 因为 Java Socket 不会自动探测远程断开，除非你尝试 Read。
+                        PushbackInputStream pbis = new PushbackInputStream(client.getInputStream(), 1);
+
+                        // 设置 1ms 的极短超时，用于探测
+                        int originalTimeout = client.getSoTimeout();
+                        client.setSoTimeout(1);
+
+                        try {
+                            int b = pbis.read();
+                            if (b == -1) {
+                                // 读到了 EOF，说明对方已经断开了！
+                                // 100% 确认是 TCPing 或端口扫描
+                                client.close();
+                                return; // 直接丢弃，不通知内网
+                            }
+                            // 读到了数据（比如 RDP 的 Hello 包）
+                            // 必须推回去！否则后续 Transformer 会丢数据导致连接失败
+                            pbis.unread(b);
+
+                        } catch (SocketTimeoutException e) {
+                            // 超时了：说明连接活着，但是没发数据。
+                            // 这种情况下我们无法区分是 "还在连接中的 TCPing" 还是 "被动协议(如SSH)"。
+                            // 为了通用性，我们必须放行。
+                            // 但由于前面延迟了 200ms，绝大多数 TCPing 此时应该已经断开了并被上面的 b==-1 捕获。
+                        } catch (IOException e) {
+                            // 读出错（比如 Connection Reset），说明是 TCPing
+                            client.close();
+                            return;
+                        } finally {
+                            // 恢复超时设置
+                            client.setSoTimeout(originalTimeout);
                         }
+
+                        // =========================================================
+                        // 验证通过，通知内网
+                        // =========================================================
+
+                        long socketID = AtomicIdGenerator.GLOBAL.nextId();
+
+                        // 此时调用，无需全局锁 (依赖 SecureSocket 写锁)
+                        sendCommand(hostClient, "sendSocketTCP;" + socketID + ";" + getInternetAddressAndPort(client));
+                        hostClient.refreshHeartbeat();
 
                         HostReply hostReply;
                         try {
-                            hostReply = TransferSocketAdapter.getHostReply(hostClient.getOutPort(), TransferSocketAdapter.CONN_TYPE.TCP);
+                            hostReply = TransferSocketAdapter.getHostReply(socketID, TransferSocketAdapter.CONN_TYPE.TCP);
                         } catch (SocketTimeoutException e) {
                             ServerLogger.sayClientSuccConnectToChaSerButHostClientTimeOut(hostClient);
                             ServerLogger.sayKillingClientSideConnection(client);
@@ -249,8 +297,10 @@ public class NeoProxyServer {
                             return;
                         }
 
-                        TCPTransformer.start(hostClient, hostReply, client);
+                        // 【关键】把包含 "推回数据" 的流传给 Transformer
+                        TCPTransformer.start(hostClient, hostReply, client, pbis);
                         ServerLogger.sayClientTCPConnectBuildUpInfo(hostClient, client);
+
                     } catch (Exception e) {
                         debugOperation(e);
                         close(client);
@@ -258,8 +308,7 @@ public class NeoProxyServer {
                 });
             }
         });
-
-        // 【UDP 服务线程】
+// 【UDP 服务线程】
         ThreadManager.runAsync(() -> {
             while (!hostClient.isStopped()) {
                 byte[] buffer = new byte[BUFFER_LEN];
@@ -279,6 +328,7 @@ public class NeoProxyServer {
                 final String clientIP = datagramPacket.getAddress().getHostAddress();
                 final int clientOutPort = datagramPacket.getPort();
 
+                // 锁住 UDP 连接表，查找是否存在已有会话
                 synchronized (UDPTransformer.udpClientConnections) {
                     UDPTransformer existingReply = null;
                     for (UDPTransformer reply : UDPTransformer.udpClientConnections) {
@@ -289,20 +339,23 @@ public class NeoProxyServer {
                     }
 
                     if (existingReply != null) {
+                        // 已有会话，直接转发数据
                         byte[] serializedData = UDPTransformer.serializeDatagramPacket(datagramPacket);
                         existingReply.addPacketToSend(serializedData);
                     } else {
+                        // 新会话，异步处理建立过程
                         ThreadManager.runAsync(() -> {
                             try {
-                                synchronized (hostClient) {
-                                    sendCommand(hostClient, "sendSocketUDP;" + getInternetAddressAndPort(datagramPacket));
-                                    // 【核心修复】UDP 也要续命！
-                                    hostClient.refreshHeartbeat();
-                                }
+                                long socketID = AtomicIdGenerator.GLOBAL.nextId();
+
+                                // 【核心修改】移除 synchronized (hostClient)
+                                // SecureSocket 现已线程安全，直接发送指令，互不阻塞
+                                sendCommand(hostClient, "sendSocketUDP;" + socketID + ";" + getInternetAddressAndPort(datagramPacket));
+                                hostClient.refreshHeartbeat();
 
                                 HostReply hostReply;
                                 try {
-                                    hostReply = TransferSocketAdapter.getHostReply(hostClient.getOutPort(), TransferSocketAdapter.CONN_TYPE.UDP);
+                                    hostReply = TransferSocketAdapter.getHostReply(socketID, TransferSocketAdapter.CONN_TYPE.UDP);
                                 } catch (SocketTimeoutException e) {
                                     ServerLogger.sayClientSuccConnectToChaSerButHostClientTimeOut(hostClient);
                                     return;
@@ -328,8 +381,6 @@ public class NeoProxyServer {
             }
         });
     }
-
-// ... (保留 NeoProxyServer.java 剩余部分不变) ...
 
     private static int getCurrentAvailableOutPort(SequenceKey sequenceKey) {
         for (int i = sequenceKey.getDyStart(); i <= sequenceKey.getDyEnd(); i++) {

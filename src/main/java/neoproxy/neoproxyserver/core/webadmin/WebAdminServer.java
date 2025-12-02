@@ -120,10 +120,25 @@ public class WebAdminServer extends NanoWSD {
         return input.replace("\\", "\\\\").replace("\"", "\\\"").replace("\b", "\\b").replace("\f", "\\f").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
     }
 
+    // 【修复】获取真实 IP 的辅助方法
+    private String getRealRemoteIp(IHTTPSession session) {
+        String remoteIp = session.getRemoteIpAddress();
+        // 如果是本地回环地址（说明经过了 Shield 网关），则尝试获取真实 IP 头
+        if (remoteIp.equals("127.0.0.1") || remoteIp.equals("0:0:0:0:0:0:0:1")) {
+            String realIp = session.getHeaders().get("x-neo-real-ip");
+            if (realIp != null && !realIp.isEmpty()) {
+                return realIp;
+            }
+        }
+        return remoteIp;
+    }
+
     @Override
     public Response serve(IHTTPSession session) {
         String token = session.getParms().get("token");
-        String remoteIp = session.getRemoteIpAddress();
+        // 使用修正后的 IP 获取逻辑
+        String remoteIp = getRealRemoteIp(session);
+
         int tokenType = WebAdminManager.verifyTokenAndGetType(token);
         if (tokenType == 0) return serveErrorPage();
         if (isWebsocketRequested(session)) return super.serve(session);
@@ -371,10 +386,18 @@ public class WebAdminServer extends NanoWSD {
         private final String remoteIp;
         private int sessionType = 0;
         private volatile long lastActiveTime = System.currentTimeMillis();
+        private volatile boolean isConnected = false;
 
         public AdminWebSocket(IHTTPSession handshakeRequest) {
             super(handshakeRequest);
-            this.remoteIp = handshakeRequest.getRemoteIpAddress();
+
+            // 【修复】正确获取真实IP，兼容Shield网关模式
+            String ip = handshakeRequest.getRemoteIpAddress();
+            if ((ip.equals("127.0.0.1") || ip.equals("0:0:0:0:0:0:0:1")) && handshakeRequest.getHeaders().containsKey("x-neo-real-ip")) {
+                this.remoteIp = handshakeRequest.getHeaders().get("x-neo-real-ip");
+            } else {
+                this.remoteIp = ip;
+            }
         }
 
         public String getRemoteIp() {
@@ -385,8 +408,24 @@ public class WebAdminServer extends NanoWSD {
             return lastActiveTime;
         }
 
+        private void startHeartbeat() {
+            ThreadManager.runAsync(() -> {
+                while (isConnected && isOpen()) {
+                    try {
+                        Thread.sleep(1500);
+                        super.ping(new byte[0]);
+                    } catch (Exception e) {
+                        break;
+                    }
+                }
+            });
+        }
+
         @Override
         protected void onOpen() {
+            isConnected = true;
+            startHeartbeat();
+
             String token = this.getHandshakeRequest().getParms().get("token");
             this.sessionType = WebAdminManager.verifyTokenAndGetType(token);
             synchronized (LOCK) {
@@ -455,6 +494,7 @@ public class WebAdminServer extends NanoWSD {
 
         @Override
         protected void onClose(WebSocketFrame.CloseCode code, String reason, boolean initiatedByRemote) {
+            isConnected = false;
             synchronized (LOCK) {
                 if (sessionType == 1 && myId.equals(activeTempSessionId)) {
                     activeTempSocket = null;
@@ -549,6 +589,8 @@ public class WebAdminServer extends NanoWSD {
                 }
             });
         }
+
+        // ... (剩余方法保持不变: handleRenameFile, handleMoveFiles, handleListFiles, handleReadFile, handleSaveFile, handleDeleteFile, deleteRecursively, handleCreateFile, handleGetDashboard, handleRefreshLocation, handleRefreshBanLocation, sendJson, sendJsonRaw, onException) ...
 
         private void handleRenameFile(String payload) {
             try {

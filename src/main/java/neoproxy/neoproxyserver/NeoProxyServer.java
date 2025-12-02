@@ -29,8 +29,8 @@ import java.security.ProtectionDomain;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.locks.ReentrantLock;
 
-import static java.net.SocketOptions.SO_TIMEOUT;
 import static neoproxy.neoproxyserver.core.HostClient.waitForTcpEnabled;
 import static neoproxy.neoproxyserver.core.HostClient.waitForUDPEnabled;
 import static neoproxy.neoproxyserver.core.InternetOperator.*;
@@ -40,6 +40,13 @@ import static neoproxy.neoproxyserver.core.management.SequenceKey.DYNAMIC_PORT;
 import static neoproxy.neoproxyserver.core.management.SequenceKey.initKeyDatabase;
 import static neoproxy.neoproxyserver.core.threads.TCPTransformer.BUFFER_LEN;
 
+/**
+ * NeoProxyServer (Java 21 Virtual Threads Compatible)
+ * <p>
+ * 修改说明：
+ * 1. 移除了所有 synchronized 关键字，防止虚拟线程 Pinning。
+ * 2. 引入 UDP_GLOBAL_LOCK (ReentrantLock) 保护 UDPTransformer 连接列表。
+ */
 public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = getJarDirOrUserDir();
     public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
@@ -54,6 +61,8 @@ public class NeoProxyServer {
                                                         \s
                                                          \
             """;
+    // 【新增】全局 UDP 连接锁，替代 synchronized (UDPTransformer.udpClientConnections)
+    private static final ReentrantLock UDP_GLOBAL_LOCK = new ReentrantLock();
     public static String VERSION = getFromAppProperties("app.version");
     public static String EXPECTED_CLIENT_VERSION = getFromAppProperties("app.expected.client.version");
     public static final CopyOnWriteArrayList<String> availableVersions = ArrayUtils.toCopyOnWriteArrayListWithLoop(EXPECTED_CLIENT_VERSION.split("\\|"));
@@ -196,7 +205,7 @@ public class NeoProxyServer {
         if (hostServerHook == null) {
             SlientException.throwException();
         }
-        hostServerHook.setSoTimeout(SO_TIMEOUT);
+        hostServerHook.setSoTimeout(TransferSocketAdapter.SO_TIMEOUT);
 
         String clientAddress = hostServerHook.getInetAddress().getHostAddress();
 
@@ -214,6 +223,7 @@ public class NeoProxyServer {
     }
 
     public static void handleTransformerServiceWithNewThread(HostClient hostClient) {
+        // 【TCP 服务线程】
         ThreadManager.runAsync(() -> {
             while (!hostClient.isStopped()) {
                 Socket client;
@@ -238,13 +248,9 @@ public class NeoProxyServer {
                         // =========================================================
 
                         // 1. 延迟 200ms。
-                        // 如果是 ITDog TCPing，它通常在连上后立刻记录时间并发送 FIN/RST。
-                        // 200ms 足够让这个断开信号传到服务端。
                         Sleeper.sleep(200);
 
                         // 2. 准备 "无损嗅探"
-                        // 为什么不能只用 client.isClosed()?
-                        // 因为 Java Socket 不会自动探测远程断开，除非你尝试 Read。
                         PushbackInputStream pbis = new PushbackInputStream(client.getInputStream(), 1);
 
                         // 设置 1ms 的极短超时，用于探测
@@ -255,19 +261,15 @@ public class NeoProxyServer {
                             int b = pbis.read();
                             if (b == -1) {
                                 // 读到了 EOF，说明对方已经断开了！
-                                // 100% 确认是 TCPing 或端口扫描
                                 client.close();
-                                return; // 直接丢弃，不通知内网
+                                return;
                             }
                             // 读到了数据（比如 RDP 的 Hello 包）
-                            // 必须推回去！否则后续 Transformer 会丢数据导致连接失败
                             pbis.unread(b);
 
                         } catch (SocketTimeoutException e) {
                             // 超时了：说明连接活着，但是没发数据。
-                            // 这种情况下我们无法区分是 "还在连接中的 TCPing" 还是 "被动协议(如SSH)"。
-                            // 为了通用性，我们必须放行。
-                            // 但由于前面延迟了 200ms，绝大多数 TCPing 此时应该已经断开了并被上面的 b==-1 捕获。
+                            // 无法区分 TCPing 还是被动协议，放行。
                         } catch (IOException e) {
                             // 读出错（比如 Connection Reset），说明是 TCPing
                             client.close();
@@ -282,7 +284,6 @@ public class NeoProxyServer {
                         // =========================================================
 
                         long socketID = AtomicIdGenerator.GLOBAL.nextId();
-
                         // 此时调用，无需全局锁 (依赖 SecureSocket 写锁)
                         sendCommand(hostClient, "sendSocketTCP;" + socketID + ";" + getInternetAddressAndPort(client));
                         hostClient.refreshHeartbeat();
@@ -308,7 +309,8 @@ public class NeoProxyServer {
                 });
             }
         });
-// 【UDP 服务线程】
+
+        // 【UDP 服务线程】
         ThreadManager.runAsync(() -> {
             while (!hostClient.isStopped()) {
                 byte[] buffer = new byte[BUFFER_LEN];
@@ -328,9 +330,10 @@ public class NeoProxyServer {
                 final String clientIP = datagramPacket.getAddress().getHostAddress();
                 final int clientOutPort = datagramPacket.getPort();
 
-                // 锁住 UDP 连接表，查找是否存在已有会话
-                synchronized (UDPTransformer.udpClientConnections) {
-                    UDPTransformer existingReply = null;
+                // 【核心修改】替换 synchronized (UDPTransformer.udpClientConnections) 为 ReentrantLock
+                UDPTransformer existingReply = null;
+                UDP_GLOBAL_LOCK.lock();
+                try {
                     for (UDPTransformer reply : UDPTransformer.udpClientConnections) {
                         if (reply.getClientOutPort() == clientOutPort && reply.getClientIP().equals(clientIP) && reply.isRunning()) {
                             existingReply = reply;
@@ -342,41 +345,50 @@ public class NeoProxyServer {
                         // 已有会话，直接转发数据
                         byte[] serializedData = UDPTransformer.serializeDatagramPacket(datagramPacket);
                         existingReply.addPacketToSend(serializedData);
-                    } else {
-                        // 新会话，异步处理建立过程
-                        ThreadManager.runAsync(() -> {
-                            try {
-                                long socketID = AtomicIdGenerator.GLOBAL.nextId();
-
-                                // 【核心修改】移除 synchronized (hostClient)
-                                // SecureSocket 现已线程安全，直接发送指令，互不阻塞
-                                sendCommand(hostClient, "sendSocketUDP;" + socketID + ";" + getInternetAddressAndPort(datagramPacket));
-                                hostClient.refreshHeartbeat();
-
-                                HostReply hostReply;
-                                try {
-                                    hostReply = TransferSocketAdapter.getHostReply(socketID, TransferSocketAdapter.CONN_TYPE.UDP);
-                                } catch (SocketTimeoutException e) {
-                                    ServerLogger.sayClientSuccConnectToChaSerButHostClientTimeOut(hostClient);
-                                    return;
-                                }
-
-                                UDPTransformer newUdpTransformer = new UDPTransformer(hostClient, hostReply, datagramSocket, clientIP, clientOutPort);
-                                synchronized (UDPTransformer.udpClientConnections) {
-                                    UDPTransformer.udpClientConnections.add(newUdpTransformer);
-                                }
-                                ThreadManager.runAsync(newUdpTransformer);
-
-                                byte[] firstData = UDPTransformer.serializeDatagramPacket(datagramPacket);
-                                newUdpTransformer.addPacketToSend(firstData);
-
-                                ServerLogger.sayClientUDPConnectBuildUpInfo(hostClient, datagramPacket);
-
-                            } catch (Exception e) {
-                                debugOperation(e);
-                            }
-                        });
                     }
+                } finally {
+                    UDP_GLOBAL_LOCK.unlock();
+                }
+
+                // 如果未找到现有会话，则创建新会话（放在锁外进行 IO 操作，避免长时间持有锁）
+                if (existingReply == null) {
+                    ThreadManager.runAsync(() -> {
+                        try {
+                            long socketID = AtomicIdGenerator.GLOBAL.nextId();
+
+                            // SecureSocket 现已线程安全，直接发送指令，互不阻塞
+                            sendCommand(hostClient, "sendSocketUDP;" + socketID + ";" + getInternetAddressAndPort(datagramPacket));
+                            hostClient.refreshHeartbeat();
+
+                            HostReply hostReply;
+                            try {
+                                hostReply = TransferSocketAdapter.getHostReply(socketID, TransferSocketAdapter.CONN_TYPE.UDP);
+                            } catch (SocketTimeoutException e) {
+                                ServerLogger.sayClientSuccConnectToChaSerButHostClientTimeOut(hostClient);
+                                return;
+                            }
+
+                            UDPTransformer newUdpTransformer = new UDPTransformer(hostClient, hostReply, datagramSocket, clientIP, clientOutPort);
+
+                            // 【核心修改】再次加锁，将新连接加入列表
+                            UDP_GLOBAL_LOCK.lock();
+                            try {
+                                UDPTransformer.udpClientConnections.add(newUdpTransformer);
+                            } finally {
+                                UDP_GLOBAL_LOCK.unlock();
+                            }
+
+                            ThreadManager.runAsync(newUdpTransformer);
+
+                            byte[] firstData = UDPTransformer.serializeDatagramPacket(datagramPacket);
+                            newUdpTransformer.addPacketToSend(firstData);
+
+                            ServerLogger.sayClientUDPConnectBuildUpInfo(hostClient, datagramPacket);
+
+                        } catch (Exception e) {
+                            debugOperation(e);
+                        }
+                    });
                 }
             }
         });

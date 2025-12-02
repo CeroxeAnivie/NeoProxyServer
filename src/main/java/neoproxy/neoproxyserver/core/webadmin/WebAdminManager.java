@@ -14,11 +14,24 @@ import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * WebAdminManager (Java 21 Virtual Threads Compatible)
+ * <p>
+ * 修改：使用 ReentrantLock + Condition 替代 synchronized + wait。
+ */
 public class WebAdminManager {
 
     private static final long TEMP_TOKEN_VALIDITY_MS = 5 * 60 * 1000;
-    private static final Object MANAGER_LOCK = new Object();
+
+    // 【修改】使用 ReentrantLock 替代 Object lock
+    private static final ReentrantLock MANAGER_LOCK = new ReentrantLock();
+    // 【修改】用于 restart 中的等待
+    private static final Condition RESTART_CONDITION = MANAGER_LOCK.newCondition();
+
     public static int WEB_ADMIN_PORT = 44803;
 
     // 内部运行的真实服务器
@@ -45,19 +58,23 @@ public class WebAdminManager {
     }
 
     private static void startServer() {
-        synchronized (MANAGER_LOCK) {
+        MANAGER_LOCK.lock();
+        try {
             if (isRunning || isStarting) return;
             isStarting = true;
+        } finally {
+            MANAGER_LOCK.unlock();
         }
 
         ThreadManager.runAsync(() -> {
             try {
-                synchronized (MANAGER_LOCK) {
+                MANAGER_LOCK.lock();
+                try {
                     if (!isStarting) return;
 
                     // 1. 启动内部 NanoHTTPD 服务器 (绑定到 localhost 随机端口)
                     internalServer = new WebAdminServer(0); // 0 = 随机端口
-                    internalServer.start(5000, false); // 内部超时设为5秒即可，因为前面有网关挡着
+                    internalServer.start(5000, false);
 
                     // 获取内部服务器实际绑定的端口
                     int internalPort = internalServer.getListeningPort();
@@ -71,19 +88,30 @@ public class WebAdminManager {
                     ServerLogger.infoWithSource("WebAdmin", "webAdmin.started", WEB_ADMIN_PORT);
 
                     // 3. 开始接收并过滤流量
-                    while (isRunning) {
-                        try {
-                            Socket client = gatewaySocket.accept();
-                            // 为每个连接启动一个 Shield 处理器
-                            ThreadManager.runAsync(() -> handleShieldConnection(client, internalPort));
-                        } catch (IOException e) {
-                            if (isRunning) ServerLogger.errorWithSource("WebAdmin", "Accept Error", e);
-                        }
+                    // 注意：accept 是阻塞操作，不应持有锁
+                } finally {
+                    MANAGER_LOCK.unlock();
+                }
+
+                // 在锁外运行 accept 循环
+                while (isRunning) {
+                    try {
+                        // 这里的 Socket accept 不需要锁
+                        Socket client = gatewaySocket.accept();
+                        // 为每个连接启动一个 Shield 处理器
+                        ThreadManager.runAsync(() -> handleShieldConnection(client, internalServer.getListeningPort()));
+                    } catch (IOException e) {
+                        if (isRunning) ServerLogger.errorWithSource("WebAdmin", "Accept Error", e);
+                    } catch (NullPointerException e) {
+                        // internalServer 可能为空（shutdown时）
+                        break;
                     }
                 }
+
             } catch (IOException e) {
                 // 启动失败处理
-                synchronized (MANAGER_LOCK) {
+                MANAGER_LOCK.lock();
+                try {
                     isRunning = false;
                     isStarting = false;
                     if (internalServer != null) internalServer.stop();
@@ -93,7 +121,10 @@ public class WebAdminManager {
                     } catch (Exception ignored) {
                     }
                     gatewaySocket = null;
+                } finally {
+                    MANAGER_LOCK.unlock();
                 }
+
                 if (e.getMessage() != null && e.getMessage().contains("bind")) {
                     ServerLogger.errorWithSource("WebAdmin", "webAdmin.bindFailed", WEB_ADMIN_PORT);
                 } else {
@@ -140,9 +171,6 @@ public class WebAdminManager {
             backend.setSoTimeout(0); // 内部连接无限超时
 
             // E. 注入 X-Neo-Real-IP 头 (针对 HTTP 流量)
-            // 简单处理：读取第一行请求行，然后插入 Header
-            // 注意：这只是一个简化的注入，假设了标准的 HTTP 请求结构
-
             OutputStream backendOut = backend.getOutputStream();
 
             // 寻找请求行的结束位置 (\r\n)
@@ -156,25 +184,17 @@ public class WebAdminManager {
 
             if (firstLineEnd != -1) {
                 // 是 HTTP 请求 -> 注入 Header
-                // 1. 写入请求行 (例如 "GET / HTTP/1.1\r\n")
                 backendOut.write(buffer, 0, firstLineEnd + 2);
-
-                // 2. 写入我们的真实 IP Header
                 String header = "X-Neo-Real-IP: " + remoteIp + "\r\n";
                 backendOut.write(header.getBytes(StandardCharsets.UTF_8));
-
-                // 3. 写入剩余的缓冲区数据
                 backendOut.write(buffer, firstLineEnd + 2, bytesRead - (firstLineEnd + 2));
             } else {
-                // 不是标准 HTTP 或包被截断 -> 直接透传 (不做注入，但流量已放行)
                 backendOut.write(buffer, 0, bytesRead);
             }
             backendOut.flush();
 
             // F. 启动全双工管道
-            // 1. Client (Rest) -> Backend
-            ThreadManager.runAsync(() -> pipe(pbis, backend)); // 注意用 pbis
-            // 2. Backend -> Client
+            ThreadManager.runAsync(() -> pipe(pbis, backend));
             ThreadManager.runAsync(() -> pipe(backend, client));
 
         } catch (Exception e) {
@@ -210,7 +230,8 @@ public class WebAdminManager {
     }
 
     public static void shutdown() {
-        synchronized (MANAGER_LOCK) {
+        MANAGER_LOCK.lock();
+        try {
             isStarting = false;
             isRunning = false;
             if (internalServer != null) {
@@ -224,17 +245,23 @@ public class WebAdminManager {
                 }
                 gatewaySocket = null;
             }
+        } finally {
+            MANAGER_LOCK.unlock();
         }
     }
 
     public static void restart() {
-        synchronized (MANAGER_LOCK) {
+        MANAGER_LOCK.lock();
+        try {
             shutdown();
             try {
-                MANAGER_LOCK.wait(200);
+                // 使用 Condition 等待，释放锁，给操作系统一点时间释放端口
+                RESTART_CONDITION.await(200, TimeUnit.MILLISECONDS);
             } catch (InterruptedException ignored) {
             }
             startServer();
+        } finally {
+            MANAGER_LOCK.unlock();
         }
     }
 

@@ -44,4 +44,7 @@ clients
 sk.mv.db
 sk.trace.db
 
+banList.txt.bak
+banList.json
 banList.txt
+

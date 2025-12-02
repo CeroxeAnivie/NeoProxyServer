@@ -12,6 +12,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -19,7 +20,9 @@ import static neoproxy.neoproxyserver.NeoProxyServer.availableHostClient;
 import static neoproxy.neoproxyserver.NeoProxyServer.hostServerHookServerSocket;
 
 /**
- * IP 封禁管理器 (JSON版 - 格式化存储 - 无时间戳)
+ * IP 封禁管理器 (Java 21 Virtual Threads Compatible)
+ * <p>
+ * 修改：使用 ReentrantLock 替代 synchronized，防止文件 IO 导致虚拟线程 Pinning。
  */
 public class IPChecker {
 
@@ -35,16 +38,24 @@ public class IPChecker {
     private static final String IPV4_REGEX =
             "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$";
     private static final Pattern IPV4_PATTERN = Pattern.compile(IPV4_REGEX);
+    // 【新增】全局锁
+    private static final ReentrantLock LOCK = new ReentrantLock();
     public static volatile boolean ENABLE_BAN = true;
 
-    public static synchronized void loadBannedIPs() {
-        if (BAN_LIST_TXT_OLD.exists() && !BAN_LIST_JSON.exists()) {
-            ServerLogger.infoWithSource("IPChecker", "ipChecker.migrating", "banList.txt -> banList.json");
-            migrateTxtToJson();
+    public static void loadBannedIPs() {
+        LOCK.lock();
+        try {
+            if (BAN_LIST_TXT_OLD.exists() && !BAN_LIST_JSON.exists()) {
+                ServerLogger.infoWithSource("IPChecker", "ipChecker.migrating", "banList.txt -> banList.json");
+                migrateTxtToJson();
+            }
+            reloadFromJson();
+        } finally {
+            LOCK.unlock();
         }
-        reloadFromJson();
     }
 
+    // 内部方法，调用前已持有锁
     private static void migrateTxtToJson() {
         List<BanInfo> tempList = new ArrayList<>();
         try (BufferedReader reader = new BufferedReader(
@@ -54,7 +65,6 @@ public class IPChecker {
                 String ip = line.trim();
                 if (!ip.isEmpty() && isValidIP(ip)) {
                     IPGeolocationHelper.LocationInfo info = IPGeolocationHelper.getLocationInfo(ip);
-                    // 不再记录时间
                     tempList.add(new BanInfo(ip, info.location(), info.isp()));
                 }
             }
@@ -93,7 +103,6 @@ public class IPChecker {
             String content = Files.readString(BAN_LIST_JSON.toPath(), StandardCharsets.UTF_8);
             if (content == null || content.isBlank()) return;
 
-            // 简单的正则匹配：只提取 ip, location, isp
             Pattern pattern = Pattern.compile("\"ip\":\\s*\"(.*?)\"[\\s\\S]*?\"location\":\\s*\"(.*?)\"[\\s\\S]*?\"isp\":\\s*\"(.*?)\"");
             Matcher matcher = pattern.matcher(content);
 
@@ -116,36 +125,45 @@ public class IPChecker {
 
     /**
      * 保存格式化的 JSON (Pretty Print)
+     * 调用此方法必须持有锁，或由外部加锁
      */
-    private static synchronized boolean saveToJson() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("[\n");
+    private static boolean saveToJson() {
+        // 由于 loadBannedIPs 和 exec 都会调用此方法，且它们都加了锁，
+        // 这里的 synchronized 可以移除，依赖外部 ReentrantLock 即可。
+        // 为防意外直接调用，也可以再次 lock()，ReentrantLock 是可重入的。
+        LOCK.lock();
+        try {
+            StringBuilder sb = new StringBuilder();
+            sb.append("[\n");
 
-        Iterator<BanInfo> iterator = bannedIPMap.values().iterator();
-        while (iterator.hasNext()) {
-            BanInfo info = iterator.next();
-            sb.append("  {\n");
-            sb.append(String.format("    \"ip\": \"%s\",\n", info.ip));
-            sb.append(String.format("    \"location\": \"%s\",\n", escapeJson(info.location)));
-            sb.append(String.format("    \"isp\": \"%s\"\n", escapeJson(info.isp))); // 最后一项不带逗号
-            sb.append("  }");
+            Iterator<BanInfo> iterator = bannedIPMap.values().iterator();
+            while (iterator.hasNext()) {
+                BanInfo info = iterator.next();
+                sb.append("  {\n");
+                sb.append(String.format("    \"ip\": \"%s\",\n", info.ip));
+                sb.append(String.format("    \"location\": \"%s\",\n", escapeJson(info.location)));
+                sb.append(String.format("    \"isp\": \"%s\"\n", escapeJson(info.isp)));
+                sb.append("  }");
 
-            if (iterator.hasNext()) {
-                sb.append(",\n");
-            } else {
-                sb.append("\n");
+                if (iterator.hasNext()) {
+                    sb.append(",\n");
+                } else {
+                    sb.append("\n");
+                }
             }
-        }
-        sb.append("]");
+            sb.append("]");
 
-        try (BufferedWriter writer = new BufferedWriter(
-                new OutputStreamWriter(new FileOutputStream(BAN_LIST_JSON), StandardCharsets.UTF_8))) {
-            writer.write(sb.toString());
-            writer.flush();
-            return true;
-        } catch (IOException e) {
-            ServerLogger.errorWithSource("IPChecker", "ipChecker.failedToWriteJson", e.getMessage());
-            return false;
+            try (BufferedWriter writer = new BufferedWriter(
+                    new OutputStreamWriter(new FileOutputStream(BAN_LIST_JSON), StandardCharsets.UTF_8))) {
+                writer.write(sb.toString());
+                writer.flush();
+                return true;
+            } catch (IOException e) {
+                ServerLogger.errorWithSource("IPChecker", "ipChecker.failedToWriteJson", e.getMessage());
+                return false;
+            }
+        } finally {
+            LOCK.unlock();
         }
     }
 
@@ -161,54 +179,58 @@ public class IPChecker {
         ignoreIPs.addAll(bannedIPMap.keySet());
     }
 
-    public static synchronized boolean exec(String ip, int execMode) {
+    public static boolean exec(String ip, int execMode) {
         if (ip == null || ip.isEmpty()) return false;
 
-        switch (execMode) {
-            case DO_BAN:
-                if (!ENABLE_BAN) return false;
-                if (bannedIPMap.containsKey(ip)) return true;
+        LOCK.lock();
+        try {
+            switch (execMode) {
+                case DO_BAN:
+                    if (!ENABLE_BAN) return false;
+                    if (bannedIPMap.containsKey(ip)) return true;
 
-                for (HostClient client : availableHostClient) {
-                    String addr = client.getHostServerHook().getInetAddress().getHostAddress();
-                    if (ip.equals(addr)) {
-                        client.close();
+                    for (HostClient client : availableHostClient) {
+                        String addr = client.getHostServerHook().getInetAddress().getHostAddress();
+                        if (ip.equals(addr)) {
+                            client.close();
+                        }
                     }
-                }
 
-                IPGeolocationHelper.LocationInfo locInfo = IPGeolocationHelper.getLocationInfo(ip);
-                // 不记录时间
-                BanInfo info = new BanInfo(ip, locInfo.location(), locInfo.isp());
+                    IPGeolocationHelper.LocationInfo locInfo = IPGeolocationHelper.getLocationInfo(ip);
+                    BanInfo info = new BanInfo(ip, locInfo.location(), locInfo.isp());
 
-                bannedIPMap.put(ip, info);
+                    bannedIPMap.put(ip, info);
 
-                if (saveToJson()) {
-                    syncIgnoreIPs();
-                    ServerLogger.infoWithSource("IPChecker", "ipChecker.ipBanned", ip + " (" + info.location + ")");
-                    return true;
-                } else {
+                    if (saveToJson()) {
+                        syncIgnoreIPs();
+                        ServerLogger.infoWithSource("IPChecker", "ipChecker.ipBanned", ip + " (" + info.location + ")");
+                        return true;
+                    } else {
+                        bannedIPMap.remove(ip);
+                        return false;
+                    }
+
+                case UNBAN:
+                    if (!bannedIPMap.containsKey(ip)) return true;
+
                     bannedIPMap.remove(ip);
+                    if (saveToJson()) {
+                        syncIgnoreIPs();
+                        ServerLogger.infoWithSource("IPChecker", "ipChecker.ipUnbanned", ip);
+                        return true;
+                    } else {
+                        reloadFromJson();
+                        return false;
+                    }
+
+                case CHECK_IS_BAN:
+                    return ENABLE_BAN && bannedIPMap.containsKey(ip);
+
+                default:
                     return false;
-                }
-
-            case UNBAN:
-                if (!bannedIPMap.containsKey(ip)) return true;
-
-                bannedIPMap.remove(ip);
-                if (saveToJson()) {
-                    syncIgnoreIPs();
-                    ServerLogger.infoWithSource("IPChecker", "ipChecker.ipUnbanned", ip);
-                    return true;
-                } else {
-                    reloadFromJson();
-                    return false;
-                }
-
-            case CHECK_IS_BAN:
-                return ENABLE_BAN && bannedIPMap.containsKey(ip);
-
-            default:
-                return false;
+            }
+        } finally {
+            LOCK.unlock();
         }
     }
 
@@ -243,7 +265,6 @@ public class IPChecker {
             wIsp = Math.max(wIsp, getDisplayWidth(i.isp));
         }
 
-        // 不再显示时间列
         String format = "│ %-" + wIp + "s │ %-" + wLoc + "s │ %-" + wIsp + "s │\n";
         String border = "─".repeat(wIp + 2) + "┬" + "─".repeat(wLoc + 2) + "┬" + "─".repeat(wIsp + 2);
 
@@ -269,7 +290,6 @@ public class IPChecker {
         return len;
     }
 
-    // 数据结构：仅保留 IP、位置、运营商
     public static class BanInfo {
         String ip;
         String location;

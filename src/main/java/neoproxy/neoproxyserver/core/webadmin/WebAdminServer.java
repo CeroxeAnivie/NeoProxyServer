@@ -19,6 +19,7 @@ import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Filter;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
@@ -27,12 +28,21 @@ import java.util.zip.ZipOutputStream;
 
 import static neoproxy.neoproxyserver.NeoProxyServer.debugOperation;
 
+/**
+ * WebAdminServer (Java 21 Virtual Threads Compatible)
+ * <p>
+ * 修改：使用统一的 ReentrantLock 替代 synchronized (LOCK) 和 synchronized (logHistory)。
+ * 解决了潜在的锁顺序死锁问题，并防止 IO Pinning。
+ */
 public class WebAdminServer extends NanoWSD {
 
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-    private static final List<String> logHistory = Collections.synchronizedList(new LinkedList<>());
+    private static final LinkedList<String> logHistory = new LinkedList<>(); // 不再使用 synchronizedList，由 GLOBAL_LOCK 保护
     private static final int MAX_HISTORY_SIZE = 1000;
-    private static final Object LOCK = new Object();
+
+    // 【修改】全局锁，保护 Socket 状态和日志历史
+    private static final ReentrantLock GLOBAL_LOCK = new ReentrantLock();
+
     private static final long ZOMBIE_TIMEOUT_MS = 10000;
     private static final Map<String, Long> lastConflictWarning = new HashMap<>();
     private static volatile AdminWebSocket activeTempSocket = null;
@@ -86,8 +96,10 @@ public class WebAdminServer extends NanoWSD {
         saveAndBroadcast(String.format("{\"type\": \"log\", \"payload\": \"%s\"}", safeLog));
     }
 
+    // 必须在持有 GLOBAL_LOCK 时调用，或允许并发（此处实现为加锁以确保安全）
     private static void broadcastJson(String json) {
-        synchronized (LOCK) {
+        GLOBAL_LOCK.lock();
+        try {
             if (activeTempSocket != null && activeTempSocket.isOpen()) {
                 try {
                     activeTempSocket.send(json);
@@ -100,15 +112,33 @@ public class WebAdminServer extends NanoWSD {
                 } catch (IOException ignored) {
                 }
             }
+        } finally {
+            GLOBAL_LOCK.unlock();
         }
     }
 
     private static void saveAndBroadcast(String json) {
-        synchronized (logHistory) {
+        GLOBAL_LOCK.lock();
+        try {
             if (logHistory.size() >= MAX_HISTORY_SIZE) logHistory.removeFirst();
             logHistory.add(json);
+
+            // 在锁内广播，防止乱序
+            if (activeTempSocket != null && activeTempSocket.isOpen()) {
+                try {
+                    activeTempSocket.send(json);
+                } catch (IOException ignored) {
+                }
+            }
+            if (activePermSocket != null && activePermSocket.isOpen()) {
+                try {
+                    activePermSocket.send(json);
+                } catch (IOException ignored) {
+                }
+            }
+        } finally {
+            GLOBAL_LOCK.unlock();
         }
-        broadcastJson(json);
     }
 
     private static String formatLog(String msg) {
@@ -120,10 +150,8 @@ public class WebAdminServer extends NanoWSD {
         return input.replace("\\", "\\\\").replace("\"", "\\\"").replace("\b", "\\b").replace("\f", "\\f").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
     }
 
-    // 【修复】获取真实 IP 的辅助方法
     private String getRealRemoteIp(IHTTPSession session) {
         String remoteIp = session.getRemoteIpAddress();
-        // 如果是本地回环地址（说明经过了 Shield 网关），则尝试获取真实 IP 头
         if (remoteIp.equals("127.0.0.1") || remoteIp.equals("0:0:0:0:0:0:0:1")) {
             String realIp = session.getHeaders().get("x-neo-real-ip");
             if (realIp != null && !realIp.isEmpty()) {
@@ -136,7 +164,6 @@ public class WebAdminServer extends NanoWSD {
     @Override
     public Response serve(IHTTPSession session) {
         String token = session.getParms().get("token");
-        // 使用修正后的 IP 获取逻辑
         String remoteIp = getRealRemoteIp(session);
 
         int tokenType = WebAdminManager.verifyTokenAndGetType(token);
@@ -310,7 +337,8 @@ public class WebAdminServer extends NanoWSD {
     }
 
     private boolean checkConflictWithZombieDetection(int tokenType, String remoteIp) {
-        synchronized (LOCK) {
+        GLOBAL_LOCK.lock();
+        try {
             AdminWebSocket targetSocket = (tokenType == 1) ? activeTempSocket : activePermSocket;
             if (targetSocket == null) return false;
             long lastActive = targetSocket.getLastActiveTime();
@@ -342,6 +370,8 @@ public class WebAdminServer extends NanoWSD {
                 return true;
             }
             return false;
+        } finally {
+            GLOBAL_LOCK.unlock();
         }
     }
 
@@ -369,7 +399,8 @@ public class WebAdminServer extends NanoWSD {
     }
 
     public void closeTempConnections() {
-        synchronized (LOCK) {
+        GLOBAL_LOCK.lock();
+        try {
             if (activeTempSocket != null) {
                 try {
                     activeTempSocket.close(WebSocketFrame.CloseCode.NormalClosure, "Token Reset", false);
@@ -378,6 +409,8 @@ public class WebAdminServer extends NanoWSD {
                 activeTempSocket = null;
                 activeTempSessionId = null;
             }
+        } finally {
+            GLOBAL_LOCK.unlock();
         }
     }
 
@@ -390,8 +423,6 @@ public class WebAdminServer extends NanoWSD {
 
         public AdminWebSocket(IHTTPSession handshakeRequest) {
             super(handshakeRequest);
-
-            // 【修复】正确获取真实IP，兼容Shield网关模式
             String ip = handshakeRequest.getRemoteIpAddress();
             if ((ip.equals("127.0.0.1") || ip.equals("0:0:0:0:0:0:0:1")) && handshakeRequest.getHeaders().containsKey("x-neo-real-ip")) {
                 this.remoteIp = handshakeRequest.getHeaders().get("x-neo-real-ip");
@@ -428,7 +459,9 @@ public class WebAdminServer extends NanoWSD {
 
             String token = this.getHandshakeRequest().getParms().get("token");
             this.sessionType = WebAdminManager.verifyTokenAndGetType(token);
-            synchronized (LOCK) {
+
+            GLOBAL_LOCK.lock();
+            try {
                 if (sessionType == 1) {
                     if (activeTempSocket != null && activeTempSocket != this) {
                         if (System.currentTimeMillis() - activeTempSocket.getLastActiveTime() > ZOMBIE_TIMEOUT_MS) {
@@ -474,13 +507,17 @@ public class WebAdminServer extends NanoWSD {
                     return;
                 }
                 lastConflictWarning.remove(remoteIp);
-            }
-            ServerLogger.infoWithSource("WebAdmin", "webAdmin.session.connected", remoteIp);
-            sendJson("logo", NeoProxyServer.ASCII_LOGO);
-            String msg = ServerLogger.getMessage("webAdmin.connected", remoteIp + (sessionType == 2 ? " (Perm)" : " (Temp)"));
-            sendJson("log", formatLog(msg));
-            synchronized (logHistory) {
+
+                // 发送历史日志（在锁内进行，保证顺序）
+                ServerLogger.infoWithSource("WebAdmin", "webAdmin.session.connected", remoteIp);
+                sendJsonRaw("{\"type\": \"logo\", \"payload\": \"" + escapeJson(NeoProxyServer.ASCII_LOGO) + "\"}");
+                String msg = ServerLogger.getMessage("webAdmin.connected", remoteIp + (sessionType == 2 ? " (Perm)" : " (Temp)"));
+                sendJsonRaw("{\"type\": \"log\", \"payload\": \"" + escapeJson(formatLog(msg)) + "\"}");
+
                 for (String json : logHistory) sendJsonRaw(json);
+
+            } finally {
+                GLOBAL_LOCK.unlock();
             }
             lastActiveTime = System.currentTimeMillis();
         }
@@ -495,7 +532,8 @@ public class WebAdminServer extends NanoWSD {
         @Override
         protected void onClose(WebSocketFrame.CloseCode code, String reason, boolean initiatedByRemote) {
             isConnected = false;
-            synchronized (LOCK) {
+            GLOBAL_LOCK.lock();
+            try {
                 if (sessionType == 1 && myId.equals(activeTempSessionId)) {
                     activeTempSocket = null;
                     activeTempSessionId = null;
@@ -505,6 +543,8 @@ public class WebAdminServer extends NanoWSD {
                     activePermSessionId = null;
                     ServerLogger.infoWithSource("WebAdmin", "webAdmin.session.disconnected");
                 }
+            } finally {
+                GLOBAL_LOCK.unlock();
             }
         }
 
@@ -518,10 +558,15 @@ public class WebAdminServer extends NanoWSD {
             lastActiveTime = System.currentTimeMillis();
             String text = message.getTextPayload().trim();
             if (text.equalsIgnoreCase("PING") || text.equalsIgnoreCase("P")) return;
-            synchronized (LOCK) {
+
+            GLOBAL_LOCK.lock();
+            try {
                 if (sessionType == 1 && !myId.equals(activeTempSessionId)) return;
                 if (sessionType == 2 && !myId.equals(activePermSessionId)) return;
+            } finally {
+                GLOBAL_LOCK.unlock();
             }
+
             if (text.isEmpty()) return;
 
             ThreadManager.runAsync(() -> {
@@ -589,8 +634,6 @@ public class WebAdminServer extends NanoWSD {
                 }
             });
         }
-
-        // ... (剩余方法保持不变: handleRenameFile, handleMoveFiles, handleListFiles, handleReadFile, handleSaveFile, handleDeleteFile, deleteRecursively, handleCreateFile, handleGetDashboard, handleRefreshLocation, handleRefreshBanLocation, sendJson, sendJsonRaw, onException) ...
 
         private void handleRenameFile(String payload) {
             try {
@@ -776,10 +819,8 @@ public class WebAdminServer extends NanoWSD {
                 tcpClientCount += hc.getActiveTcpSockets().size();
                 if (hc.getKey() != null) totalBalance += hc.getKey().getBalance();
             }
-            // 获取 UDP 连接总数
             int udpClientCount = UDPTransformer.udpClientConnections.size();
 
-            // 在 JSON 中添加 "uc" (UDP Count) 字段
             String json = String.format(Locale.US, "{\"hc\":%d, \"ec\":%d, \"uc\":%d, \"tb\":%.2f, \"v\":\"%s\", \"sv\":\"%s\", \"p\":\"%s\"}",
                     hostClientCount, tcpClientCount, udpClientCount, totalBalance, NeoProxyServer.VERSION, NeoProxyServer.EXPECTED_CLIENT_VERSION, NeoProxyServer.HOST_HOOK_PORT + " / " + NeoProxyServer.HOST_CONNECT_PORT);
             sendJson("dashboard_data", json);

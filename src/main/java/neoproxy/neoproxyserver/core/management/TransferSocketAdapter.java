@@ -46,13 +46,9 @@ public class TransferSocketAdapter implements Runnable {
         return t;
     });
 
-    // small pool to handle post-accept handshake (reading flags, inserting into maps)
-    // 使用可伸缩的线程池避免每次 accept 都 new Thread
-    private static final ExecutorService acceptHandlerPool = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r, "TransferSocketAdapter-AcceptHandler");
-        t.setDaemon(true);
-        return t;
-    });
+    private static final ExecutorService acceptHandlerPool = Executors.newThreadPerTaskExecutor(
+            Thread.ofVirtual().name("TransferSocketAdapter-Handler-", 0).factory()
+    );
 
     private static final AtomicBoolean cleanerStarted = new AtomicBoolean(false);
 
@@ -190,7 +186,8 @@ public class TransferSocketAdapter implements Runnable {
             final SecureSocket accepted = host;
             acceptHandlerPool.submit(() -> {
                 try {
-                    String[] flags = accepted.receiveStr().split(";");
+                    String[] flags = accepted.receiveStr(SO_TIMEOUT).split(";");
+                    accepted.setSoTimeout(0);//保险起见再调回去
                     String connectionType = flags[0];
                     long socketID = Long.parseLong(flags[1]);
 

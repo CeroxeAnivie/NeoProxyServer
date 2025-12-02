@@ -14,17 +14,18 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 
 import static neoproxy.neoproxyserver.NeoProxyServer.*;
 
 /**
- * 序列密钥管理类 (完整修复兼容版)
+ * 序列密钥管理类 (Java 21 Virtual Threads Compatible)
  * <p>
- * 修复特性：
- * 1. 采用“快照差分同步”机制，修复高并发下流量回退/无限刷流量漏洞。
- * 2. 完美保留 enableKey, disableKey, isOutOfDate 等旧有API，确保无副作用。
- * 3. 线程安全的 mineMib 方法，支持 UDP 高并发。
+ * 修改说明：
+ * 1. 移除了所有 synchronized 关键字，替换为 ReentrantLock，防止虚拟线程 Pinning。
+ * 2. 引入了 STATIC_CACHE_LOCK 用于控制 keyCache 的并发加载。
+ * 3. 实例操作使用独立的 ReentrantLock 保护。
  */
 public class SequenceKey {
 
@@ -34,29 +35,27 @@ public class SequenceKey {
     private static final String DB_URL = "jdbc:h2:./sk";
     private static final String DB_USER = "sa";
     private static final String DB_PASSWORD = "";
-    // 自动保存间隔（分钟）
     private static final long CLEANUP_INTERVAL_MINUTES = 1;
 
     private static final Pattern PURE_NUMBER_PATTERN = Pattern.compile("^\\d+$");
 
-    // 全局缓存池
+    // 缓存容器
     private static final Map<String, SequenceKey> keyCache = new ConcurrentHashMap<>();
+
+    // 【核心修复】全局静态锁，用于替代 synchronized(keyCache)
+    private static final ReentrantLock STATIC_CACHE_LOCK = new ReentrantLock();
 
     private static volatile boolean shutdownHookRegistered = false;
     private static ScheduledExecutorService cleanupScheduler;
 
     // ==================== 实例字段 ====================
-    protected final String name; // 唯一标识
+    protected final String name;
 
-    // --- 易变字段 ---
-    protected volatile double balance;      // 当前内存中的实时余额
+    // 【核心修复】实例级锁，保护单个 Key 的状态（如 balance）及相关 DB 操作
+    private final ReentrantLock lock = new ReentrantLock();
 
-    /**
-     * 【核心修复】上一次与数据库同步时的余额快照。
-     * 用途：计算内存中已经扣除但尚未保存到数据库的“脏数据”增量。
-     */
+    protected volatile double balance;
     protected volatile double lastSyncedBalance;
-
     protected volatile String expireTime;
     protected volatile long expireTimestamp;
     protected volatile String port;
@@ -64,13 +63,9 @@ public class SequenceKey {
     protected volatile boolean isEnable;
     protected volatile boolean enableWebHTML;
 
-    /**
-     * 私有构造函数
-     */
     private SequenceKey(String name, double balance, String expireTime, String port, double rate, boolean isEnable, boolean enableWebHTML) {
         this.name = name;
         this.balance = balance;
-        // 初始化时，假设数据库与内存一致
         this.lastSyncedBalance = balance;
         this.port = port;
         this.rate = rate;
@@ -116,7 +111,6 @@ public class SequenceKey {
                 }
             }
 
-            // 启动定时任务
             if (cleanupScheduler == null) {
                 cleanupScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
                     Thread t = new Thread(r, "SequenceKey-Manager-Thread");
@@ -139,6 +133,7 @@ public class SequenceKey {
         if (cleanupScheduler != null) {
             cleanupScheduler.shutdownNow();
         }
+        // keyCache 是 ConcurrentHashMap，迭代是弱一致性的，无需加锁
         for (SequenceKey key : keyCache.values()) {
             saveToDB(key);
         }
@@ -151,13 +146,11 @@ public class SequenceKey {
 
     private static void performMaintenance() {
         try {
-            // 禁用过期 Key
             try (Connection conn = getConnection();
                  PreparedStatement stmt = conn.prepareStatement(
                          "UPDATE sk SET isEnable = FALSE WHERE isEnable = TRUE AND PARSEDATETIME(expireTime, 'yyyy/MM/dd-HH:mm') < NOW()")) {
                 stmt.executeUpdate();
             }
-            // 自动保存缓存中的数据
             for (SequenceKey key : keyCache.values()) {
                 saveToDB(key);
             }
@@ -201,10 +194,14 @@ public class SequenceKey {
     public static SequenceKey getKeyFromDB(String name) {
         if (name == null) return null;
 
+        // 一级缓存检查
         SequenceKey cached = keyCache.get(name);
         if (cached != null) return cached;
 
-        synchronized (keyCache) {
+        // 【核心修复】使用 STATIC_CACHE_LOCK 替代 synchronized(keyCache)
+        STATIC_CACHE_LOCK.lock();
+        try {
+            // 双重检查
             cached = keyCache.get(name);
             if (cached != null) return cached;
 
@@ -213,6 +210,8 @@ public class SequenceKey {
                 keyCache.put(name, dbKey);
             }
             return dbKey;
+        } finally {
+            STATIC_CACHE_LOCK.unlock();
         }
     }
 
@@ -250,12 +249,14 @@ public class SequenceKey {
 
     /**
      * 将 Key 的状态保存到数据库。
-     * 成功后更新快照基准。
      */
     public static boolean saveToDB(SequenceKey sequenceKey) {
         if (sequenceKey == null) return false;
 
-        synchronized (sequenceKey) {
+        // 【核心修复】使用实例锁 sequenceKey.lock
+        // ReentrantLock 对虚拟线程友好，不会 Pinning
+        sequenceKey.lock.lock();
+        try {
             String sql = """
                     UPDATE sk 
                     SET balance = ?, expireTime = ?, port = ?, rate = ?, isEnable = ?, enableWebHTML = ?
@@ -264,12 +265,13 @@ public class SequenceKey {
             try (Connection conn = getConnection();
                  PreparedStatement stmt = conn.prepareStatement(sql)) {
 
-                double currentBalance = sequenceKey.getBalance();
+                // 使用 NoLock 内部方法防止自我调用时死锁（虽然 ReentrantLock 可重入，但直接访问更高效）
+                double currentBalance = sequenceKey.getBalanceNoLock();
 
                 stmt.setDouble(1, currentBalance);
                 stmt.setString(2, sequenceKey.getExpireTime());
                 stmt.setString(3, sequenceKey.port);
-                stmt.setDouble(4, sequenceKey.getRate());
+                stmt.setDouble(4, sequenceKey.getRateNoLock());
                 stmt.setBoolean(5, sequenceKey.isEnable);
                 stmt.setBoolean(6, sequenceKey.enableWebHTML);
                 stmt.setString(7, sequenceKey.getName());
@@ -284,10 +286,10 @@ public class SequenceKey {
                 debugOperation(e);
                 return false;
             }
+        } finally {
+            sequenceKey.lock.unlock();
         }
     }
-
-    // ==================== [恢复] 兼容性静态方法 ====================
 
     public static boolean createNewKey(String name, double balance, String expireTime, String portStr, double rate) {
         if (name == null || isKeyExistsByName(name)) return false;
@@ -324,25 +326,18 @@ public class SequenceKey {
         }
     }
 
-    // [恢复] 启用 Key
     public static boolean enableKey(String name) {
-        // 更新缓存
         SequenceKey key = keyCache.get(name);
-        if (key != null) key.setEnable(true); // Setter 只更新内存
-        // 更新数据库
+        if (key != null) key.setEnable(true);
         return updateKeyStatusInDB(name, true);
     }
 
-    // [恢复] 禁用 Key
     public static boolean disableKey(String name) {
-        // 更新缓存
         SequenceKey key = keyCache.get(name);
         if (key != null) key.setEnable(false);
-        // 更新数据库
         return updateKeyStatusInDB(name, false);
     }
 
-    // [恢复] 辅助方法
     private static boolean updateKeyStatusInDB(String name, boolean status) {
         try (Connection conn = getConnection();
              PreparedStatement stmt = conn.prepareStatement("UPDATE sk SET isEnable = ? WHERE name = ?")) {
@@ -367,7 +362,6 @@ public class SequenceKey {
         }
     }
 
-    // [恢复] 静态工具方法
     public static boolean isOutOfDate(String endTime) {
         try {
             if (endTime == null) return false;
@@ -378,9 +372,10 @@ public class SequenceKey {
         }
     }
 
-    // ==================== [核心修复] mineMib 方法 ====================
+    // ==================== 核心业务逻辑 (MINE MIB) ====================
 
-    private synchronized void smartSyncWithDB() {
+    // 内部私有方法，调用前必须持有 lock
+    private void smartSyncWithDB() {
         SequenceKey dbKey = loadKeyFromDatabase(this.name, false);
         if (dbKey != null) {
             double usedSinceLastSync = this.lastSyncedBalance - this.balance;
@@ -400,54 +395,69 @@ public class SequenceKey {
         }
     }
 
-    /**
-     * 【修复版】扣除流量
-     * 1. 忽略负数输入，防止因 Socket 错误导致的脏数据踢掉客户端。
-     * 2. 流量耗尽时的 DB 保存改为异步，避免阻塞。
-     */
-    public synchronized void mineMib(String sourceSubject, double mib) throws NoMoreNetworkFlowException {
-        // 【修复】忽略非法流量值，而不是抛出异常
-        if (mib <= 0) {
-            return;
-        }
+    public void mineMib(String sourceSubject, double mib) throws NoMoreNetworkFlowException {
+        if (mib <= 0) return;
 
-        if (isOutOfDate()) {
-            NoMoreNetworkFlowException.throwException("SK-Manager", "exception.keyOutOfDateForFlow", name);
-        }
+        // 【核心修复】使用 ReentrantLock 替代 synchronized
+        lock.lock();
+        try {
+            if (isOutOfDate()) {
+                NoMoreNetworkFlowException.throwException("SK-Manager", "exception.keyOutOfDateForFlow", name);
+            }
 
-        double estimatedBalance = this.balance - mib;
+            double estimatedBalance = this.balance - mib;
 
-        if (estimatedBalance < 0) {
-            smartSyncWithDB();
-            estimatedBalance = this.balance - mib;
-        }
+            if (estimatedBalance < 0) {
+                // 余额不足，尝试从 DB 同步一次最新余额
+                smartSyncWithDB();
+                estimatedBalance = this.balance - mib;
+            }
 
-        if (estimatedBalance < 0) {
-            if (this.balance > 0) {
-                this.balance = 0;
-                // 【优化】流量归零是低频事件，但为防阻塞，建议异步保存
-                // 这里使用 ThreadManager 的虚拟线程来执行保存，避免卡顿当前数据包处理
+            if (estimatedBalance < 0) {
+                if (this.balance > 0) {
+                    this.balance = 0;
+                    // 异步保存归零状态，runAsync 内部会调用 saveToDB，后者会再次获取锁，
+                    // 由于是不同线程，saveToDB 会在 lock.lock() 处等待当前 mineMib 释放锁，这是安全的。
+                    ThreadManager.runAsync(() -> saveToDB(this));
+                }
+                NoMoreNetworkFlowException.throwException(sourceSubject, "exception.insufficientBalance", name);
+            }
+
+            this.balance = estimatedBalance;
+
+            if (this.balance == 0) {
                 ThreadManager.runAsync(() -> saveToDB(this));
             }
-            NoMoreNetworkFlowException.throwException(sourceSubject, "exception.insufficientBalance", name);
-        }
-
-        this.balance = estimatedBalance;
-
-        if (this.balance == 0) {
-            ThreadManager.runAsync(() -> saveToDB(this));
+        } finally {
+            lock.unlock();
         }
     }
 
-    public synchronized void addMib(double mib) {
+    public void addMib(double mib) {
         if (mib < 0) return;
-        this.balance += mib;
+        lock.lock();
+        try {
+            this.balance += mib;
+        } finally {
+            lock.unlock();
+        }
         ThreadManager.runAsync(() -> saveToDB(this));
     }
 
     // ==================== Getter / Setter / Util ====================
 
-    public synchronized double getBalance() {
+    public double getBalance() {
+        // 读取加锁，确保读取到最新的写入（虽然 volatile 提供了可见性，但为了配合 lock 的互斥语义，建议加上）
+        lock.lock();
+        try {
+            return balance;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    // 内部专用，避免持有锁时调用 getBalance() 导致的重入开销（虽然不会死锁）
+    private double getBalanceNoLock() {
         return balance;
     }
 
@@ -455,7 +465,16 @@ public class SequenceKey {
         return name;
     }
 
-    public synchronized double getRate() {
+    public double getRate() {
+        lock.lock();
+        try {
+            return rate;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private double getRateNoLock() {
         return rate;
     }
 
@@ -463,9 +482,13 @@ public class SequenceKey {
         return isEnable;
     }
 
-    public synchronized void setEnable(boolean enable) {
-        this.isEnable = enable;
-        // 原代码 Setter 只有内存操作，此处保持一致，以免影响性能
+    public void setEnable(boolean enable) {
+        lock.lock();
+        try {
+            this.isEnable = enable;
+        } finally {
+            lock.unlock();
+        }
     }
 
     public boolean isHTMLEnabled() {
@@ -473,7 +496,12 @@ public class SequenceKey {
     }
 
     public void setHTMLEnabled(boolean enableWebHTML) {
-        this.enableWebHTML = enableWebHTML;
+        lock.lock();
+        try {
+            this.enableWebHTML = enableWebHTML;
+        } finally {
+            lock.unlock();
+        }
     }
 
     private void updateExpireTimestamp(String expireTime) {
@@ -498,9 +526,14 @@ public class SequenceKey {
         if (expireTimestamp == 0) return true;
         boolean expired = System.currentTimeMillis() > expireTimestamp;
         if (expired && isEnable) {
-            // 状态变更，通过静态方法更新数据库，确保行为一致
+            // 这里会导致递归调用 saveToDB 吗？disableKey -> updateKeyStatusInDB (独立SQL) -> 安全
             disableKey(this.name);
-            this.isEnable = false;
+            lock.lock();
+            try {
+                this.isEnable = false;
+            } finally {
+                lock.unlock();
+            }
         }
         return expired;
     }
@@ -518,12 +551,17 @@ public class SequenceKey {
         return DYNAMIC_PORT;
     }
 
-    public synchronized boolean setPort(int port) {
-        if (port == DYNAMIC_PORT || (port > 0 && port <= 65535)) {
-            this.port = String.valueOf(port);
-            return true;
+    public boolean setPort(int port) {
+        lock.lock();
+        try {
+            if (port == DYNAMIC_PORT || (port > 0 && port <= 65535)) {
+                this.port = String.valueOf(port);
+                return true;
+            }
+            return false;
+        } finally {
+            lock.unlock();
         }
-        return false;
     }
 
     public int getDyStart() {

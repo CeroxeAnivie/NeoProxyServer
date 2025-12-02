@@ -491,12 +491,23 @@ public class ConsoleManager {
                 String rateStr = param.substring(2);
                 Double rate = parseDoubleSafely(rateStr, "rate");
                 if (rate != null) {
+                    // 1. 更新内存中的 Key 对象
                     for (SequenceKey key : inMemoryKeysToUpdate) {
                         key.rate = rate;
                     }
+                    // 2. 更新数据库快照对象
                     if (dbKeySnapshot != null) {
                         dbKeySnapshot.rate = rate;
                     }
+
+                    // 【核心修复】立即触发限速器的更新与重置
+                    // 这确保指令下达瞬间，RateLimiter 内部的 startTime 被重置，新速率立即生效
+                    for (HostClient hc : hostClientsToUpdate) {
+                        if (hc.getGlobalRateLimiter() != null) {
+                            hc.getGlobalRateLimiter().setMaxMbps(rate);
+                        }
+                    }
+
                     hasUpdate = true;
                 }
             } else if (param.startsWith("p=")) {

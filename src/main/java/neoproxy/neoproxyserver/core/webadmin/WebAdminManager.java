@@ -28,7 +28,6 @@ public class WebAdminManager {
     public static void init() {
         if (isRunning || isStarting) return;
 
-        // 如果设置了永久Token，输出安全已启用的日志
         if (permanentToken != null && !permanentToken.isEmpty()) {
             ServerLogger.infoWithSource("WebAdmin", "webAdmin.securityEnabled");
         }
@@ -47,8 +46,13 @@ public class WebAdminManager {
                 synchronized (MANAGER_LOCK) {
                     if (!isStarting) return;
                     server = new WebAdminServer(WEB_ADMIN_PORT);
-                    // 0 = 无限超时
-                    server.start(0, false);
+
+                    // 【安全修复】设置为 30000ms (30秒) 超时
+                    // 1. 为什么不是 5秒？因为前端心跳间隔是 5秒，如果网络抖动，5秒超时会导致误杀。
+                    // 2. 为什么不是 0 (无限)？防止 TCPing 或僵尸连接耗尽线程资源。
+                    // 3. 30秒足够容纳多次心跳重试，同时能保证死连接会被回收。
+                    server.start(30000, false);
+
                     isRunning = true;
                     isStarting = false;
                 }
@@ -60,20 +64,16 @@ public class WebAdminManager {
                     server = null;
                 }
 
-                // 检查是否是端口绑定失败
                 if (e.getMessage() != null &&
                         (e.getMessage().contains("bind") ||
                                 e.getMessage().contains("Address already in use") ||
                                 e.getMessage().contains("Permission denied"))) {
-
-                    // 端口绑定失败
                     if (NeoProxyServer.IS_DEBUG_MODE) {
                         ServerLogger.errorWithSource("WebAdmin", "webAdmin.bindFailedDebug", e.getMessage());
                     } else {
                         ServerLogger.errorWithSource("WebAdmin", "webAdmin.bindFailed", WEB_ADMIN_PORT);
                     }
                 } else {
-                    // 其他启动失败
                     ServerLogger.errorWithSource("WebAdmin", "webAdmin.startFailed", e.getMessage());
                 }
             } catch (Exception e) {
@@ -116,7 +116,6 @@ public class WebAdminManager {
     }
 
     public static String generateNewSessionUrl() {
-        // 仅重置临时 Token 的连接
         if (isRunning && server != null) {
             server.closeTempConnections();
         }
@@ -132,36 +131,24 @@ public class WebAdminManager {
         return "http://" + host + ":" + WEB_ADMIN_PORT + "/?token=" + currentTempToken;
     }
 
-    /**
-     * 验证 Token 并返回 Token 类型
-     *
-     * @return 0=无效, 1=临时Token, 2=永久Token
-     */
     public static int verifyTokenAndGetType(String token) {
         if (!isRunning || token == null) return 0;
-
-        // 1. 检查永久 Token
         if (permanentToken != null && !permanentToken.isEmpty() && permanentToken.equals(token)) {
             return 2;
         }
-
-        // 2. 检查临时 Token
         if (currentTempToken != null && currentTempToken.equals(token)) {
             long now = System.currentTimeMillis();
             if ((now - tempTokenCreatedAt) <= TEMP_TOKEN_VALIDITY_MS) {
                 return 1;
             }
         }
-
         return 0;
     }
 
-    // 为了兼容 HTTP 接口保留的方法
     public static boolean verifyToken(String token) {
         return verifyTokenAndGetType(token) > 0;
     }
 
-    // 【修复】添加缺失的公共访问方法，供 ConfigOperator 调用
     public static boolean isRunning() {
         return isRunning;
     }

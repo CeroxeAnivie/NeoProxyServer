@@ -1,6 +1,7 @@
 package neoproxy.neoproxyserver.core;
 
 import neoproxy.neoproxyserver.core.management.SequenceKey;
+import neoproxy.neoproxyserver.core.threads.RateLimiter;
 import neoproxy.neoproxyserver.core.threads.UDPTransformer;
 import plethora.net.SecureSocket;
 import plethora.thread.ThreadManager;
@@ -26,10 +27,14 @@ public final class HostClient implements Closeable {
     public static int SAVE_DELAY = 3000;
     public static int DETECTION_DELAY = 1000;
     public static int AES_KEY_SIZE = 128;
-    public static int HEARTBEAT_TIMEOUT = 30000; // 30秒超时
+    public static int HEARTBEAT_TIMEOUT = 30000;
 
     private final SecureSocket hostServerHook;
     private final CopyOnWriteArrayList<Socket> activeTcpSockets = new CopyOnWriteArrayList<>();
+
+    // 【核心修改】全局唯一的限速器，默认 0 (不限速)
+    private final RateLimiter globalRateLimiter = new RateLimiter(0);
+
     private boolean isStopped = false;
     private SequenceKey sequenceKey = null;
     private ServerSocket clientServerSocket = null;
@@ -42,12 +47,10 @@ public final class HostClient implements Closeable {
     private boolean isTCPEnabled = true;
     private boolean isUDPEnabled = true;
 
-    // 【核心修改】将心跳时间提升为成员变量，并设为 volatile
     private volatile long lastValidHeartbeatTime = System.currentTimeMillis();
 
     public HostClient(SecureSocket hostServerHook) throws IOException {
         this.hostServerHook = hostServerHook;
-        // 初始化时间
         this.lastValidHeartbeatTime = System.currentTimeMillis();
 
         HostClient.enableAutoSaveThread(this);
@@ -132,8 +135,11 @@ public final class HostClient implements Closeable {
         }
     }
 
-    // 【核心修改】提供外部刷新心跳的方法
-    // 当服务端成功发送 sendCommand 时调用此方法，证明连接是通的
+    // 【新增方法】供 Transformer 获取共享限速器
+    public RateLimiter getGlobalRateLimiter() {
+        return globalRateLimiter;
+    }
+
     public void refreshHeartbeat() {
         this.lastValidHeartbeatTime = System.currentTimeMillis();
     }
@@ -146,8 +152,6 @@ public final class HostClient implements Closeable {
         HostClient hostClient = this;
 
         ThreadManager.runAsync(() -> {
-            // 【修正】这里不再定义局部变量 lastValidHeartbeatTime，直接使用成员变量
-
             while (!hostClient.isStopped) {
                 try {
                     String message = hostClient.hostServerHook.receiveStr(1000);
@@ -168,12 +172,9 @@ public final class HostClient implements Closeable {
 
                 } catch (SocketTimeoutException e) {
                     long currentTime = System.currentTimeMillis();
-                    // 使用成员变量进行判断
                     long timeSinceLastValidHeartbeat = currentTime - hostClient.lastValidHeartbeatTime;
 
                     if (timeSinceLastValidHeartbeat >= HEARTBEAT_TIMEOUT) {
-
-                        // 忙碌豁免机制 (双重保险)
                         boolean isBusy = !hostClient.activeTcpSockets.isEmpty();
                         if (isBusy) {
                             hostClient.refreshHeartbeat();
@@ -335,6 +336,10 @@ public final class HostClient implements Closeable {
 
     public void setKey(SequenceKey sequenceKey) {
         this.sequenceKey = sequenceKey;
+        // 【核心修改】当 Key 更新时，同步更新限速器的速率
+        if (sequenceKey != null) {
+            this.globalRateLimiter.setMaxMbps(sequenceKey.getRate());
+        }
     }
 
     public SecureSocket getHostServerHook() {

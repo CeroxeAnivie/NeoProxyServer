@@ -43,16 +43,12 @@ public class TCPTransformer {
     private final Socket client;
     private final HostReply hostReply;
     private final byte[] clientToHostBuffer = new byte[BUFFER_LEN];
-
-    // 【修改 1】新增成员变量，用于持有外部传入的流
     private final InputStream clientInputStream;
 
-    // 【修改 2】构造函数接收 InputStream
     private TCPTransformer(HostClient hostClient, Socket client, HostReply hostReply, InputStream clientInputStream) {
         this.hostClient = hostClient;
         this.client = client;
         this.hostReply = hostReply;
-        // 如果外部传了流（比如PushbackInputStream），就用外部的，否则用Socket原生的
         try {
             this.clientInputStream = (clientInputStream != null) ? clientInputStream : client.getInputStream();
         } catch (IOException e) {
@@ -60,10 +56,8 @@ public class TCPTransformer {
         }
     }
 
-    // 【修改 3】Start 方法接收 InputStream
     public static void start(HostClient hostClient, HostReply hostReply, Socket client, InputStream preCheckedStream) {
         hostClient.registerTcpSocket(client);
-        // 将预处理过的流传入构造函数
         TCPTransformer transformer = new TCPTransformer(hostClient, client, hostReply, preCheckedStream);
 
         final double[] aTenMibSize = {0};
@@ -85,7 +79,6 @@ public class TCPTransformer {
         });
     }
 
-    // 保持旧的 start 方法兼容性（可选）
     public static void start(HostClient hostClient, HostReply hostReply, Socket client) {
         start(hostClient, hostReply, client, null);
     }
@@ -136,9 +129,10 @@ public class TCPTransformer {
     }
 
     private void clientToHost(double[] aTenMibSize) {
-        // 【修改 4】使用 this.clientInputStream 而不是 client.getInputStream()
         try (BufferedInputStream bufferedInputStream = new BufferedInputStream(this.clientInputStream)) {
-            RateLimiter limiter = new RateLimiter(hostClient.getKey().getRate());
+            // 【核心修改】获取全局限速器
+            RateLimiter limiter = hostClient.getGlobalRateLimiter();
+
             int len;
             while ((len = bufferedInputStream.read(clientToHostBuffer)) != -1) {
                 if (len <= 0) continue;
@@ -148,7 +142,9 @@ public class TCPTransformer {
                 if (enLength > 0) {
                     hostClient.getKey().mineMib("TCP-Transformer:C->H", SizeCalculator.byteToMib(enLength + 10));
                     tellRestBalance(hostClient, aTenMibSize, enLength, hostClient.getLangData());
-                    RateLimiter.setMaxMbps(limiter, hostClient.getKey().getRate());
+
+                    // 【核心修改】直接调用共享限速器
+                    limiter.setMaxMbps(hostClient.getKey().getRate());
                     limiter.onBytesTransferred(enLength);
                 }
             }
@@ -163,9 +159,10 @@ public class TCPTransformer {
     }
 
     private void hostToClient(double[] aTenMibSize) {
-        // ... 原有逻辑保持不变 ...
         try (BufferedOutputStream bufferedOutputStream = new BufferedOutputStream(client.getOutputStream())) {
-            RateLimiter limiter = new RateLimiter(hostClient.getKey().getRate());
+            // 【核心修改】获取全局限速器
+            RateLimiter limiter = hostClient.getGlobalRateLimiter();
+
             byte[] data;
             boolean isHtmlResponseChecked = false;
             while ((data = hostReply.host().receiveByte()) != null) {
@@ -180,7 +177,9 @@ public class TCPTransformer {
 
                 hostClient.getKey().mineMib("TCP-Transformer:H->C", SizeCalculator.byteToMib(data.length));
                 tellRestBalance(hostClient, aTenMibSize, data.length, hostClient.getLangData());
-                RateLimiter.setMaxMbps(limiter, hostClient.getKey().getRate());
+
+                // 【核心修改】直接调用共享限速器
+                limiter.setMaxMbps(hostClient.getKey().getRate());
                 limiter.onBytesTransferred(data.length);
             }
             shutdownInput(hostReply.host());

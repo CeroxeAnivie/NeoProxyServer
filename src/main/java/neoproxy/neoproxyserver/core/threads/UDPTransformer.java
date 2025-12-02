@@ -157,16 +157,19 @@ public class UDPTransformer implements Runnable {
 
     private void outClientToHostClient(double[] aTenMibSize) {
         try {
-            RateLimiter limiter = new RateLimiter(hostClient.getKey().getRate());
+            // 【核心修改】获取全局限速器
+            RateLimiter limiter = hostClient.getGlobalRateLimiter();
+
             byte[] data;
             while (isRunning && (data = sendQueue.poll(1, TimeUnit.SECONDS)) != null) {
                 int enLength = hostReply.host().sendByte(data);
 
-                // 【修复】防止负数流量
                 if (enLength > 0) {
                     hostClient.getKey().mineMib("UDP-Transformer", SizeCalculator.byteToMib(enLength + 10));
                     tellRestBalance(hostClient, aTenMibSize, enLength, hostClient.getLangData());
-                    RateLimiter.setMaxMbps(limiter, hostClient.getKey().getRate());
+
+                    // 【核心修改】直接调用共享限速器
+                    limiter.setMaxMbps(hostClient.getKey().getRate());
                     limiter.onBytesTransferred(enLength);
                 }
             }
@@ -179,7 +182,9 @@ public class UDPTransformer implements Runnable {
 
     private void hostClientToOutClient(double[] aTenMibSize) {
         try {
-            RateLimiter limiter = new RateLimiter(hostClient.getKey().getRate());
+            // 【核心修改】获取全局限速器
+            RateLimiter limiter = hostClient.getGlobalRateLimiter();
+
             byte[] data;
             while (isRunning && (data = hostReply.host().receiveByte()) != null) {
                 if (data.length <= 0) continue;
@@ -188,11 +193,12 @@ public class UDPTransformer implements Runnable {
                 if (packetToClient != null) {
                     int packetLength = packetToClient.getLength();
 
-                    // 【修复】校验包长度
                     if (packetLength > 0) {
                         hostClient.getKey().mineMib("UDP-Transformer", SizeCalculator.byteToMib(packetLength + 10));
                         tellRestBalance(hostClient, aTenMibSize, packetLength, hostClient.getLangData());
-                        RateLimiter.setMaxMbps(limiter, hostClient.getKey().getRate());
+
+                        // 【核心修改】直接调用共享限速器
+                        limiter.setMaxMbps(hostClient.getKey().getRate());
                         limiter.onBytesTransferred(packetLength);
 
                         DatagramPacket outgoingPacket = new DatagramPacket(

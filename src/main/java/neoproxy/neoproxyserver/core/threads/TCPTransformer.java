@@ -11,6 +11,9 @@ import plethora.net.SecureSocket;
 import plethora.thread.ThreadManager;
 
 import java.io.*;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
@@ -30,9 +33,10 @@ public class TCPTransformer {
     static {
         try (InputStream inputStream = TCPTransformer.class.getResourceAsStream("/templates/forbidden.html")) {
             if (inputStream == null) {
-                throw new RuntimeException("Fail to find forbidden.html in ./templates/.");
+                // 如果找不到模板，则 FORBIDDEN_HTML_TEMPLATE 为 null
+            } else {
+                FORBIDDEN_HTML_TEMPLATE = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
             }
-            FORBIDDEN_HTML_TEMPLATE = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
         } catch (IOException e) {
             debugOperation(e);
             FORBIDDEN_HTML_TEMPLATE = null;
@@ -128,9 +132,90 @@ public class TCPTransformer {
         }
     }
 
+    /**
+     * 构建 Proxy Protocol v2 二进制头
+     */
+    private static byte[] createProxyProtocolV2Header(Socket clientSocket) {
+        try {
+            InetSocketAddress srcAddress = (InetSocketAddress) clientSocket.getRemoteSocketAddress();
+            InetSocketAddress dstAddress = (InetSocketAddress) clientSocket.getLocalSocketAddress();
+
+            if (srcAddress == null || dstAddress == null) return null;
+
+            InetAddress srcIp = srcAddress.getAddress();
+            InetAddress dstIp = dstAddress.getAddress();
+            int srcPort = srcAddress.getPort();
+            int dstPort = dstAddress.getPort();
+
+            boolean isIPv4 = srcIp instanceof Inet4Address;
+
+            // 1. 协议签名 (12 bytes)
+            byte[] signature = new byte[]{
+                    (byte) 0x0D, (byte) 0x0A, (byte) 0x0D, (byte) 0x0A,
+                    (byte) 0x00, (byte) 0x0D, (byte) 0x0A, (byte) 0x51,
+                    (byte) 0x55, (byte) 0x49, (byte) 0x54, (byte) 0x0A
+            };
+
+            // 2. Version & Command (0x21 = v2, PROXY)
+            byte verCmd = (byte) 0x21;
+
+            // 3. Family & Transport (0x11 = IPv4 TCP, 0x21 = IPv6 TCP)
+            byte famTrans = isIPv4 ? (byte) 0x11 : (byte) 0x21;
+
+            // 4. 地址数据构建
+            byte[] srcIpBytes = srcIp.getAddress();
+            byte[] dstIpBytes = dstIp.getAddress();
+
+            // 计算地址部分总长度
+            int addrLen = srcIpBytes.length + dstIpBytes.length + 2 + 2;
+
+            // 5. 组合最终包
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            baos.write(signature);
+            baos.write(verCmd);
+            baos.write(famTrans);
+
+            // 写入长度 (Big Endian short)
+            baos.write((addrLen >> 8) & 0xFF);
+            baos.write(addrLen & 0xFF);
+
+            // 写入源IP 和 目的IP
+            baos.write(srcIpBytes);
+            baos.write(dstIpBytes);
+
+            // 写入源端口 (Big Endian short)
+            baos.write((srcPort >> 8) & 0xFF);
+            baos.write(srcPort & 0xFF);
+
+            // 写入目的端口 (Big Endian short)
+            baos.write((dstPort >> 8) & 0xFF);
+            baos.write(dstPort & 0xFF);
+
+            return baos.toByteArray();
+
+        } catch (Exception e) {
+            debugOperation(e);
+            return null;
+        }
+    }
+
     private void clientToHost(double[] aTenMibSize) {
+        // =========================================================================
+        // 无条件发送 Proxy Protocol v2 头
+        // 客户端将根据自身配置决定是否转发此头给后端
+        // =========================================================================
+        try {
+            byte[] ppHeader = createProxyProtocolV2Header(this.client);
+            if (ppHeader != null) {
+                hostReply.host().sendByte(ppHeader, 0, ppHeader.length);
+            }
+        } catch (Exception e) {
+            debugOperation(e);
+        }
+        // =========================================================================
+
         try (BufferedInputStream bufferedInputStream = new BufferedInputStream(this.clientInputStream)) {
-            // 【核心修改】获取全局限速器
+            // 获取全局限速器
             RateLimiter limiter = hostClient.getGlobalRateLimiter();
 
             int len;
@@ -143,7 +228,7 @@ public class TCPTransformer {
                     hostClient.getKey().mineMib("TCP-Transformer:C->H", SizeCalculator.byteToMib(enLength + 10));
                     tellRestBalance(hostClient, aTenMibSize, enLength, hostClient.getLangData());
 
-                    // 【核心修改】直接调用共享限速器
+                    // 调用共享限速器
                     limiter.setMaxMbps(hostClient.getKey().getRate());
                     limiter.onBytesTransferred(enLength);
                 }
@@ -160,7 +245,7 @@ public class TCPTransformer {
 
     private void hostToClient(double[] aTenMibSize) {
         try (BufferedOutputStream bufferedOutputStream = new BufferedOutputStream(client.getOutputStream())) {
-            // 【核心修改】获取全局限速器
+            // 获取全局限速器
             RateLimiter limiter = hostClient.getGlobalRateLimiter();
 
             byte[] data;
@@ -178,7 +263,7 @@ public class TCPTransformer {
                 hostClient.getKey().mineMib("TCP-Transformer:H->C", SizeCalculator.byteToMib(data.length));
                 tellRestBalance(hostClient, aTenMibSize, data.length, hostClient.getLangData());
 
-                // 【核心修改】直接调用共享限速器
+                // 调用共享限速器
                 limiter.setMaxMbps(hostClient.getKey().getRate());
                 limiter.onBytesTransferred(data.length);
             }

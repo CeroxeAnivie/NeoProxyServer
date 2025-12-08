@@ -18,7 +18,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.locks.LockSupport;
 
-import static neoproxy.neoproxyserver.NeoProxyServer.*;
+import static neoproxy.neoproxyserver.NeoProxyServer.availableHostClient;
+import static neoproxy.neoproxyserver.NeoProxyServer.debugOperation;
 import static neoproxy.neoproxyserver.core.ServerLogger.sayHostClientDiscInfo;
 import static neoproxy.neoproxyserver.core.management.SequenceKey.saveToDB;
 
@@ -31,8 +32,6 @@ public final class HostClient implements Closeable {
 
     private final SecureSocket hostServerHook;
     private final CopyOnWriteArrayList<Socket> activeTcpSockets = new CopyOnWriteArrayList<>();
-
-    // 【核心修改】全局唯一的限速器，默认 0 (不限速)
     private final RateLimiter globalRateLimiter = new RateLimiter(0);
 
     private boolean isStopped = false;
@@ -135,7 +134,6 @@ public final class HostClient implements Closeable {
         }
     }
 
-    // 【新增方法】供 Transformer 获取共享限速器
     public RateLimiter getGlobalRateLimiter() {
         return globalRateLimiter;
     }
@@ -165,9 +163,6 @@ public final class HostClient implements Closeable {
                     } else {
                         hostClient.refreshHeartbeat();
                         handleHostClientCommand(message);
-                        if (IS_DEBUG_MODE) {
-                            myConsole.log("HostClient-" + getKey().getName(), "Receive message: " + message);
-                        }
                     }
 
                 } catch (SocketTimeoutException e) {
@@ -249,6 +244,7 @@ public final class HostClient implements Closeable {
         return activeTcpSockets;
     }
 
+    // 【新增】格式化方法，供 ConsoleManager 使用
     public String[] formatAsTableRow(Map<String, Integer> accessCodeCounts, boolean isRepresentative, List<HostClient> allHostClientsForAccessCode) {
         String hostClientIP = this.getHostServerHook().getInetAddress().getHostAddress();
         String accessCode = this.getKey() != null ? this.getKey().getName() : "Unknown";
@@ -274,6 +270,7 @@ public final class HostClient implements Closeable {
         }
 
         try {
+            // 注意：这里引用了 UDPTransformer，请确保该类存在且 public 字段可访问
             for (UDPTransformer udp : UDPTransformer.udpClientConnections) {
                 if (allHostClientsForAccessCode.contains(udp.getHostClient())) {
                     String clientIP = udp.getClientIP();
@@ -281,6 +278,7 @@ public final class HostClient implements Closeable {
                 }
             }
         } catch (Exception e) {
+            // 忽略并发修改异常
         }
 
         Set<String> allIPs = new HashSet<>();
@@ -289,7 +287,7 @@ public final class HostClient implements Closeable {
 
         StringBuilder sb = new StringBuilder();
         for (String ip : allIPs) {
-            if (!sb.isEmpty()) sb.append("\n");
+            if (sb.length() > 0) sb.append("\n");
             int tcpCount = tcpCounts.getOrDefault(ip, 0);
             int udpCount = udpCounts.getOrDefault(ip, 0);
             sb.append(ip).append(" (T:").append(tcpCount).append(" U:").append(udpCount).append(")");
@@ -328,6 +326,10 @@ public final class HostClient implements Closeable {
         InternetOperator.close(clientDatagramSocket);
 
         this.isStopped = true;
+
+        if (this.sequenceKey != null) {
+            SequenceKey.releaseKey(this.sequenceKey.getName());
+        }
     }
 
     public SequenceKey getKey() {
@@ -336,7 +338,6 @@ public final class HostClient implements Closeable {
 
     public void setKey(SequenceKey sequenceKey) {
         this.sequenceKey = sequenceKey;
-        // 【核心修改】当 Key 更新时，同步更新限速器的速率
         if (sequenceKey != null) {
             this.globalRateLimiter.setMaxMbps(sequenceKey.getRate());
         }

@@ -12,7 +12,7 @@ public class NoMoreNetworkFlowException extends RuntimeException {
      */
     public static void throwException() throws NoMoreNetworkFlowException {
         String message = ServerLogger.getMessage("exception.noMoreNetworkFlow.message");
-        ServerLogger.error("NoMoreNetworkFlowException", message);
+        ServerLogger.error("exception.noMoreNetworkFlow.message", message);
         throw new NoMoreNetworkFlowException(message);
     }
 

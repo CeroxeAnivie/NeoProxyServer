@@ -37,6 +37,7 @@ public class ServerLogger {
             bundle = ResourceBundle.getBundle(BUNDLE_NAME, currentLocale);
         } catch (MissingResourceException e) {
             // 如果加载失败，将 bundle 设为 null，后续调用会失败并提示
+            e.printStackTrace();
             System.err.println("CRITICAL ERROR: Failed to load ResourceBundle: " + BUNDLE_NAME + " for locale: " + currentLocale);
             bundle = null;
         }

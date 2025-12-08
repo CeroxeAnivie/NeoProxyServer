@@ -1,9 +1,6 @@
 package neoproxy.neoproxyserver.core;
 
 import neoproxy.neoproxyserver.NeoProxyServer;
-import neoproxy.neoproxyserver.core.management.IPChecker;
-import neoproxy.neoproxyserver.core.management.TransferSocketAdapter;
-import neoproxy.neoproxyserver.core.threads.TCPTransformer;
 import neoproxy.neoproxyserver.core.webadmin.WebAdminManager;
 import plethora.utils.config.LineConfigReader;
 
@@ -17,37 +14,43 @@ import java.nio.file.StandardCopyOption;
 public final class ConfigOperator {
 
     public static final File CONFIG_FILE = new File(NeoProxyServer.CURRENT_DIR_PATH + File.separator + "config.cfg");
-    private static final Path CONFIG_PATH = CONFIG_FILE.toPath();
+    public static final File SYNC_CONFIG_FILE = new File(NeoProxyServer.CURRENT_DIR_PATH + File.separator + "sync.cfg");
 
-    // 标记是否已完成首次初始化
+    private static final Path CONFIG_PATH = CONFIG_FILE.toPath();
+    private static final Path SYNC_CONFIG_PATH = SYNC_CONFIG_FILE.toPath();
+
+    // ==================== Sync Config Definitions ====================
+    public static String MANAGER_URL = null;
+    public static String MANAGER_TOKEN = "";
+    public static String NODE_ID = "Default-Node";
     private static boolean isInitialized = false;
+    // =================================================================
 
     private ConfigOperator() {
     }
 
     public static void readAndSetValue() {
-        // 如果配置文件不存在，从资源文件复制
+        readMainConfig();
+        readSyncConfig();
+        isInitialized = true;
+    }
+
+    private static void readMainConfig() {
         if (!Files.exists(CONFIG_PATH)) {
-            copyDefaultConfigFromResource();
+            copyConfigFromResource("config.cfg", CONFIG_PATH);
         }
 
         LineConfigReader reader = new LineConfigReader(CONFIG_FILE);
 
         try {
             reader.load();
-            applySettings(reader);
-            // 【关键】首次加载完成后，标记为已初始化
-            isInitialized = true;
-
+            applyMainSettings(reader);
         } catch (IOException e) {
             ServerLogger.error("configOperator.corruptedConfigFile", e);
-            // 尝试再次复制修复
-            ServerLogger.info("configOperator.creatingDefaultConfigAndRetry");
-            copyDefaultConfigFromResource();
+            copyConfigFromResource("config.cfg", CONFIG_PATH);
             try {
                 reader.load();
-                applySettings(reader);
-                isInitialized = true;
+                applyMainSettings(reader);
             } catch (IOException fatalException) {
                 ServerLogger.error("configOperator.fatalConfigError", fatalException);
                 System.exit(-1);
@@ -55,12 +58,33 @@ public final class ConfigOperator {
         }
     }
 
-    private static void copyDefaultConfigFromResource() {
-        try (InputStream is = NeoProxyServer.class.getResourceAsStream("/config.cfg")) {
-            if (is == null) {
-                throw new RuntimeException("Default config.cfg not found in resources!");
+    private static void readSyncConfig() {
+        if (!Files.exists(SYNC_CONFIG_PATH)) {
+            copyConfigFromResource("sync.cfg", SYNC_CONFIG_PATH);
+        }
+
+        LineConfigReader reader = new LineConfigReader(SYNC_CONFIG_FILE);
+        try {
+            reader.load();
+            applySyncSettings(reader);
+        } catch (IOException e) {
+            ServerLogger.error("configOperator.corruptedConfigFile", e);
+            copyConfigFromResource("sync.cfg", SYNC_CONFIG_PATH);
+            try {
+                reader.load();
+                applySyncSettings(reader);
+            } catch (IOException fatalException) {
+                ServerLogger.error("configOperator.fatalConfigError", fatalException);
             }
-            Files.copy(is, CONFIG_PATH, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private static void copyConfigFromResource(String resourceName, Path targetPath) {
+        try (InputStream is = NeoProxyServer.class.getResourceAsStream("/" + resourceName)) {
+            if (is == null) {
+                throw new RuntimeException("Default " + resourceName + " not found in resources!");
+            }
+            Files.copy(is, targetPath, StandardCopyOption.REPLACE_EXISTING);
             ServerLogger.info("configOperator.createdDefaultConfig");
         } catch (IOException e) {
             ServerLogger.error("configOperator.failToWriteDefaultConfig", e);
@@ -68,13 +92,9 @@ public final class ConfigOperator {
         }
     }
 
-    private static void applySettings(LineConfigReader reader) {
-        // 1. 保存旧值用于对比
+    private static void applyMainSettings(LineConfigReader reader) {
         int oldWebPort = WebAdminManager.WEB_ADMIN_PORT;
-        int oldHookPort = NeoProxyServer.HOST_HOOK_PORT;
-        int oldConnectPort = NeoProxyServer.HOST_CONNECT_PORT;
 
-        // 2. 读取并更新配置
         NeoProxyServer.LOCAL_DOMAIN_NAME = reader.getOptional("LOCAL_DOMAIN_NAME").orElse("localhost");
         NeoProxyServer.HOST_HOOK_PORT = reader.getOptional("HOST_HOOK_PORT").map(Integer::parseInt).orElse(44801);
         NeoProxyServer.HOST_CONNECT_PORT = reader.getOptional("HOST_CONNECT_PORT").map(Integer::parseInt).orElse(44802);
@@ -83,36 +103,41 @@ public final class ConfigOperator {
         HostClient.SAVE_DELAY = reader.getOptional("SAVE_DELAY").map(Integer::parseInt).orElse(3000);
         HostClient.AES_KEY_SIZE = reader.getOptional("AES_KEY_SIZE").map(Integer::parseInt).orElse(128);
         HostClient.HEARTBEAT_TIMEOUT = reader.getOptional("HEARTBEAT_TIMEOUT").map(Integer::parseInt).orElse(5000);
-        TCPTransformer.BUFFER_LEN = reader.getOptional("BUFFER_LEN").map(Integer::parseInt).orElse(4096);
-        TCPTransformer.TELL_BALANCE_MIB = reader.getOptional("TELL_BALANCE_MIB").map(Integer::parseInt).orElse(10);
-        TCPTransformer.CUSTOM_BLOCKING_MESSAGE = reader.getOptional("CUSTOM_BLOCKING_MESSAGE").orElse("如有疑问，请联系您的系统管理员。");
-        IPChecker.ENABLE_BAN = reader.getOptional("ENABLE_BAN").map(Boolean::parseBoolean).orElse(true);
-        TransferSocketAdapter.SO_TIMEOUT = reader.getOptional("SO_TIMEOUT").map(Integer::parseInt).orElse(5000);
 
-        // 读取永久 Token
         String permToken = reader.getOptional("WEB_ADMIN_TOKEN").orElse("").trim();
         WebAdminManager.setPermanentToken(permToken);
 
-        // 3. 警告与变更检测
-
-        // 【修复】统一使用 ServerLogger 输出警告，不再使用 System.out
         if (!permToken.isEmpty()) {
             ServerLogger.warnWithSource("Config", "configOperator.permTokenWarning");
         }
 
         if (isInitialized) {
-            // WebAdmin 端口变更处理
-            if (oldWebPort != WebAdminManager.WEB_ADMIN_PORT) {
-                if (WebAdminManager.isRunning()) {
-                    ServerLogger.infoWithSource("Config", "configOperator.webAdminRestart");
-                    WebAdminManager.restart();
-                }
+            if (oldWebPort != WebAdminManager.WEB_ADMIN_PORT && WebAdminManager.isRunning()) {
+                WebAdminManager.restart();
             }
+        }
+    }
 
-            // 核心端口变更警告
-            if (oldHookPort != NeoProxyServer.HOST_HOOK_PORT || oldConnectPort != NeoProxyServer.HOST_CONNECT_PORT) {
-                ServerLogger.warnWithSource("Config", "configOperator.corePortWarning");
+    private static void applySyncSettings(LineConfigReader reader) {
+        // 获取配置中的原始 URL
+        String rawUrl = reader.getOptional("MANAGER_URL").orElse(null);
+
+        // 【智能修正】：去除 URL 末尾的斜杠 /
+        if (rawUrl != null && !rawUrl.isBlank()) {
+            rawUrl = rawUrl.trim(); // 去除首尾空格
+            while (rawUrl.endsWith("/")) {
+                rawUrl = rawUrl.substring(0, rawUrl.length() - 1);
             }
+            MANAGER_URL = rawUrl;
+        } else {
+            MANAGER_URL = null;
+        }
+
+        MANAGER_TOKEN = reader.getOptional("MANAGER_TOKEN").orElse("");
+        NODE_ID = reader.getOptional("NODE_ID").orElse("Default-Node");
+
+        if (MANAGER_URL != null && !MANAGER_URL.isBlank()) {
+            ServerLogger.info("configOperator.syncModeEnabled", MANAGER_URL, NODE_ID);
         }
     }
 }

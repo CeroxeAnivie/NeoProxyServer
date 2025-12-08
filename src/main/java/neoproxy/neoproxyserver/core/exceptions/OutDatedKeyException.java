@@ -6,7 +6,7 @@ import neoproxy.neoproxyserver.core.management.SequenceKey;
 public class OutDatedKeyException extends Exception {
     private OutDatedKeyException(String message) {
         super(message);
-        ServerLogger.error("OutDatedKeyException", "exception.outDatedKey.message", message);
+        ServerLogger.error("exception.outDatedKey.message", message);
     }
 
     public static void throwException(SequenceKey key) throws OutDatedKeyException {

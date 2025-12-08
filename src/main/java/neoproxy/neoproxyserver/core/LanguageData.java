@@ -4,6 +4,7 @@ import java.io.Serializable;
 
 public class LanguageData implements Serializable {
     public String THE_PORT_HAS_ALREADY_BIND = "This outPort is already occupied.";
+    public String REMOTE_PORT_OCCUPIED = "Connection rejected: Port occupied by another node or limit reached.";
     public String IF_YOU_SEE_EULA = "If you use this software, you understand and agree with eula .";
     public String VERSION = "Version : ";
     public String PLEASE_ENTER_ACCESS_CODE = "Please enter the access code:";
@@ -34,7 +35,7 @@ public class LanguageData implements Serializable {
 
         LanguageData languageData = new LanguageData();
         languageData.currentLanguage = "zh";
-
+        languageData.REMOTE_PORT_OCCUPIED = "连接被拒绝：该端口已被其他节点占用，或已达到最大允许连接数。";
         languageData.IF_YOU_SEE_EULA = "如果你已经开始使用的本软件，说明你已经知晓并同意了本软件的eula协议";
         languageData.VERSION = "版本 ： ";
         languageData.PLEASE_ENTER_ACCESS_CODE = "请输入序列号：";
@@ -49,7 +50,6 @@ public class LanguageData implements Serializable {
         languageData.FAIL_TO_BUILD_A_CHANNEL_FROM = "连接以下地址失败：";
         languageData.DESTROY = " 的通道关闭";
         languageData.FAIL_TO_CONNECT_LOCALHOST = "连接以下地址失败：127.0.0.1:";
-
         languageData.THE_KEY = "这个序列号 ";
         languageData.KEY = "序列号 ";
         languageData.ARE_OUT_OF_DATE = " 已经过期了。";
@@ -68,6 +68,4 @@ public class LanguageData implements Serializable {
     public String getCurrentLanguage() {
         return currentLanguage;
     }
-
-
 }

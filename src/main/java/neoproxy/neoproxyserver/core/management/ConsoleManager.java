@@ -3,6 +3,8 @@ package neoproxy.neoproxyserver.core.management;
 import neoproxy.neoproxyserver.core.ConfigOperator;
 import neoproxy.neoproxyserver.core.HostClient;
 import neoproxy.neoproxyserver.core.ServerLogger;
+import neoproxy.neoproxyserver.core.exceptions.PortOccupiedException;
+import neoproxy.neoproxyserver.core.management.provider.RemoteKeyProvider;
 import neoproxy.neoproxyserver.core.webadmin.WebAdminManager;
 import neoproxy.neoproxyserver.core.webadmin.WebConsole;
 
@@ -20,10 +22,8 @@ import static neoproxy.neoproxyserver.core.management.SequenceKey.*;
 
 public class ConsoleManager {
 
-    // 命令执行主体上下文，默认为 "Admin"
     public static final ThreadLocal<String> COMMAND_SOURCE = ThreadLocal.withInitial(() -> "Admin");
 
-    // 【恢复严格模式】只允许 yyyy/MM/dd-HH:mm 格式
     private static final String TIME_FORMAT_PATTERN = "^(\\d{4})/(\\d{1,2})/(\\d{1,2})-(\\d{1,2}):(\\d{1,2})$";
     private static final Pattern TIME_PATTERN = Pattern.compile(TIME_FORMAT_PATTERN);
 
@@ -40,20 +40,13 @@ public class ConsoleManager {
         }
     }
 
-    /**
-     * 包装器：在执行命令前，先将命令本身广播到 WebAdmin
-     */
     private static void registerWrapper(String name, String desc, Consumer<List<String>> executor) {
         myConsole.registerCommand(name, desc, (params) -> {
-            // 1. 构建回显字符串
             StringBuilder cmdLine = new StringBuilder("> ").append(name);
             if (params != null && !params.isEmpty()) {
                 cmdLine.append(" ").append(String.join(" ", params));
             }
-            // 2. 广播回显
             WebAdminManager.broadcastLog(cmdLine.toString());
-
-            // 3. 执行业务逻辑
             executor.accept(params);
         });
     }
@@ -219,20 +212,25 @@ public class ConsoleManager {
                     foundInMemory = true;
                 }
             }
-            SequenceKey keyFromDB = getKeyFromDB(keyName);
-            if (keyFromDB != null) {
-                keyFromDB.setHTMLEnabled(enable);
-                if (saveToDB(keyFromDB)) {
-                    String logKey = enable ? "consoleManager.webHtmlEnabled" : "consoleManager.webHtmlDisabled";
-                    ServerLogger.infoWithSource(COMMAND_SOURCE.get(), logKey, keyName);
-                    if (!foundInMemory) {
-                        ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.webHtmlNote", keyName);
+
+            try {
+                SequenceKey keyFromDB = getKeyFromDB(keyName);
+                if (keyFromDB != null) {
+                    keyFromDB.setHTMLEnabled(enable);
+                    if (saveToDB(keyFromDB)) {
+                        String logKey = enable ? "consoleManager.webHtmlEnabled" : "consoleManager.webHtmlDisabled";
+                        ServerLogger.infoWithSource(COMMAND_SOURCE.get(), logKey, keyName);
+                        if (!foundInMemory) {
+                            ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.webHtmlNote", keyName);
+                        }
+                    } else {
+                        ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.dbUpdateFailed", keyName);
                     }
                 } else {
-                    ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.dbUpdateFailed", keyName);
+                    ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.criticalDbError", keyName);
                 }
-            } else {
-                ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.criticalDbError", keyName);
+            } catch (PortOccupiedException e) {
+                ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyError", e.getMessage());
             }
         });
 
@@ -256,7 +254,13 @@ public class ConsoleManager {
 
     private static void handleReloadCommand() {
         ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.reloadingConfig");
+
+        // 1. 读取配置文件 (更新 ConfigOperator 中的静态变量)
         ConfigOperator.readAndSetValue();
+
+        // 2. 【核心】应用 KeyProvider 的变更 (重连远程/切换本地)
+        SequenceKey.reloadProvider();
+
         ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.configReloaded");
     }
 
@@ -444,145 +448,6 @@ public class ConsoleManager {
         }
     }
 
-    private static void handleSetCommand(List<String> params) {
-        if (params.size() < 2) {
-            myConsole.warn(COMMAND_SOURCE.get(), "Usage: key set <name> [b=<balance>] [r=<rate>] [p=<outPort>] [t=<expireTime>] [w=<webHTML>]");
-            return;
-        }
-        String name = params.get(1);
-        if (!isKeyExistsByName(name)) {
-            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFoundSpecific", name);
-            return;
-        }
-        List<HostClient> hostClientsToUpdate = new ArrayList<>();
-        List<SequenceKey> inMemoryKeysToUpdate = new ArrayList<>();
-        SequenceKey dbKeySnapshot = null;
-        for (HostClient hostClient : availableHostClient) {
-            if (hostClient != null && hostClient.getKey() != null && name.equals(hostClient.getKey().getName())) {
-                hostClientsToUpdate.add(hostClient);
-                inMemoryKeysToUpdate.add(hostClient.getKey());
-            }
-        }
-        if (inMemoryKeysToUpdate.isEmpty()) {
-            dbKeySnapshot = getKeyFromDB(name);
-            if (dbKeySnapshot == null) {
-                ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFound");
-                return;
-            }
-        }
-        boolean hasUpdate = false;
-        String newPortStr = null;
-
-        for (int i = 2; i < params.size(); i++) {
-            String param = params.get(i);
-            if (param.startsWith("b=")) {
-                String balanceStr = param.substring(2);
-                Double balance = parseDoubleSafely(balanceStr, "balance");
-                if (balance != null) {
-                    for (SequenceKey key : inMemoryKeysToUpdate) {
-                        key.balance = balance;
-                    }
-                    if (dbKeySnapshot != null) {
-                        dbKeySnapshot.balance = balance;
-                    }
-                    hasUpdate = true;
-                }
-            } else if (param.startsWith("r=")) {
-                String rateStr = param.substring(2);
-                Double rate = parseDoubleSafely(rateStr, "rate");
-                if (rate != null) {
-                    // 1. 更新内存中的 Key 对象
-                    for (SequenceKey key : inMemoryKeysToUpdate) {
-                        key.rate = rate;
-                    }
-                    // 2. 更新数据库快照对象
-                    if (dbKeySnapshot != null) {
-                        dbKeySnapshot.rate = rate;
-                    }
-
-                    // 【核心修复】立即触发限速器的更新与重置
-                    // 这确保指令下达瞬间，RateLimiter 内部的 startTime 被重置，新速率立即生效
-                    for (HostClient hc : hostClientsToUpdate) {
-                        if (hc.getGlobalRateLimiter() != null) {
-                            hc.getGlobalRateLimiter().setMaxMbps(rate);
-                        }
-                    }
-
-                    hasUpdate = true;
-                }
-            } else if (param.startsWith("p=")) {
-                String portStr = param.substring(2);
-                String validatedPortStr = validateAndFormatPortInput(portStr);
-                if (validatedPortStr != null) {
-                    for (SequenceKey key : inMemoryKeysToUpdate) {
-                        key.port = validatedPortStr;
-                    }
-                    if (dbKeySnapshot != null) {
-                        dbKeySnapshot.port = validatedPortStr;
-                    }
-                    hasUpdate = true;
-                    newPortStr = validatedPortStr;
-                } else {
-                    ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.invalidPortValue", portStr);
-                }
-            } else if (param.startsWith("t=")) {
-                String expireTimeInput = param.substring(2);
-                // 【修复】移除之前添加的参数合并逻辑，恢复严格模式
-                String expireTime = correctInputTime(expireTimeInput);
-                if (expireTime == null) {
-                    ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.illegalTimeInput", expireTimeInput);
-                } else if (isOutOfDate(expireTime)) {
-                    ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.timeEarlierThanCurrent", expireTime);
-                } else {
-                    for (SequenceKey key : inMemoryKeysToUpdate) {
-                        key.expireTime = expireTime;
-                    }
-                    if (dbKeySnapshot != null) {
-                        dbKeySnapshot.expireTime = expireTime;
-                    }
-                    hasUpdate = true;
-                }
-            } else if (param.startsWith("w=")) {
-                String webStr = param.substring(2);
-                boolean enable = "true".equalsIgnoreCase(webStr) || "1".equals(webStr) || "on".equalsIgnoreCase(webStr);
-                for (SequenceKey key : inMemoryKeysToUpdate) {
-                    key.setHTMLEnabled(enable);
-                }
-                if (dbKeySnapshot != null) {
-                    dbKeySnapshot.setHTMLEnabled(enable);
-                }
-                hasUpdate = true;
-            } else {
-                ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.unknownParameter", param);
-            }
-        }
-        if (!hasUpdate) {
-            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.noValidParams");
-            return;
-        }
-        if (newPortStr != null) {
-            ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.portPolicyChanged", newPortStr);
-            int disconnectedCount = 0;
-            for (HostClient client : hostClientsToUpdate) {
-                int currentExternalPort = client.getOutPort();
-                if (!isPortInRange(currentExternalPort, newPortStr)) {
-                    ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.disconnectingClient", name, String.valueOf(currentExternalPort));
-                    client.close();
-                    disconnectedCount++;
-                }
-            }
-            if (disconnectedCount > 0) {
-                ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.clientsDisconnected", String.valueOf(disconnectedCount));
-            }
-        }
-        SequenceKey keyToSave = (dbKeySnapshot != null) ? dbKeySnapshot : inMemoryKeysToUpdate.getFirst();
-        boolean isSuccess = saveToDB(keyToSave);
-        if (isSuccess) {
-            ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.operationComplete");
-        } else {
-            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.setKeyFailed");
-        }
-    }
 
     private static boolean isPortInRange(int port, String portRange) {
         if (portRange == null || portRange.isEmpty()) {
@@ -615,11 +480,15 @@ public class ConsoleManager {
             return;
         }
         String name = params.get(1);
-        SequenceKey sequenceKey = getKeyFromDB(name);
-        if (sequenceKey != null) {
-            outputSingleKeyAsTable(sequenceKey);
-        } else {
-            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFound");
+        try {
+            SequenceKey sequenceKey = getKeyFromDB(name);
+            if (sequenceKey != null) {
+                outputSingleKeyAsTable(sequenceKey);
+            } else {
+                ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFound");
+            }
+        } catch (PortOccupiedException e) {
+            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyError", e.getMessage());
         }
     }
 
@@ -655,21 +524,164 @@ public class ConsoleManager {
         }
     }
 
+    private static void handleSetCommand(List<String> params) {
+        if (params.size() < 2) {
+            myConsole.warn(COMMAND_SOURCE.get(), "Usage: key set <name> [b=<balance>] [r=<rate>] [p=<outPort>] [t=<expireTime>] [w=<webHTML>]");
+            return;
+        }
+        String name = params.get(1);
+
+        // ================== 新增逻辑：检查是否为远程 Key (R) ==================
+        // 只有当 Provider 是 RemoteKeyProvider 且该 Key 存在于缓存中时，它才被视为 (R) 标签的 Key
+        if (SequenceKey.PROVIDER instanceof RemoteKeyProvider) {
+            // 获取缓存快照，RemoteKeyProvider 的 Key 都在缓存里
+            Map<String, SequenceKey> remoteCache = SequenceKey.getKeyCacheSnapshot();
+            if (remoteCache.containsKey(name)) {
+                ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.error.remoteKeyModification");
+                return;
+            }
+        }
+        // ====================================================================
+
+        if (!isKeyExistsByName(name)) {
+            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFoundSpecific", name);
+            return;
+        }
+
+        List<HostClient> hostClientsToUpdate = new ArrayList<>();
+        List<SequenceKey> inMemoryKeysToUpdate = new ArrayList<>();
+        SequenceKey dbKeySnapshot = null;
+
+        for (HostClient hostClient : availableHostClient) {
+            if (hostClient != null && hostClient.getKey() != null && name.equals(hostClient.getKey().getName())) {
+                hostClientsToUpdate.add(hostClient);
+                inMemoryKeysToUpdate.add(hostClient.getKey());
+            }
+        }
+
+        try {
+            if (inMemoryKeysToUpdate.isEmpty()) {
+                dbKeySnapshot = getKeyFromDB(name);
+                if (dbKeySnapshot == null) {
+                    ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFound");
+                    return;
+                }
+            }
+        } catch (PortOccupiedException e) {
+            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyError", e.getMessage());
+            return;
+        }
+
+        boolean hasUpdate = false;
+        String newPortStr = null;
+
+        for (int i = 2; i < params.size(); i++) {
+            String param = params.get(i);
+            if (param.startsWith("b=")) {
+                String balanceStr = param.substring(2);
+                Double balance = parseDoubleSafely(balanceStr, "balance");
+                if (balance != null) {
+                    for (SequenceKey key : inMemoryKeysToUpdate) key.setBalance(balance);
+                    if (dbKeySnapshot != null) dbKeySnapshot.setBalance(balance);
+                    hasUpdate = true;
+                }
+            } else if (param.startsWith("r=")) {
+                String rateStr = param.substring(2);
+                Double rate = parseDoubleSafely(rateStr, "rate");
+                if (rate != null) {
+                    for (SequenceKey key : inMemoryKeysToUpdate) key.setRate(rate);
+                    if (dbKeySnapshot != null) dbKeySnapshot.setRate(rate);
+                    for (HostClient hc : hostClientsToUpdate) {
+                        if (hc.getGlobalRateLimiter() != null) hc.getGlobalRateLimiter().setMaxMbps(rate);
+                    }
+                    hasUpdate = true;
+                }
+            } else if (param.startsWith("p=")) {
+                String portStr = param.substring(2);
+                String validatedPortStr = validateAndFormatPortInput(portStr);
+                if (validatedPortStr != null) {
+                    for (SequenceKey key : inMemoryKeysToUpdate) key.setPort(validatedPortStr);
+                    if (dbKeySnapshot != null) dbKeySnapshot.setPort(validatedPortStr);
+                    hasUpdate = true;
+                    newPortStr = validatedPortStr;
+                } else {
+                    ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.invalidPortValue", portStr);
+                }
+            } else if (param.startsWith("t=")) {
+                String expireTimeInput = param.substring(2);
+                String expireTime = correctInputTime(expireTimeInput);
+
+                if (expireTime == null) {
+                    ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.illegalTimeInput", expireTimeInput);
+                } else if (isOutOfDate(expireTime)) {
+                    ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.timeEarlierThanCurrent", expireTime);
+                } else {
+                    for (SequenceKey key : inMemoryKeysToUpdate) key.setExpireTime(expireTime);
+                    if (dbKeySnapshot != null) dbKeySnapshot.setExpireTime(expireTime);
+                    hasUpdate = true;
+                }
+            } else if (param.startsWith("w=")) {
+                String webStr = param.substring(2);
+                boolean enable = "true".equalsIgnoreCase(webStr) || "1".equals(webStr) || "on".equalsIgnoreCase(webStr);
+                for (SequenceKey key : inMemoryKeysToUpdate) key.setHTMLEnabled(enable);
+                if (dbKeySnapshot != null) dbKeySnapshot.setHTMLEnabled(enable);
+                hasUpdate = true;
+            } else {
+                ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.unknownParameter", param);
+            }
+        }
+
+        if (!hasUpdate) {
+            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.noValidParams");
+            return;
+        }
+
+        if (newPortStr != null) {
+            ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.portPolicyChanged", newPortStr);
+            int disconnectedCount = 0;
+            for (HostClient client : hostClientsToUpdate) {
+                int currentExternalPort = client.getOutPort();
+                if (!isPortInRange(currentExternalPort, newPortStr)) {
+                    ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.disconnectingClient", name, String.valueOf(currentExternalPort));
+                    client.close();
+                    disconnectedCount++;
+                }
+            }
+            if (disconnectedCount > 0) {
+                ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.clientsDisconnected", String.valueOf(disconnectedCount));
+            }
+        }
+
+        SequenceKey keyToSave = (dbKeySnapshot != null) ? dbKeySnapshot : inMemoryKeysToUpdate.getFirst();
+        boolean isSuccess = saveToDB(keyToSave);
+        if (isSuccess) {
+            ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.operationComplete");
+        } else {
+            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.setKeyFailed");
+        }
+    }
+
     private static void handleAddCommand(List<String> params) {
-        // 【恢复严格模式】不再猜测参数合并，严格按照顺序读取
-        // 允许 6 个 (无Web参数) 或 7 个 (有Web参数)
         if (params.size() != 6 && params.size() != 7) {
             myConsole.warn(COMMAND_SOURCE.get(), "Usage: key add <name> <balance> <expireTime> <port> <rate> [webHTML]");
             myConsole.warn(COMMAND_SOURCE.get(), "Note: <port> can be a single number (e.g., 8080) or a range (e.g., 3344-3350).");
             return;
         }
         String name = params.get(1);
+
+        // ================== 新增逻辑：检查重名 (Local & Remote) ==================
+        // isKeyExistsByName 会检查本地数据库以及内存中的 KeyCache (Remote Key 都在 Cache 中)
+        if (isKeyExistsByName(name)) {
+            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.error.keyAlreadyExists");
+            return;
+        }
+        // ====================================================================
+
         String balanceStr = params.get(2);
         String expireTimeInput = params.get(3);
         String portStr = params.get(4);
         String rateStr = params.get(5);
 
-        // 解析 WebHTML 参数
         boolean enableWebHTML = false;
         if (params.size() == 7) {
             String webStr = params.get(6);
@@ -711,44 +723,83 @@ public class ConsoleManager {
     }
 
     private static void listAllKeys() {
+        Map<String, KeyListDTO> keyMap = new HashMap<>();
+
+        // 1. 获取本地数据库中的 Key (默认为 L)
         String sql = "SELECT name, balance, expireTime, port, rate, isEnable, enableWebHTML FROM sk";
         try (var conn = getConnection();
              var stmt = conn.prepareStatement(sql);
              var rs = stmt.executeQuery()) {
-            List<String[]> rows = new ArrayList<>();
             while (rs.next()) {
                 String name = rs.getString("name");
-                double balance = rs.getDouble("balance");
-                String expireTime = rs.getString("expireTime");
-                String portStr = rs.getString("port");
-                double rate = rs.getDouble("rate");
-                boolean isEnable = rs.getBoolean("isEnable");
-                boolean enableWebHTML = rs.getBoolean("enableWebHTML");
-                int clientNum = findKeyClientNum(name);
-                String formattedRate = killDoubleEndZero(rate);
-                String enableStatus = isEnable ? "✓" : "✗";
-                String webHTMLStatus = enableWebHTML ? "✓" : "✗";
-                rows.add(new String[]{
+                KeyListDTO dto = new KeyListDTO(
                         name,
-                        String.format("%.2f", balance),
-                        expireTime,
-                        portStr,
-                        formattedRate + "mbps",
-                        enableStatus,
-                        webHTMLStatus,
-                        String.valueOf(clientNum)
-                });
+                        rs.getDouble("balance"),
+                        rs.getString("expireTime"),
+                        rs.getString("port"),
+                        rs.getDouble("rate"),
+                        rs.getBoolean("isEnable"),
+                        rs.getBoolean("enableWebHTML"),
+                        " (L)"
+                );
+                keyMap.put(name, dto);
             }
-            if (rows.isEmpty()) {
-                ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFound");
-                return;
-            }
-            String[] headers = ServerLogger.getMessage("consoleManager.headers.keyList").split("\\|");
-            printAsciiTable(headers, rows);
         } catch (Exception e) {
             debugOperation(e);
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.dbQueryFailed");
+            return;
         }
+
+        // 2. 如果是 RemoteProvider，获取缓存中的 Key (标记为 R)
+        if (SequenceKey.PROVIDER instanceof RemoteKeyProvider) {
+            // 使用我们刚刚在 SequenceKey 中添加的快照方法
+            Map<String, SequenceKey> cache = SequenceKey.getKeyCacheSnapshot();
+            for (SequenceKey k : cache.values()) {
+                // 远程覆盖本地，因为远程是实时生效的配置
+                keyMap.put(k.getName(), new KeyListDTO(k, " (R)"));
+            }
+        }
+
+        if (keyMap.isEmpty()) {
+            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFound");
+            return;
+        }
+
+        // 3. 排序：(R) 优先，其次按名称字母序
+        List<KeyListDTO> sortedList = new ArrayList<>(keyMap.values());
+        sortedList.sort((k1, k2) -> {
+            boolean isR1 = k1.sourceTag.contains("(R)");
+            boolean isR2 = k2.sourceTag.contains("(R)");
+            if (isR1 && !isR2) return -1;
+            if (!isR1 && isR2) return 1;
+            return k1.name.compareToIgnoreCase(k2.name);
+        });
+
+        // 4. 构建表格
+        List<String[]> rows = new ArrayList<>();
+        for (KeyListDTO dto : sortedList) {
+            int clientNum = findKeyClientNum(dto.name);
+            String formattedRate = killDoubleEndZero(dto.rate);
+            String enableStatus = dto.isEnable ? "✓" : "✗";
+            String webHTMLStatus = dto.enableWebHTML ? "✓" : "✗";
+
+            // 【核心】在名称后附加来源标识
+            String displayName = dto.name + dto.sourceTag;
+
+            rows.add(new String[]{
+                    displayName,
+                    String.format("%.2f", dto.balance),
+                    dto.expireTime,
+                    dto.port,
+                    formattedRate + "mbps",
+                    enableStatus,
+                    webHTMLStatus,
+                    String.valueOf(clientNum)
+            });
+        }
+
+        String[] headers = ServerLogger.getMessage("consoleManager.headers.keyList").split("\\|");
+        printAsciiTable(headers, rows);
     }
 
     private static void listKeyNames() {
@@ -760,6 +811,7 @@ public class ConsoleManager {
             return String.format("%s%s(%d)", name, status, clientNum);
         }, " ");
     }
+    // ===============================================================
 
     private static void listKeyBalances() {
         executeQueryAndPrint("SELECT name, balance, isEnable FROM sk", rs -> {
@@ -962,5 +1014,50 @@ public class ConsoleManager {
     @FunctionalInterface
     private interface RowProcessor {
         String process(java.sql.ResultSet rs) throws java.sql.SQLException;
+    }
+
+    // ================= 【核心修改】重写 listAllKeys =================
+    private static class KeyListDTO {
+        String name;
+        double balance;
+        String expireTime;
+        String port;
+        double rate;
+        boolean isEnable;
+        boolean enableWebHTML;
+        String sourceTag; // "(L)" 或 "(R)"
+
+        // 构造本地数据
+        public KeyListDTO(String name, double balance, String expireTime, String port, double rate, boolean isEnable, boolean enableWebHTML, String sourceTag) {
+            this.name = name;
+            this.balance = balance;
+            this.expireTime = expireTime;
+            this.port = port;
+            this.rate = rate;
+            this.isEnable = isEnable;
+            this.enableWebHTML = enableWebHTML;
+            this.sourceTag = sourceTag;
+        }
+
+        // 构造远程数据 (SequenceKey)
+        public KeyListDTO(SequenceKey key, String sourceTag) {
+            this.name = key.getName();
+            this.balance = key.getBalance();
+            this.expireTime = key.getExpireTime();
+            this.port = key.getPort() == -1 ? "Dynamic" : (key.getDyStart() != key.getDyEnd() ? key.getDyStart() + "-" + key.getDyEnd() : String.valueOf(key.getDyStart()));
+            // 如果 port 是字符串形式存储在 port 字段里
+            try {
+                // 反射获取 port 字段或者使用 key.port (SequenceKey 里 port 是 protected)
+                // 但这里我们可以直接用 port 字段，因为它在同包下 protected 可见
+                // 或者用 getter
+                this.port = key.port; // protected 访问
+            } catch (Exception e) {
+                this.port = "Unknown";
+            }
+            this.rate = key.getRate();
+            this.isEnable = key.isEnable();
+            this.enableWebHTML = key.isHTMLEnabled();
+            this.sourceTag = sourceTag;
+        }
     }
 }

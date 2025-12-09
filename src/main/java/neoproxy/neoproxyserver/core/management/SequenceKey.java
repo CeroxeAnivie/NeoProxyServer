@@ -30,6 +30,8 @@ public class SequenceKey {
     private static final String DB_PASSWORD = "";
 
     private static final Map<String, SequenceKey> keyCache = new ConcurrentHashMap<>();
+    // 本地数据库刷盘间隔：5秒
+    private static final long SAVE_INTERVAL_MS = 5000;
     public static KeyDataProvider PROVIDER;
 
     static {
@@ -38,12 +40,11 @@ public class SequenceKey {
         }));
     }
 
-    // 实例字段
-    protected final String name;
-
     // ==================== 以下代码保持不变，为了节省篇幅省略部分内容 ====================
     // (构造函数、initProvider、initKeyDatabase 等逻辑保持原样)
 
+    // 实例字段
+    protected final String name;
     // ... [Rest of the file remains exactly the same] ...
     private final ReentrantLock lock = new ReentrantLock();
     protected volatile double balance;
@@ -53,6 +54,8 @@ public class SequenceKey {
     protected volatile double rate;
     protected volatile boolean isEnable;
     protected volatile boolean enableWebHTML;
+    // 记录上次保存到本地数据库的时间
+    private volatile long lastSaveTime = System.currentTimeMillis();
 
     public SequenceKey(String name, double balance, String expireTime, String port, double rate, boolean isEnable, boolean enableWebHTML) {
         this.name = name;
@@ -297,28 +300,85 @@ public class SequenceKey {
         }
     }
 
-    public void mineMib(String sourceSubject, double mib) throws NoMoreNetworkFlowException {
-        if (mib <= 0) return;
+    public void refreshFrom(SequenceKey freshKey) {
+        if (freshKey == null) return;
+
         lock.lock();
         try {
+            // 1. 同步基础数据
+            this.balance = freshKey.balance;
+            this.isEnable = freshKey.isEnable;
+            this.enableWebHTML = freshKey.enableWebHTML;
+            this.rate = freshKey.rate;
+
+            // 2. 同步过期时间并重算时间戳
+            if (!String.valueOf(this.expireTime).equals(freshKey.expireTime)) {
+                this.expireTime = freshKey.expireTime;
+                updateExpireTimestamp(this.expireTime);
+            }
+
+            // 3. 端口通常不会在连接期间改变，但为了严谨也可以同步
+            if (!String.valueOf(this.port).equals(freshKey.port)) {
+                this.port = freshKey.port;
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void mineMib(String sourceSubject, double mib) throws NoMoreNetworkFlowException {
+        if (mib <= 0) return;
+
+        boolean needLocalSave = false;
+
+        lock.lock();
+        try {
+            // 1. 基础检查
             if (isOutOfDate()) {
                 NoMoreNetworkFlowException.throwException("SK-Manager", "exception.keyOutOfDateForFlow", name);
             }
             if (!isEnable) {
                 NoMoreNetworkFlowException.throwException("SK-Manager", "exception.keyDisabled", name);
             }
+
+            // 2. 内存扣费 (所有模式通用，实时更新)
             this.balance -= mib;
+
+            // 3. 检查余额耗尽 (耗尽时必须立即触发保存/同步)
             if (this.balance <= 0) {
                 this.balance = 0;
+                needLocalSave = true; // 强制标记需要保存
                 NoMoreNetworkFlowException.throwException(sourceSubject, "exception.insufficientBalance", name);
             }
+
+            // 4. 【本地模式特有逻辑】检查时间间隔
+            // 只有本地模式需要控制写盘频率，远程模式不需要在这里控制
+            if (PROVIDER instanceof neoproxy.neoproxyserver.core.management.provider.LocalKeyProvider) {
+                long now = System.currentTimeMillis();
+                if (now - lastSaveTime > SAVE_INTERVAL_MS) {
+                    needLocalSave = true;
+                    lastSaveTime = now;
+                }
+            }
+
         } finally {
             lock.unlock();
         }
+
+        // ==========================================================
+        // 关键分歧点：如何处理 Provider 通知
+        // ==========================================================
+
         if (PROVIDER != null) {
+            // A. 通知 Provider 消耗了流量
+            // - 如果是 RemoteKeyProvider：它会存入内存 Buffer，稍后合并发送 HTTP。这里调用很快，没问题。
+            // - 如果是 LocalKeyProvider：我们之前已经把它的 consumeFlow 变成空方法了，所以这里调用也没代价。
             PROVIDER.consumeFlow(this.name, mib);
         }
-        if (PROVIDER instanceof LocalKeyProvider && this.balance <= 0) {
+
+        // B. 本地数据库持久化 (仅针对 Local 模式)
+        // 只有满足 5秒间隔 或 余额耗尽 时，才真正去写磁盘
+        if (needLocalSave && PROVIDER instanceof neoproxy.neoproxyserver.core.management.provider.LocalKeyProvider) {
             ThreadManager.runAsync(() -> saveToDB(this));
         }
     }

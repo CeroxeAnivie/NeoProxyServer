@@ -1,6 +1,7 @@
 package neoproxy.neoproxyserver.core;
 
 import neoproxy.neoproxyserver.core.management.SequenceKey;
+import neoproxy.neoproxyserver.core.management.provider.Protocol;
 import neoproxy.neoproxyserver.core.threads.RateLimiter;
 import neoproxy.neoproxyserver.core.threads.UDPTransformer;
 import plethora.net.SecureSocket;
@@ -16,6 +17,9 @@ import java.net.SocketTimeoutException;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
 
 import static neoproxy.neoproxyserver.NeoProxyServer.availableHostClient;
@@ -33,7 +37,8 @@ public final class HostClient implements Closeable {
     private final SecureSocket hostServerHook;
     private final CopyOnWriteArrayList<Socket> activeTcpSockets = new CopyOnWriteArrayList<>();
     private final RateLimiter globalRateLimiter = new RateLimiter(0);
-
+    // 使用 AtomicBoolean 防止 close 重复调用
+    private final AtomicBoolean isClosed = new AtomicBoolean(false);
     private boolean isStopped = false;
     private SequenceKey sequenceKey = null;
     private ServerSocket clientServerSocket = null;
@@ -42,10 +47,10 @@ public final class HostClient implements Closeable {
     private int outPort = -1;
     private String cachedLocation;
     private String cachedISP;
-
     private boolean isTCPEnabled = true;
     private boolean isUDPEnabled = true;
-
+    // 【新增】鉴权心跳任务句柄
+    private ScheduledFuture<?> heartbeatTask;
     private volatile long lastValidHeartbeatTime = System.currentTimeMillis();
 
     public HostClient(SecureSocket hostServerHook) throws IOException {
@@ -55,6 +60,8 @@ public final class HostClient implements Closeable {
         HostClient.enableAutoSaveThread(this);
         HostClient.enableKeyDetectionTread(this);
     }
+
+    // ... 在 HostClient 类中添加 ...
 
     private static void enableAutoSaveThread(HostClient hostClient) {
         ThreadManager.runAsync(() -> {
@@ -132,6 +139,61 @@ public final class HostClient implements Closeable {
         } catch (InterruptedException e) {
             debugOperation(e);
         }
+    }
+
+    /**
+     * 【新增】应用动态更新
+     * 当 RemoteKeyProvider 拉取到最新 Key 信息后调用此方法
+     */
+    public void applyDynamicUpdates() {
+        if (this.sequenceKey != null) {
+            // 立即更新全局限速器的速率
+            // RateLimiter 内部 setMaxMbps 应该是线程安全的，或者只是简单的 volatile 赋值
+            this.globalRateLimiter.setMaxMbps(this.sequenceKey.getRate());
+
+            // 如果有其他需要动态调整的参数（如日志级别、特殊标记），也可以在此处处理
+        }
+    }
+
+    public void startRemoteHeartbeat() {
+        // 如果 Key 为空或任务已启动，则忽略
+        if (this.sequenceKey == null || heartbeatTask != null) return;
+
+        Runnable task = () -> {
+            // 如果客户端已停止或已关闭，直接返回
+            if (isStopped() || isClosed.get()) return;
+
+            try {
+                // 1. 构建心跳包数据
+                Protocol.HeartbeatPayload payload = new Protocol.HeartbeatPayload();
+                payload.serial = this.sequenceKey.getName();
+                payload.nodeId = ConfigOperator.NODE_ID; // 需确保 ConfigOperator 中有 NODE_ID
+                payload.port = String.valueOf(this.getOutPort());
+                payload.timestamp = System.currentTimeMillis();
+                payload.currentConnections = this.activeTcpSockets.size(); // 获取当前 TCP 连接数负载
+
+                // 2. 调用 Provider 发送心跳
+                // 如果返回 true，表示连接正常；返回 false，表示服务端要求断开 (Kill)
+                boolean keepAlive = SequenceKey.PROVIDER.sendHeartbeat(payload);
+
+                if (!keepAlive) {
+                    ServerLogger.warn("hostClient.kickedByManager", this.sequenceKey.getName());
+                    // 3. 响应 Kill 指令，立即断开连接
+                    this.close();
+                }
+            } catch (Exception e) {
+                // 网络异常时不中断服务，仅记录日志，等待下一次心跳或 NKM 端的 Zombie 超时
+                ServerLogger.error("hostClient.heartbeatError", e);
+            }
+        };
+
+        // 使用 NPS 全局线程池调度，每隔 Protocol.HEARTBEAT_INTERVAL_MS (5秒) 执行一次
+        this.heartbeatTask = ThreadManager.getScheduledExecutor().scheduleAtFixedRate(
+                task,
+                0,
+                Protocol.HEARTBEAT_INTERVAL_MS,
+                TimeUnit.MILLISECONDS
+        );
     }
 
     public RateLimiter getGlobalRateLimiter() {
@@ -313,8 +375,22 @@ public final class HostClient implements Closeable {
         activeTcpSockets.clear();
     }
 
-    @Override
     public void close() {
+        // 使用 CAS 确保只执行一次关闭逻辑，防止递归调用
+        if (!isClosed.compareAndSet(false, true)) {
+            return;
+        }
+
+        this.isStopped = true;
+
+        // 【新增】停止心跳任务，防止内存泄漏和无意义的网络请求
+        if (heartbeatTask != null) {
+            heartbeatTask.cancel(true); // true 表示如果正在运行则强制中断
+            heartbeatTask = null;
+        }
+
+        // --- 以下保持原有的清理逻辑不变 ---
+
         cleanActiveTcpSockets();
 
         availableHostClient.remove(this);
@@ -325,8 +401,7 @@ public final class HostClient implements Closeable {
         this.setUDPEnabled(false);
         InternetOperator.close(clientDatagramSocket);
 
-        this.isStopped = true;
-
+        // 释放 Key (通知本地或远程，该端口已释放)
         if (this.sequenceKey != null) {
             SequenceKey.releaseKey(this.sequenceKey.getName());
         }

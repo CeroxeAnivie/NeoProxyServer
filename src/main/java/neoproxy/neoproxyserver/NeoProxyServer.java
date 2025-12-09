@@ -226,29 +226,11 @@ public class NeoProxyServer {
                         } catch (SocketTimeoutException e) {
                             // 仅超时，流可能还是有效的，继续
                         } catch (IOException e) {
+                            debugOperation(e);
                             client.close();
                             return;
                         } finally {
                             client.setSoTimeout(originalTimeout);
-                        }
-
-                        // 3. 【核心新增】Web 访问控制逻辑
-                        // 如果 enableWebHTML 为 false，且检测到 HTTP 协议头，则断开连接
-                        if (hostClient.getKey() != null && !hostClient.getKey().isHTMLEnabled() && readLen > 0) {
-                            String headerPrefix = new String(headerBytes, 0, readLen).toUpperCase();
-                            // 常见 HTTP 方法检测
-                            if (headerPrefix.startsWith("GET ") ||
-                                    headerPrefix.startsWith("POST ") ||
-                                    headerPrefix.startsWith("HEAD ") ||
-                                    headerPrefix.startsWith("PUT ") ||
-                                    headerPrefix.startsWith("DELETE") ||
-                                    headerPrefix.startsWith("OPTIO") ||
-                                    headerPrefix.startsWith("TRACE")) {
-
-                                // 检测到 Web 流量但 Web 功能被禁用
-                                client.close();
-                                return;
-                            }
                         }
 
                         long socketID = AtomicIdGenerator.GLOBAL.nextId();
@@ -378,6 +360,8 @@ public class NeoProxyServer {
 
         String clientAddress = InternetOperator.getInternetAddressAndPort(hostClient.getHostServerHook());
         ServerLogger.info("neoProxyServer.hostClientRegisterSuccess", clientAddress);
+        // 端口已准备好，Key 已设置，启动心跳
+        hostClient.startRemoteHeartbeat();
 
         InternetOperator.sendCommand(hostClient, String.valueOf(port));
         InternetOperator.sendStr(hostClient, hostClient.getLangData().THIS_ACCESS_CODE_HAVE + hostClient.getKey().getBalance() + hostClient.getLangData().MB_OF_FLOW_LEFT);

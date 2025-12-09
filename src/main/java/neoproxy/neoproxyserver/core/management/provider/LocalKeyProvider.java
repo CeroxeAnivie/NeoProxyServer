@@ -16,15 +16,20 @@ public class LocalKeyProvider implements KeyDataProvider {
 
     @Override
     public void releaseKey(String name) {
-        // 本地模式不需要显式释放 Session，因为没有中心控制
+        // Local mode implies manual management, no release needed usually
     }
 
     @Override
     public void consumeFlow(String name, double mib) {
-        SequenceKey.updateBalanceInDB(name, mib);
     }
 
     @Override
     public void shutdown() {
+    }
+
+    @Override
+    public boolean sendHeartbeat(Protocol.HeartbeatPayload payload) {
+        // 本地模式始终允许连接
+        return true;
     }
 }

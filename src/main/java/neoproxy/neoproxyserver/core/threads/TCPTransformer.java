@@ -16,11 +16,10 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.regex.Matcher;
 
 import static neoproxy.neoproxyserver.NeoProxyServer.debugOperation;
-import static neoproxy.neoproxyserver.NeoProxyServer.myConsole;
 import static neoproxy.neoproxyserver.core.InternetOperator.*;
-import static neoproxy.neoproxyserver.core.ServerLogger.alert;
 
 public class TCPTransformer {
 
@@ -31,15 +30,18 @@ public class TCPTransformer {
     private static String FORBIDDEN_HTML_TEMPLATE;
 
     static {
+        // 既然确认资源绝对可达，这里保持原逻辑，但为了安全起见，
+        // 建议在 catch 中也赋予一个包含 {{CUSTOM_MESSAGE}} 的简单模板，以防万一。
         try (InputStream inputStream = TCPTransformer.class.getResourceAsStream("/templates/forbidden.html")) {
             if (inputStream == null) {
-                // 如果找不到模板，则 FORBIDDEN_HTML_TEMPLATE 为 null
+                // 如果真的发生了不可能的情况，至少让 fallback 也能显示消息
+                FORBIDDEN_HTML_TEMPLATE = "<html><body><h1>403 Forbidden</h1><p>{{CUSTOM_MESSAGE}}</p></body></html>";
             } else {
                 FORBIDDEN_HTML_TEMPLATE = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
             }
         } catch (IOException e) {
             debugOperation(e);
-            FORBIDDEN_HTML_TEMPLATE = null;
+            FORBIDDEN_HTML_TEMPLATE = "<html><body><h1>403 Forbidden</h1><p>IO Error: {{CUSTOM_MESSAGE}}</p></body></html>";
         }
     }
 
@@ -107,92 +109,117 @@ public class TCPTransformer {
         close(hostClient);
     }
 
-    private static void checkAndBlockHtmlResponse(byte[] data, BufferedOutputStream clientOutput, String remoteSocketAddress, HostClient hostClient) throws IllegalWebSiteException, IOException {
-        if (data == null || data.length == 0) return;
-        String response = new String(data, StandardCharsets.UTF_8);
-        int headerEndIndex = response.indexOf("\r\n\r\n");
-        String headerPart = (headerEndIndex != -1) ? response.substring(0, headerEndIndex) : response;
-        if (headerPart.toLowerCase().contains("content-type: text/html")) {
-            if (alert) {
-                myConsole.log("TCPTransformer", "Detected web HTML from " + remoteSocketAddress.replaceAll("/", ""));
-            }
-            if (FORBIDDEN_HTML_TEMPLATE == null) return;
+    private static boolean checkAndBlockHtmlResponse(byte[] data, Socket clientSocket, String remoteSocketAddress, HostClient hostClient) throws IOException {
+        if (data == null || data.length == 0) return false;
 
-            String finalHtml = FORBIDDEN_HTML_TEMPLATE.replace("{{CUSTOM_MESSAGE}}", CUSTOM_BLOCKING_MESSAGE != null ? CUSTOM_BLOCKING_MESSAGE : "");
-            byte[] errorHtmlBytes = finalHtml.getBytes(StandardCharsets.UTF_8);
-            String httpResponseHeader = "HTTP/1.1 403 Forbidden\r\n" +
-                    "Content-Type: text/html; charset=utf-8\r\n" +
-                    "Content-Length: " + errorHtmlBytes.length + "\r\n" +
-                    "Connection: close\r\n" +
-                    "\r\n";
-            clientOutput.write(httpResponseHeader.getBytes(StandardCharsets.UTF_8));
-            clientOutput.write(errorHtmlBytes);
-            clientOutput.flush();
-            IllegalWebSiteException.throwException(hostClient.getKey().getName());
+        int limit = Math.min(data.length, 8192);
+        String headerRaw = new String(data, 0, limit, StandardCharsets.ISO_8859_1);
+
+        int headerEndIndex = headerRaw.indexOf("\r\n\r\n");
+        if (headerEndIndex == -1) return false;
+
+        String headersSection = headerRaw.substring(0, headerEndIndex).toLowerCase();
+
+        if (!headersSection.startsWith("http/")) return false;
+
+        boolean isHtml = false;
+        boolean isAttachment = false;
+
+        String[] lines = headersSection.split("\r\n");
+        for (String line : lines) {
+            String cleanLine = line.trim();
+            if (cleanLine.startsWith("content-type:")) {
+                if (cleanLine.contains("text/html")) {
+                    isHtml = true;
+                }
+            } else if (cleanLine.startsWith("content-disposition:")) {
+                if (cleanLine.contains("attachment")) {
+                    isAttachment = true;
+                }
+            }
         }
+
+        if (isHtml && !isAttachment) {
+            try (BufferedOutputStream out = new BufferedOutputStream(clientSocket.getOutputStream())) {
+                String template = (FORBIDDEN_HTML_TEMPLATE != null) ? FORBIDDEN_HTML_TEMPLATE : "<h1>403 Forbidden</h1><p>{{CUSTOM_MESSAGE}}</p>";
+
+                String message = CUSTOM_BLOCKING_MESSAGE != null ? CUSTOM_BLOCKING_MESSAGE : "";
+
+                // 【修改 1】使用 replaceAll 和正则，允许占位符中存在空格 (例如 {{ CUSTOM_MESSAGE }})，提高容错率
+                // 同时也使用了 Matcher.quoteReplacement 避免消息中包含 $ 或 \ 导致报错
+                String finalHtml = template.replaceAll("\\{\\{\\s*CUSTOM_MESSAGE\\s*\\}\\}", Matcher.quoteReplacement(message));
+
+                byte[] errorHtmlBytes = finalHtml.getBytes(StandardCharsets.UTF_8);
+
+                // 【修改 2】添加 Cache-Control 头部，强制浏览器不要缓存 403 页面
+                // 解决“消息修改后浏览器看不到”的问题
+                String httpResponseHeader = "HTTP/1.1 403 Forbidden\r\n" +
+                        "Content-Type: text/html; charset=utf-8\r\n" +
+                        "Content-Length: " + errorHtmlBytes.length + "\r\n" +
+                        "Connection: close\r\n" +
+                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                        "Pragma: no-cache\r\n" +
+                        "Expires: 0\r\n" +
+                        "\r\n";
+
+                out.write(httpResponseHeader.getBytes(StandardCharsets.UTF_8));
+                out.write(errorHtmlBytes);
+                out.flush();
+
+                clientSocket.shutdownOutput();
+
+                Thread.sleep(800);
+            } catch (Exception e) {
+                // ignore
+            }
+
+            try {
+                IllegalWebSiteException.throwException(hostClient.getKey().getName());
+            } catch (IllegalWebSiteException e) {
+                // ignore
+            }
+            return true;
+        }
+
+        return false;
     }
 
-    /**
-     * 构建 Proxy Protocol v2 二进制头
-     */
     private static byte[] createProxyProtocolV2Header(Socket clientSocket) {
         try {
             InetSocketAddress srcAddress = (InetSocketAddress) clientSocket.getRemoteSocketAddress();
             InetSocketAddress dstAddress = (InetSocketAddress) clientSocket.getLocalSocketAddress();
-
             if (srcAddress == null || dstAddress == null) return null;
 
             InetAddress srcIp = srcAddress.getAddress();
             InetAddress dstIp = dstAddress.getAddress();
             int srcPort = srcAddress.getPort();
             int dstPort = dstAddress.getPort();
-
             boolean isIPv4 = srcIp instanceof Inet4Address;
 
-            // 1. 协议签名 (12 bytes)
             byte[] signature = new byte[]{
                     (byte) 0x0D, (byte) 0x0A, (byte) 0x0D, (byte) 0x0A,
                     (byte) 0x00, (byte) 0x0D, (byte) 0x0A, (byte) 0x51,
                     (byte) 0x55, (byte) 0x49, (byte) 0x54, (byte) 0x0A
             };
-
-            // 2. Version & Command (0x21 = v2, PROXY)
             byte verCmd = (byte) 0x21;
-
-            // 3. Family & Transport (0x11 = IPv4 TCP, 0x21 = IPv6 TCP)
             byte famTrans = isIPv4 ? (byte) 0x11 : (byte) 0x21;
-
-            // 4. 地址数据构建
             byte[] srcIpBytes = srcIp.getAddress();
             byte[] dstIpBytes = dstIp.getAddress();
-
-            // 计算地址部分总长度
             int addrLen = srcIpBytes.length + dstIpBytes.length + 2 + 2;
 
-            // 5. 组合最终包
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             baos.write(signature);
             baos.write(verCmd);
             baos.write(famTrans);
-
-            // 写入长度 (Big Endian short)
             baos.write((addrLen >> 8) & 0xFF);
             baos.write(addrLen & 0xFF);
-
-            // 写入源IP 和 目的IP
             baos.write(srcIpBytes);
             baos.write(dstIpBytes);
-
-            // 写入源端口 (Big Endian short)
             baos.write((srcPort >> 8) & 0xFF);
             baos.write(srcPort & 0xFF);
-
-            // 写入目的端口 (Big Endian short)
             baos.write((dstPort >> 8) & 0xFF);
             baos.write(dstPort & 0xFF);
-
             return baos.toByteArray();
-
         } catch (Exception e) {
             debugOperation(e);
             return null;
@@ -200,10 +227,6 @@ public class TCPTransformer {
     }
 
     private void clientToHost(double[] aTenMibSize) {
-        // =========================================================================
-        // 无条件发送 Proxy Protocol v2 头
-        // 客户端将根据自身配置决定是否转发此头给后端
-        // =========================================================================
         try {
             byte[] ppHeader = createProxyProtocolV2Header(this.client);
             if (ppHeader != null) {
@@ -212,12 +235,9 @@ public class TCPTransformer {
         } catch (Exception e) {
             debugOperation(e);
         }
-        // =========================================================================
 
         try (BufferedInputStream bufferedInputStream = new BufferedInputStream(this.clientInputStream)) {
-            // 获取全局限速器
             RateLimiter limiter = hostClient.getGlobalRateLimiter();
-
             int len;
             while ((len = bufferedInputStream.read(clientToHostBuffer)) != -1) {
                 if (len <= 0) continue;
@@ -227,8 +247,6 @@ public class TCPTransformer {
                 if (enLength > 0) {
                     hostClient.getKey().mineMib("TCP-Transformer:C->H", SizeCalculator.byteToMib(enLength + 10));
                     tellRestBalance(hostClient, aTenMibSize, enLength, hostClient.getLangData());
-
-                    // 调用共享限速器
                     limiter.setMaxMbps(hostClient.getKey().getRate());
                     limiter.onBytesTransferred(enLength);
                 }
@@ -245,25 +263,26 @@ public class TCPTransformer {
 
     private void hostToClient(double[] aTenMibSize) {
         try (BufferedOutputStream bufferedOutputStream = new BufferedOutputStream(client.getOutputStream())) {
-            // 获取全局限速器
             RateLimiter limiter = hostClient.getGlobalRateLimiter();
 
             byte[] data;
             boolean isHtmlResponseChecked = false;
+
             while ((data = hostReply.host().receiveByte()) != null) {
                 if (data.length == 0) continue;
 
                 if (!isHtmlResponseChecked && !hostClient.getKey().isHTMLEnabled()) {
                     isHtmlResponseChecked = true;
-                    checkAndBlockHtmlResponse(data, bufferedOutputStream, hostReply.host().getRemoteSocketAddress().toString(), hostClient);
+                    if (checkAndBlockHtmlResponse(data, client, hostReply.host().getRemoteSocketAddress().toString(), hostClient)) {
+                        return;
+                    }
                 }
+
                 bufferedOutputStream.write(data);
                 bufferedOutputStream.flush();
 
                 hostClient.getKey().mineMib("TCP-Transformer:H->C", SizeCalculator.byteToMib(data.length));
                 tellRestBalance(hostClient, aTenMibSize, data.length, hostClient.getLangData());
-
-                // 调用共享限速器
                 limiter.setMaxMbps(hostClient.getKey().getRate());
                 limiter.onBytesTransferred(data.length);
             }
@@ -273,7 +292,6 @@ public class TCPTransformer {
             debugOperation(e);
             shutdownInput(hostReply.host());
             shutdownOutput(client);
-        } catch (IllegalWebSiteException ignored) {
         }
     }
 }

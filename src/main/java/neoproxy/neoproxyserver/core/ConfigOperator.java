@@ -1,6 +1,9 @@
 package neoproxy.neoproxyserver.core;
 
 import neoproxy.neoproxyserver.NeoProxyServer;
+import neoproxy.neoproxyserver.core.management.IPChecker;
+import neoproxy.neoproxyserver.core.management.TransferSocketAdapter;
+import neoproxy.neoproxyserver.core.threads.TCPTransformer;
 import neoproxy.neoproxyserver.core.webadmin.WebAdminManager;
 import plethora.utils.config.LineConfigReader;
 
@@ -99,10 +102,15 @@ public final class ConfigOperator {
         NeoProxyServer.HOST_HOOK_PORT = reader.getOptional("HOST_HOOK_PORT").map(Integer::parseInt).orElse(44801);
         NeoProxyServer.HOST_CONNECT_PORT = reader.getOptional("HOST_CONNECT_PORT").map(Integer::parseInt).orElse(44802);
         WebAdminManager.WEB_ADMIN_PORT = reader.getOptional("WEB_ADMIN_PORT").map(Integer::parseInt).orElse(44803);
+        IPChecker.ENABLE_BAN = reader.getOptional("ENABLE_BAN").map(Boolean::parseBoolean).orElse(true);
         ServerLogger.alert = reader.getOptional("ALERT").map(Boolean::parseBoolean).orElse(true);
         HostClient.SAVE_DELAY = reader.getOptional("SAVE_DELAY").map(Integer::parseInt).orElse(3000);
         HostClient.AES_KEY_SIZE = reader.getOptional("AES_KEY_SIZE").map(Integer::parseInt).orElse(128);
         HostClient.HEARTBEAT_TIMEOUT = reader.getOptional("HEARTBEAT_TIMEOUT").map(Integer::parseInt).orElse(5000);
+        TCPTransformer.CUSTOM_BLOCKING_MESSAGE = reader.getOptional("CUSTOM_BLOCKING_MESSAGE").orElse("您没有访问网页的权限<br>请联系管理员以获取进一步支持");
+        TCPTransformer.BUFFER_LEN = reader.getOptional("BUFFER_LEN").map(Integer::parseInt).orElse(4096);
+        TCPTransformer.TELL_BALANCE_MIB = reader.getOptional("TELL_BALANCE_MIB").map(Integer::parseInt).orElse(10);
+        TransferSocketAdapter.SO_TIMEOUT = reader.getOptional("SO_TIMEOUT").map(Integer::parseInt).orElse(5000);
 
         String permToken = reader.getOptional("WEB_ADMIN_TOKEN").orElse("").trim();
         WebAdminManager.setPermanentToken(permToken);

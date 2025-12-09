@@ -2,10 +2,12 @@ package neoproxy.neoproxyserver.core.exceptions;
 
 import neoproxy.neoproxyserver.core.ServerLogger;
 
+import java.io.IOException;
+
 /**
  * 当客户端尝试访问被禁止的网页内容时抛出此异常。
  */
-public class IllegalWebSiteException extends Exception {
+public class IllegalWebSiteException extends IOException {
     private IllegalWebSiteException(String message) {
         super(message);
     }

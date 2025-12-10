@@ -39,7 +39,6 @@ import static neoproxy.neoproxyserver.core.management.SequenceKey.DYNAMIC_PORT;
 import static neoproxy.neoproxyserver.core.threads.TCPTransformer.BUFFER_LEN;
 
 public class NeoProxyServer {
-    // ... (保持原有的静态变量和 initStructure, main 等不变) ...
     public static final String CURRENT_DIR_PATH = getJarDirOrUserDir();
     public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
     public static final String ASCII_LOGO = """
@@ -65,8 +64,6 @@ public class NeoProxyServer {
     public static boolean IS_DEBUG_MODE = false;
     public static MyConsole myConsole;
     public static boolean isStopped = false;
-
-    // ... (Helper methods like getFromAppProperties, initStructure, checkARGS, printLogo, main, listenAndConfigureHostClient omitted for brevity, keep them as is) ...
 
     private static String getFromAppProperties(String name) {
         Properties props = new Properties();

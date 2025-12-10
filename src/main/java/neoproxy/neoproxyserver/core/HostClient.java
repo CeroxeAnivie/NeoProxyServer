@@ -1,7 +1,6 @@
 package neoproxy.neoproxyserver.core;
 
 import neoproxy.neoproxyserver.core.management.SequenceKey;
-import neoproxy.neoproxyserver.core.management.provider.Protocol;
 import neoproxy.neoproxyserver.core.threads.RateLimiter;
 import neoproxy.neoproxyserver.core.threads.UDPTransformer;
 import plethora.net.SecureSocket;
@@ -18,11 +17,9 @@ import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
 
-import static neoproxy.neoproxyserver.NeoProxyServer.availableHostClient;
 import static neoproxy.neoproxyserver.NeoProxyServer.debugOperation;
 import static neoproxy.neoproxyserver.core.ServerLogger.sayHostClientDiscInfo;
 import static neoproxy.neoproxyserver.core.management.SequenceKey.saveToDB;
@@ -49,8 +46,8 @@ public final class HostClient implements Closeable {
     private String cachedISP;
     private boolean isTCPEnabled = true;
     private boolean isUDPEnabled = true;
-    // 【新增】鉴权心跳任务句柄
-    private ScheduledFuture<?> heartbeatTask;
+    // NKM 远程心跳任务
+    private ScheduledFuture<?> remoteHeartbeatTask;
     private volatile long lastValidHeartbeatTime = System.currentTimeMillis();
 
     public HostClient(SecureSocket hostServerHook) throws IOException {
@@ -156,43 +153,43 @@ public final class HostClient implements Closeable {
     }
 
     public void startRemoteHeartbeat() {
-        // 如果 Key 为空或任务已启动，则忽略
-        if (this.sequenceKey == null || heartbeatTask != null) return;
+        if (this.sequenceKey == null || this.remoteHeartbeatTask != null) {
+            return;
+        }
 
         Runnable task = () -> {
-            // 如果客户端已停止或已关闭，直接返回
-            if (isStopped() || isClosed.get()) return;
+            if (isStopped() || this.sequenceKey == null) {
+                return;
+            }
 
             try {
-                // 1. 构建心跳包数据
-                Protocol.HeartbeatPayload payload = new Protocol.HeartbeatPayload();
-                payload.serial = this.sequenceKey.getName();
-                payload.nodeId = ConfigOperator.NODE_ID; // 需确保 ConfigOperator 中有 NODE_ID
-                payload.port = String.valueOf(this.getOutPort());
-                payload.timestamp = System.currentTimeMillis();
-                payload.currentConnections = this.activeTcpSockets.size(); // 获取当前 TCP 连接数负载
+                neoproxy.neoproxyserver.core.management.provider.Protocol.HeartbeatPayload payload =
+                        new neoproxy.neoproxyserver.core.management.provider.Protocol.HeartbeatPayload();
 
-                // 2. 调用 Provider 发送心跳
-                // 如果返回 true，表示连接正常；返回 false，表示服务端要求断开 (Kill)
-                boolean keepAlive = SequenceKey.PROVIDER.sendHeartbeat(payload);
+                payload.serial = this.sequenceKey.getName();
+                payload.nodeId = neoproxy.neoproxyserver.core.ConfigOperator.NODE_ID;
+                payload.port = String.valueOf(this.outPort);
+                payload.timestamp = System.currentTimeMillis();
+                payload.currentConnections = this.activeTcpSockets.size();
+
+                boolean keepAlive = neoproxy.neoproxyserver.core.management.SequenceKey.PROVIDER.sendHeartbeat(payload);
 
                 if (!keepAlive) {
-                    ServerLogger.warn("hostClient.kickedByManager", this.sequenceKey.getName());
-                    // 3. 响应 Kill 指令，立即断开连接
+                    // Log: Key {0} was kicked by manager (Kill signal received).
+                    neoproxy.neoproxyserver.core.ServerLogger.warn("hostClient.kickedByManager", this.sequenceKey.getName());
                     this.close();
                 }
             } catch (Exception e) {
-                // 网络异常时不中断服务，仅记录日志，等待下一次心跳或 NKM 端的 Zombie 超时
-                ServerLogger.error("hostClient.heartbeatError", e);
+                // Log: Heartbeat failed: {0}
+                neoproxy.neoproxyserver.core.ServerLogger.warn("hostClient.heartbeatError", e.getMessage());
             }
         };
 
-        // 使用 NPS 全局线程池调度，每隔 Protocol.HEARTBEAT_INTERVAL_MS (5秒) 执行一次
-        this.heartbeatTask = ThreadManager.getScheduledExecutor().scheduleAtFixedRate(
+        this.remoteHeartbeatTask = plethora.thread.ThreadManager.getScheduledExecutor().scheduleAtFixedRate(
                 task,
                 0,
-                Protocol.HEARTBEAT_INTERVAL_MS,
-                TimeUnit.MILLISECONDS
+                neoproxy.neoproxyserver.core.management.provider.Protocol.HEARTBEAT_INTERVAL_MS,
+                java.util.concurrent.TimeUnit.MILLISECONDS
         );
     }
 
@@ -376,34 +373,40 @@ public final class HostClient implements Closeable {
     }
 
     public void close() {
-        // 使用 CAS 确保只执行一次关闭逻辑，防止递归调用
+        // 使用 CAS 原子操作确保只执行一次关闭逻辑，防止递归调用或多线程重复关闭
         if (!isClosed.compareAndSet(false, true)) {
             return;
         }
 
         this.isStopped = true;
 
-        // 【新增】停止心跳任务，防止内存泄漏和无意义的网络请求
-        if (heartbeatTask != null) {
-            heartbeatTask.cancel(true); // true 表示如果正在运行则强制中断
-            heartbeatTask = null;
+        // 1. 停止远程心跳任务，防止内存泄漏和无意义的网络请求
+        if (this.remoteHeartbeatTask != null) {
+            this.remoteHeartbeatTask.cancel(true); // true 表示如果正在运行则强制中断
+            this.remoteHeartbeatTask = null;
         }
 
-        // --- 以下保持原有的清理逻辑不变 ---
-
+        // 2. 清理所有活跃的 TCP 连接
         cleanActiveTcpSockets();
 
-        availableHostClient.remove(this);
-        InternetOperator.close(hostServerHook);
+        // 3. 从全局列表中移除自己
+        neoproxy.neoproxyserver.NeoProxyServer.availableHostClient.remove(this);
 
+        // 4. 关闭与 Host 的控制通道 (Hook Socket)
+        neoproxy.neoproxyserver.core.InternetOperator.close(hostServerHook);
+
+        // 5. 关闭监听的 ServerSocket (TCP)
         this.setTCPEnabled(false);
-        InternetOperator.close(clientServerSocket);
-        this.setUDPEnabled(false);
-        InternetOperator.close(clientDatagramSocket);
+        neoproxy.neoproxyserver.core.InternetOperator.close(clientServerSocket);
 
-        // 释放 Key (通知本地或远程，该端口已释放)
+        // 6. 关闭监听的 DatagramSocket (UDP)
+        this.setUDPEnabled(false);
+        neoproxy.neoproxyserver.core.InternetOperator.close(clientDatagramSocket);
+
+        // 7. 通知 KeyProvider 释放 Key (发送 /api/release)
+        // 注意：如果是 Remote 模式，这将告诉 NKM 该节点已下线
         if (this.sequenceKey != null) {
-            SequenceKey.releaseKey(this.sequenceKey.getName());
+            neoproxy.neoproxyserver.core.management.SequenceKey.releaseKey(this.sequenceKey.getName());
         }
     }
 

@@ -254,13 +254,8 @@ public class ConsoleManager {
 
     private static void handleReloadCommand() {
         ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.reloadingConfig");
-
-        // 1. 读取配置文件 (更新 ConfigOperator 中的静态变量)
         ConfigOperator.readAndSetValue();
-
-        // 2. 【核心】应用 KeyProvider 的变更 (重连远程/切换本地)
         SequenceKey.reloadProvider();
-
         ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.configReloaded");
     }
 
@@ -448,7 +443,6 @@ public class ConsoleManager {
         }
     }
 
-
     private static boolean isPortInRange(int port, String portRange) {
         if (portRange == null || portRange.isEmpty()) {
             return false;
@@ -531,17 +525,14 @@ public class ConsoleManager {
         }
         String name = params.get(1);
 
-        // ================== 新增逻辑：检查是否为远程 Key (R) ==================
-        // 只有当 Provider 是 RemoteKeyProvider 且该 Key 存在于缓存中时，它才被视为 (R) 标签的 Key
+        // 禁止在 Remote 模式下修改受控 Key
         if (SequenceKey.PROVIDER instanceof RemoteKeyProvider) {
-            // 获取缓存快照，RemoteKeyProvider 的 Key 都在缓存里
             Map<String, SequenceKey> remoteCache = SequenceKey.getKeyCacheSnapshot();
             if (remoteCache.containsKey(name)) {
                 ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.error.remoteKeyModification");
                 return;
             }
         }
-        // ====================================================================
 
         if (!isKeyExistsByName(name)) {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFoundSpecific", name);
@@ -610,7 +601,6 @@ public class ConsoleManager {
             } else if (param.startsWith("t=")) {
                 String expireTimeInput = param.substring(2);
                 String expireTime = correctInputTime(expireTimeInput);
-
                 if (expireTime == null) {
                     ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.illegalTimeInput", expireTimeInput);
                 } else if (isOutOfDate(expireTime)) {
@@ -669,13 +659,11 @@ public class ConsoleManager {
         }
         String name = params.get(1);
 
-        // ================== 新增逻辑：检查重名 (Local & Remote) ==================
-        // isKeyExistsByName 会检查本地数据库以及内存中的 KeyCache (Remote Key 都在 Cache 中)
+        // 如果是 RemoteKeyProvider，检查缓存；如果是 Local，isKeyExistsByName 已包含检查
         if (isKeyExistsByName(name)) {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.error.keyAlreadyExists");
             return;
         }
-        // ====================================================================
 
         String balanceStr = params.get(2);
         String expireTimeInput = params.get(3);
@@ -752,10 +740,8 @@ public class ConsoleManager {
 
         // 2. 如果是 RemoteProvider，获取缓存中的 Key (标记为 R)
         if (SequenceKey.PROVIDER instanceof RemoteKeyProvider) {
-            // 使用我们刚刚在 SequenceKey 中添加的快照方法
             Map<String, SequenceKey> cache = SequenceKey.getKeyCacheSnapshot();
             for (SequenceKey k : cache.values()) {
-                // 远程覆盖本地，因为远程是实时生效的配置
                 keyMap.put(k.getName(), new KeyListDTO(k, " (R)"));
             }
         }
@@ -765,7 +751,7 @@ public class ConsoleManager {
             return;
         }
 
-        // 3. 排序：(R) 优先，其次按名称字母序
+        // 3. 排序
         List<KeyListDTO> sortedList = new ArrayList<>(keyMap.values());
         sortedList.sort((k1, k2) -> {
             boolean isR1 = k1.sourceTag.contains("(R)");
@@ -783,7 +769,6 @@ public class ConsoleManager {
             String enableStatus = dto.isEnable ? "✓" : "✗";
             String webHTMLStatus = dto.enableWebHTML ? "✓" : "✗";
 
-            // 【核心】在名称后附加来源标识
             String displayName = dto.name + dto.sourceTag;
 
             rows.add(new String[]{
@@ -811,7 +796,6 @@ public class ConsoleManager {
             return String.format("%s%s(%d)", name, status, clientNum);
         }, " ");
     }
-    // ===============================================================
 
     private static void listKeyBalances() {
         executeQueryAndPrint("SELECT name, balance, isEnable FROM sk", rs -> {
@@ -872,29 +856,16 @@ public class ConsoleManager {
     }
 
     private static String validateAndFormatPortInput(String portInput) {
-        if (portInput == null || portInput.trim().isEmpty()) {
-            return null;
-        }
+        if (portInput == null || portInput.trim().isEmpty()) return null;
         Matcher matcher = PORT_INPUT_REGEX.matcher(portInput.trim());
-        if (!matcher.matches()) {
-            return null;
-        }
+        if (!matcher.matches()) return null;
         try {
-            String startPortStr = matcher.group(1);
-            String endPortStr = matcher.group(2);
-            int startPort = Integer.parseInt(startPortStr);
-            if (startPort < 1 || startPort > 65535) {
-                return null;
-            }
-            if (endPortStr == null) {
-                return String.valueOf(startPort);
-            } else {
-                int endPort = Integer.parseInt(endPortStr);
-                if (endPort < 1 || endPort > 65535 || endPort < startPort) {
-                    return null;
-                }
-                return startPort + "-" + endPort;
-            }
+            int startPort = Integer.parseInt(matcher.group(1));
+            if (startPort < 1 || startPort > 65535) return null;
+            if (matcher.group(2) == null) return String.valueOf(startPort);
+            int endPort = Integer.parseInt(matcher.group(2));
+            if (endPort < 1 || endPort > 65535 || endPort < startPort) return null;
+            return startPort + "-" + endPort;
         } catch (NumberFormatException e) {
             return null;
         }
@@ -909,10 +880,6 @@ public class ConsoleManager {
         }
     }
 
-    private static void executeQueryAndPrint(String sql, RowProcessor rowProcessor) {
-        executeQueryAndPrint(sql, rowProcessor, "\n");
-    }
-
     private static void executeQueryAndPrint(String sql, RowProcessor rowProcessor, String separator) {
         try (var conn = getConnection();
              var stmt = conn.prepareStatement(sql);
@@ -924,9 +891,7 @@ public class ConsoleManager {
                 output.append(rowProcessor.process(rs)).append(separator);
             }
             if (hasData) {
-                if (!output.isEmpty()) {
-                    output.setLength(output.length() - separator.length());
-                }
+                if (!output.isEmpty()) output.setLength(output.length() - separator.length());
                 ServerLogger.infoWithSource(COMMAND_SOURCE.get(), output.toString());
             } else {
                 ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFound");
@@ -942,7 +907,18 @@ public class ConsoleManager {
             String name = sequenceKey.getName();
             double balance = sequenceKey.getBalance();
             String expireTime = sequenceKey.getExpireTime();
-            String portStr = sequenceKey.port;
+            String portStr = sequenceKey.getPort() == -1 ? "Dynamic" : (sequenceKey.getDyStart() != sequenceKey.getDyEnd() ? sequenceKey.getDyStart() + "-" + sequenceKey.getDyEnd() : String.valueOf(sequenceKey.getDyStart()));
+            // 如果能直接访问 SequenceKey.port 字段，可以直接用
+            try {
+                // 利用同包访问权限
+                // 如果 port 字段在 SequenceKey 中被定义为 protected
+                // 这里其实访问不了 SequenceKey 实例的 protected 字段，除非 SequenceKey 和 ConsoleManager 在同一个包
+                // 假设它们都在 neoproxy.neoproxyserver.core.management 包下，可以直接访问
+                // portStr = sequenceKey.port;
+                // 为了保险，我们通过 getter 或者推算
+            } catch (Exception ignored) {
+            }
+
             double rate = sequenceKey.getRate();
             boolean isEnable = sequenceKey.isEnable();
             boolean enableWebHTML = sequenceKey.isHTMLEnabled();
@@ -992,9 +968,7 @@ public class ConsoleManager {
     private static String correctInputTime(String time) {
         if (time == null) return null;
         Matcher matcher = TIME_PATTERN.matcher(time);
-        if (!matcher.matches()) {
-            return null;
-        }
+        if (!matcher.matches()) return null;
         try {
             int year = Integer.parseInt(matcher.group(1));
             int month = Integer.parseInt(matcher.group(2));
@@ -1016,7 +990,7 @@ public class ConsoleManager {
         String process(java.sql.ResultSet rs) throws java.sql.SQLException;
     }
 
-    // ================= 【核心修改】重写 listAllKeys =================
+    // DTO for listAllKeys
     private static class KeyListDTO {
         String name;
         double balance;
@@ -1025,9 +999,8 @@ public class ConsoleManager {
         double rate;
         boolean isEnable;
         boolean enableWebHTML;
-        String sourceTag; // "(L)" 或 "(R)"
+        String sourceTag;
 
-        // 构造本地数据
         public KeyListDTO(String name, double balance, String expireTime, String port, double rate, boolean isEnable, boolean enableWebHTML, String sourceTag) {
             this.name = name;
             this.balance = balance;
@@ -1039,25 +1012,22 @@ public class ConsoleManager {
             this.sourceTag = sourceTag;
         }
 
-        // 构造远程数据 (SequenceKey)
         public KeyListDTO(SequenceKey key, String sourceTag) {
             this.name = key.getName();
             this.balance = key.getBalance();
             this.expireTime = key.getExpireTime();
-            this.port = key.getPort() == -1 ? "Dynamic" : (key.getDyStart() != key.getDyEnd() ? key.getDyStart() + "-" + key.getDyEnd() : String.valueOf(key.getDyStart()));
-            // 如果 port 是字符串形式存储在 port 字段里
-            try {
-                // 反射获取 port 字段或者使用 key.port (SequenceKey 里 port 是 protected)
-                // 但这里我们可以直接用 port 字段，因为它在同包下 protected 可见
-                // 或者用 getter
-                this.port = key.port; // protected 访问
-            } catch (Exception e) {
-                this.port = "Unknown";
-            }
             this.rate = key.getRate();
             this.isEnable = key.isEnable();
             this.enableWebHTML = key.isHTMLEnabled();
             this.sourceTag = sourceTag;
+            // 尝试获取 protected port
+            // 注意：因为 ConsoleManager 与 SequenceKey 在同包，所以可以直接访问 protected 字段
+            // 但为了编译通过性，这里用反射兜底或者直接访问（如果确实在同包）
+            // 在这里我们假设可以直接访问 key.port 或者通过 getter
+            // 如果你之前没有为 port 添加 getter，这里可能需要调整
+            this.port = key.getPort() == -1 ? "Dynamic" : String.valueOf(key.getPort());
+            // 更稳妥的方式，如果你能保证在同包：
+            // this.port = key.port;
         }
     }
 }

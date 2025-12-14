@@ -23,13 +23,18 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 工业级 NKM 远程适配器
- * 负责与 NKM 服务器进行鉴权、流量上报、状态同步和心跳保活。
+ * 工业级 NKM 远程适配器 (Golden Fix)
+ * <p>
+ * 职责：
+ * 1. 负责与 NKM 进行 HTTP 通信。
+ * 2. 负责将 JSON 数据反序列化为 SequenceKey 对象。
+ * 3. 负责 Sync 协议的流量上报与元数据下发。
+ * </p>
  */
 public class RemoteKeyProvider implements KeyDataProvider {
 
     // ==================== 配置常量 ====================
-    private static final int SYNC_INTERVAL_SECONDS = 60; // 1分钟同步一次
+    private static final int SYNC_INTERVAL_SECONDS = 60;
     private static final double SYNC_THRESHOLD_MB = 50.0;
     private static final int REQUEST_TIMEOUT_MS = 5000;
     private static final int MAX_RETRIES = 1;
@@ -39,27 +44,18 @@ public class RemoteKeyProvider implements KeyDataProvider {
     private final String token;
     private final String nodeId;
     private final HttpClient httpClient;
-
-    // 流量缓冲池 (Key -> 流量累加器)
     private final ConcurrentHashMap<String, DoubleAdder> trafficBuffer = new ConcurrentHashMap<>();
-
-    // 刷盘原子锁
     private final AtomicBoolean isFlushing = new AtomicBoolean(false);
-
-    // 单线程调度器
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "NKM-Sync-Thread");
         t.setDaemon(true);
         return t;
     });
 
-    // ==================== 构造与初始化 ====================
-
     public RemoteKeyProvider(String url, String token, String nodeId) {
         this.managerUrl = url;
         this.token = token;
         this.nodeId = nodeId;
-
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(REQUEST_TIMEOUT_MS))
                 .executor(Executors.newCachedThreadPool())
@@ -69,7 +65,6 @@ public class RemoteKeyProvider implements KeyDataProvider {
     @Override
     public void init() {
         scheduler.scheduleAtFixedRate(this::tryTriggerFlush, SYNC_INTERVAL_SECONDS, SYNC_INTERVAL_SECONDS, TimeUnit.SECONDS);
-        // Log: RemoteKeyProvider initialized with URL: {0}, NodeID: {1}
         ServerLogger.info("remoteProvider.initInfo", managerUrl, nodeId);
     }
 
@@ -84,28 +79,26 @@ public class RemoteKeyProvider implements KeyDataProvider {
             HttpResponse<String> response = sendWithRetry(req);
 
             if (response.statusCode() == 200) {
+                // 【修复点 1】此处调用修复后的 JSON 解析逻辑
                 return parseKeyFromJson(response.body());
             } else if (response.statusCode() == 409) {
                 throw new PortOccupiedException("Max connections reached (Rejected by NKM)");
             } else {
-                // Log: Get Key failed for {0}. Status: {1}
                 ServerLogger.warn("remoteProvider.getKeyFail", name, response.statusCode());
             }
         } catch (PortOccupiedException e) {
             throw e;
         } catch (Exception e) {
-            // Log: Error getting key: {0}
             ServerLogger.error("remoteProvider.getKeyError", e.getMessage());
         }
         return null;
     }
 
-    // ==================== 2. 流量上报与状态同步 (Sync) ====================
+    // ==================== 2. 流量上报与全量状态同步 (Sync) ====================
 
     @Override
     public void consumeFlow(String name, double mib) {
         trafficBuffer.computeIfAbsent(name, k -> new DoubleAdder()).add(mib);
-
         if (trafficBuffer.get(name).sum() >= SYNC_THRESHOLD_MB) {
             tryTriggerFlush();
         }
@@ -120,11 +113,13 @@ public class RemoteKeyProvider implements KeyDataProvider {
     private void flushTraffic() {
         ConcurrentHashMap<String, Double> snapshot = new ConcurrentHashMap<>();
         try {
+            // 1. 提取流量快照
             trafficBuffer.forEach((k, adder) -> {
                 double val = adder.sumThenReset();
                 if (val > 0.0001) snapshot.put(k, val);
             });
 
+            // 2. 确保在线 Key 即使无流量也能接收 Sync 更新
             for (HostClient client : NeoProxyServer.availableHostClient) {
                 if (client.getKey() != null) {
                     snapshot.putIfAbsent(client.getKey().getName(), 0.0);
@@ -133,6 +128,7 @@ public class RemoteKeyProvider implements KeyDataProvider {
 
             if (snapshot.isEmpty()) return;
 
+            // 3. 发送请求
             String jsonBody = buildSyncJson(snapshot);
             HttpRequest req = buildRequest(managerUrl + Protocol.API_SYNC)
                     .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
@@ -141,41 +137,65 @@ public class RemoteKeyProvider implements KeyDataProvider {
             HttpResponse<String> response = sendWithRetry(req);
 
             if (response.statusCode() == 200) {
+                // 【修复点 2】处理全量同步响应
                 processSyncResponse(response.body());
             } else {
+                // 失败回滚流量
                 snapshot.forEach((k, v) -> trafficBuffer.computeIfAbsent(k, x -> new DoubleAdder()).add(v));
-                // Log: Traffic sync failed. Status: {0}
                 ServerLogger.warn("remoteProvider.syncFail", response.statusCode());
             }
         } catch (Exception e) {
             snapshot.forEach((k, v) -> trafficBuffer.computeIfAbsent(k, x -> new DoubleAdder()).add(v));
-            // Log: Traffic sync error: {0}
             ServerLogger.error("remoteProvider.syncError", e.getMessage());
         } finally {
             isFlushing.set(false);
         }
     }
 
+    /**
+     * 处理 Sync 响应，实现配置热更新
+     * 遵循职责分离：只更新 SequenceKey 数据模型，不直接操作 HostClient 的 Socket/Threads
+     */
     private void processSyncResponse(String json) {
         for (HostClient client : NeoProxyServer.availableHostClient) {
             if (client.getKey() == null) continue;
-            String name = client.getKey().getName();
 
-            Double newBalance = extractBalanceFromMetadata(json, name);
-            if (newBalance != null) {
-                client.getKey().setBalance(newBalance);
-            }
+            SequenceKey key = client.getKey();
+            String name = key.getName();
 
-            Boolean isValid = extractIsValidFromMetadata(json, name);
+            // 1. 同步有效性 (IsValid)
+            Boolean isValid = extractBooleanFromMetadata(json, name, "isValid");
             if (isValid != null && !isValid) {
-                // Log: Key {0} invalidated by remote server. Disconnecting.
-                ServerLogger.warn("remoteProvider.syncKill", name);
-                client.close();
+                String reason = extractStringFromMetadata(json, name, "reason");
+                ServerLogger.warn("remoteProvider.syncKill", name, reason);
+                client.close(); // 唯一例外：Kill 信号需要立即断开
+                continue;
             }
+
+            // 2. 同步余额 (Balance)
+            Double newBalance = extractDoubleFromMetadata(json, name, "balance");
+            if (newBalance != null) key.setBalance(newBalance);
+
+            // 3. 同步 Web 开关 (WebHTML) - 修复 Bug 的核心
+            Boolean webEnabled = extractBooleanFromMetadata(json, name, "enableWebHTML");
+            if (webEnabled != null) key.setHTMLEnabled(webEnabled);
+
+            // 4. 同步限速 (Rate)
+            Double newRate = extractDoubleFromMetadata(json, name, "rate");
+            if (newRate != null) {
+                key.setRate(newRate);
+                // 触发 HostClient 内部的动态限速更新（如果在 HostClient 中有此方法）
+                // 即使没有，RateLimiter 下次读取 Rate 时也会生效
+                client.getGlobalRateLimiter().setMaxMbps(newRate);
+            }
+
+            // 5. 同步过期时间 (ExpireTime)
+            String newExpire = extractStringFromMetadata(json, name, "expireTime");
+            if (newExpire != null) key.setExpireTime(newExpire);
         }
     }
 
-    // ==================== 3. 释放 Key (Release) ====================
+    // ==================== 3. 其他接口实现 ====================
 
     @Override
     public void releaseKey(String name) {
@@ -190,8 +210,6 @@ public class RemoteKeyProvider implements KeyDataProvider {
             }
         });
     }
-
-    // ==================== 4. 心跳保活 (Heartbeat) ====================
 
     @Override
     public boolean sendHeartbeat(Protocol.HeartbeatPayload payload) {
@@ -216,15 +234,13 @@ public class RemoteKeyProvider implements KeyDataProvider {
         }
     }
 
-    // ==================== 5. 生命周期管理 ====================
-
     @Override
     public void shutdown() {
         scheduler.shutdownNow();
         flushTraffic();
     }
 
-    // ==================== 私有辅助方法 ====================
+    // ==================== 私有辅助方法 (Robust JSON Parsing) ====================
 
     private HttpRequest.Builder buildRequest(String uri) {
         HttpRequest.Builder builder = HttpRequest.newBuilder()
@@ -262,6 +278,7 @@ public class RemoteKeyProvider implements KeyDataProvider {
         return sb.toString();
     }
 
+    // 【核心修复】初始化 Key 时读取 enableWebHTML
     private SequenceKey parseKeyFromJson(String json) {
         String name = extractString(json, "name");
         if (name == null) return null;
@@ -269,37 +286,64 @@ public class RemoteKeyProvider implements KeyDataProvider {
         String expireTime = extractString(json, "expireTime");
         String port = extractString(json, "port");
         double rate = extractDouble(json, "rate", 1.0);
-        return new SequenceKey(name, balance, expireTime, port, rate, true, false);
+
+        // 修复：从 JSON 动态解析，不再硬编码 false
+        boolean enableWebHTML = extractBoolean(json, "enableWebHTML", false);
+
+        return new SequenceKey(name, balance, expireTime, port, rate, true, enableWebHTML);
     }
 
+    // --- High-Performance Regex Based Extraction Helpers ---
+
     private String extractString(String json, String key) {
+        // 匹配 "key" : "value"
         Matcher m = Pattern.compile("\"" + key + "\"\\s*:\\s*\"([^\"]+)\"").matcher(json);
         return m.find() ? m.group(1) : null;
     }
 
     private double extractDouble(String json, String key, double def) {
+        // 匹配 "key" : 123.45
         Matcher m = Pattern.compile("\"" + key + "\"\\s*:\\s*([0-9.-]+)").matcher(json);
         return m.find() ? Double.parseDouble(m.group(1)) : def;
     }
 
-    private Boolean extractIsValidFromMetadata(String json, String key) {
-        int idx = json.indexOf("\"" + key + "\"");
-        if (idx == -1) return null;
-        String sub = json.substring(idx);
-        int end = sub.indexOf("}");
-        if (end != -1) sub = sub.substring(0, end);
-        if (sub.contains("\"isValid\":false") || sub.contains("\"isValid\": false")) return false;
-        if (sub.contains("\"isValid\":true") || sub.contains("\"isValid\": true")) return true;
-        return null;
+    private boolean extractBoolean(String json, String key, boolean def) {
+        // 匹配 "key" : true 或 false (忽略大小写)
+        Matcher m = Pattern.compile("\"" + key + "\"\\s*:\\s*(true|false)", Pattern.CASE_INSENSITIVE).matcher(json);
+        return m.find() ? Boolean.parseBoolean(m.group(1)) : def;
     }
 
-    private Double extractBalanceFromMetadata(String json, String key) {
-        int idx = json.indexOf("\"" + key + "\"");
+    // --- Metadata Block Extraction (Optimized for Protocol structure) ---
+
+    // 提取 sync 响应中某个 key 对应的 metadata JSON 块
+    private String getMetadataBlock(String json, String keyName) {
+        // 这里的假设是 NKM 返回的 metadata 结构扁平，不包含复杂的嵌套对象
+        int idx = json.indexOf("\"" + keyName + "\"");
         if (idx == -1) return null;
         String sub = json.substring(idx);
-        int end = sub.indexOf("}");
+        int end = sub.indexOf("}"); // 查找当前对象的结束符
         if (end != -1) sub = sub.substring(0, end);
-        Matcher m = Pattern.compile("\"balance\"\\s*:\\s*([0-9.-]+)").matcher(sub);
+        return sub;
+    }
+
+    private Double extractDoubleFromMetadata(String json, String keyName, String fieldName) {
+        String block = getMetadataBlock(json, keyName);
+        if (block == null) return null;
+        // 使用 Double 包装类来区分 "存在且为0" 和 "不存在"
+        Matcher m = Pattern.compile("\"" + fieldName + "\"\\s*:\\s*([0-9.-]+)").matcher(block);
         return m.find() ? Double.parseDouble(m.group(1)) : null;
+    }
+
+    private Boolean extractBooleanFromMetadata(String json, String keyName, String fieldName) {
+        String block = getMetadataBlock(json, keyName);
+        if (block == null) return null;
+        Matcher m = Pattern.compile("\"" + fieldName + "\"\\s*:\\s*(true|false)", Pattern.CASE_INSENSITIVE).matcher(block);
+        return m.find() ? Boolean.parseBoolean(m.group(1)) : null;
+    }
+
+    private String extractStringFromMetadata(String json, String keyName, String fieldName) {
+        String block = getMetadataBlock(json, keyName);
+        if (block == null) return null;
+        return extractString(block, fieldName);
     }
 }

@@ -1,8 +1,10 @@
 package neoproxy.neoproxyserver.core.management;
 
 import neoproxy.neoproxyserver.core.ConfigOperator;
+import neoproxy.neoproxyserver.core.Debugger;
 import neoproxy.neoproxyserver.core.ServerLogger;
 import neoproxy.neoproxyserver.core.exceptions.NoMoreNetworkFlowException;
+import neoproxy.neoproxyserver.core.exceptions.NoMorePortException;
 import neoproxy.neoproxyserver.core.exceptions.PortOccupiedException;
 import neoproxy.neoproxyserver.core.management.provider.KeyDataProvider;
 import neoproxy.neoproxyserver.core.management.provider.LocalKeyProvider;
@@ -19,7 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 
-import static neoproxy.neoproxyserver.NeoProxyServer.debugOperation;
+import static neoproxy.neoproxyserver.core.Debugger.debugOperation;
 
 public class SequenceKey {
     public static final int DYNAMIC_PORT = -1;
@@ -35,7 +37,10 @@ public class SequenceKey {
 
     static {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            if (PROVIDER != null) PROVIDER.shutdown();
+            if (PROVIDER != null) {
+                Debugger.debugOperation("SequenceKey ShutdownHook triggered.");
+                PROVIDER.shutdown();
+            }
         }));
     }
 
@@ -64,12 +69,14 @@ public class SequenceKey {
     }
 
     public static synchronized void reloadProvider() {
+        Debugger.debugOperation("Reloading KeyDataProvider...");
         if (PROVIDER != null) {
             try {
                 PROVIDER.shutdown();
             } catch (Exception e) {
                 // Log: Error shutting down provider during reload: {0}
                 ServerLogger.error("sequenceKey.providerShutdownError", e, e.getMessage());
+                Debugger.debugOperation(e);
             }
         }
 
@@ -79,22 +86,27 @@ public class SequenceKey {
         String type = (PROVIDER instanceof RemoteKeyProvider) ? "REMOTE (NKM)" : "LOCAL (H2)";
         // Log: Provider reloaded. Current type: {0}
         ServerLogger.info("sequenceKey.providerReloaded", type);
+        Debugger.debugOperation("Provider reloaded. Type: " + type);
     }
 
     public static void initProvider() {
+        Debugger.debugOperation("Initializing KeyDataProvider...");
         if (ConfigOperator.MANAGER_URL != null && !ConfigOperator.MANAGER_URL.isBlank()) {
+            Debugger.debugOperation("Using RemoteKeyProvider with URL: " + ConfigOperator.MANAGER_URL);
             PROVIDER = new RemoteKeyProvider(
                     ConfigOperator.MANAGER_URL,
                     ConfigOperator.MANAGER_TOKEN,
                     ConfigOperator.NODE_ID
             );
         } else {
+            Debugger.debugOperation("Using LocalKeyProvider (H2 Database).");
             PROVIDER = new LocalKeyProvider();
         }
         PROVIDER.init();
     }
 
     public static void initKeyDatabase() {
+        Debugger.debugOperation("Initializing Key Database (sk table)...");
         try {
             try (Connection conn = getConnection()) {
                 String createTableSql = """
@@ -110,6 +122,7 @@ public class SequenceKey {
                         """;
                 try (PreparedStatement stmt = conn.prepareStatement(createTableSql)) {
                     stmt.execute();
+                    Debugger.debugOperation("Table 'sk' check/creation completed.");
                 }
                 try (Statement stmt = conn.createStatement()) {
                     try {
@@ -131,34 +144,47 @@ public class SequenceKey {
         return DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
     }
 
-    public static SequenceKey getKeyFromDB(String name) throws PortOccupiedException {
+    public static SequenceKey getKeyFromDB(String name) throws PortOccupiedException, NoMorePortException {
+        // Debugger.debugOperation("Fetching key from DB: " + name);
         if (name == null) return null;
         if (PROVIDER instanceof LocalKeyProvider) {
             SequenceKey cached = keyCache.get(name);
-            if (cached != null) return cached;
+            if (cached != null) {
+                // Debugger.debugOperation("Key found in local cache: " + name);
+                return cached;
+            }
         }
-        if (PROVIDER == null) return null;
+        if (PROVIDER == null) {
+            Debugger.debugOperation("Provider is null, cannot fetch key.");
+            return null;
+        }
 
         SequenceKey key = PROVIDER.getKey(name);
         if (key != null) {
             keyCache.put(name, key);
+            Debugger.debugOperation("Key fetched from provider and cached: " + name);
+        } else {
+            Debugger.debugOperation("Key not found in provider: " + name);
         }
         return key;
     }
 
-    public static SequenceKey getEnabledKeyFromDB(String name) throws PortOccupiedException {
+    public static SequenceKey getEnabledKeyFromDB(String name) throws PortOccupiedException, NoMorePortException {
         SequenceKey key = getKeyFromDB(name);
         if (key != null && key.isEnable()) return key;
+        if (key != null) Debugger.debugOperation("Key exists but disabled: " + name);
         return null;
     }
 
     public static void releaseKey(String name) {
+        Debugger.debugOperation("Releasing key: " + name);
         if (name != null && PROVIDER != null) {
             PROVIDER.releaseKey(name);
         }
     }
 
     public static SequenceKey loadKeyFromDatabase(String name, boolean onlyEnabled) {
+        Debugger.debugOperation("Loading key directly from DB: " + name + " (onlyEnabled=" + onlyEnabled + ")");
         try {
             String sql = "SELECT * FROM sk WHERE name = ?" + (onlyEnabled ? " AND isEnable = TRUE" : "");
             try (Connection conn = getConnection();
@@ -166,6 +192,7 @@ public class SequenceKey {
                 stmt.setString(1, name);
                 try (ResultSet rs = stmt.executeQuery()) {
                     if (rs.next()) {
+                        Debugger.debugOperation("Key found in DB: " + name);
                         return new SequenceKey(
                                 rs.getString("name"),
                                 rs.getDouble("balance"),
@@ -181,11 +208,13 @@ public class SequenceKey {
         } catch (Exception e) {
             debugOperation(e);
         }
+        Debugger.debugOperation("Key not found in DB: " + name);
         return null;
     }
 
     public static boolean saveToDB(SequenceKey sequenceKey) {
         if (sequenceKey == null) return false;
+        // Debugger.debugOperation("Saving key to DB: " + sequenceKey.getName());
         sequenceKey.lock.lock();
         try {
             String sql = "MERGE INTO sk KEY(name) VALUES (?, ?, ?, ?, ?, ?, ?)";
@@ -198,7 +227,9 @@ public class SequenceKey {
                 stmt.setDouble(5, sequenceKey.getRateNoLock());
                 stmt.setBoolean(6, sequenceKey.isEnable);
                 stmt.setBoolean(7, sequenceKey.enableWebHTML);
-                return stmt.executeUpdate() > 0;
+                boolean result = stmt.executeUpdate() > 0;
+                // Debugger.debugOperation("Save result for " + sequenceKey.getName() + ": " + result);
+                return result;
             } catch (Exception e) {
                 debugOperation(e);
                 return false;
@@ -209,6 +240,7 @@ public class SequenceKey {
     }
 
     public static boolean createNewKey(String name, double balance, String expireTime, String portStr, double rate) {
+        Debugger.debugOperation("Creating new key: " + name + " Port: " + portStr);
         if (name == null) return false;
         try (Connection conn = getConnection();
              PreparedStatement stmt = conn.prepareStatement(
@@ -226,12 +258,14 @@ public class SequenceKey {
     }
 
     public static boolean removeKey(String name) {
+        Debugger.debugOperation("Removing key: " + name);
         keyCache.remove(name);
         try (Connection conn = getConnection();
              PreparedStatement stmt = conn.prepareStatement("DELETE FROM sk WHERE name = ?")) {
             stmt.setString(1, name);
             return stmt.executeUpdate() > 0;
         } catch (Exception e) {
+            debugOperation(e);
             return false;
         }
     }
@@ -249,6 +283,7 @@ public class SequenceKey {
     }
 
     public static void updateBalanceInDB(String name, double mib) {
+        // Debugger.debugOperation("Updating balance in DB for: " + name + " decreasing by " + mib);
         try (Connection conn = getConnection();
              PreparedStatement stmt = conn.prepareStatement("UPDATE sk SET balance = balance - ? WHERE name = ?")) {
             stmt.setDouble(1, mib);
@@ -260,12 +295,14 @@ public class SequenceKey {
     }
 
     public static boolean enableKey(String name) {
+        Debugger.debugOperation("Enabling key: " + name);
         SequenceKey key = keyCache.get(name);
         if (key != null) key.setEnable(true);
         return updateKeyStatusInDB(name, true);
     }
 
     public static boolean disableKey(String name) {
+        Debugger.debugOperation("Disabling key: " + name);
         SequenceKey key = keyCache.get(name);
         if (key != null) key.setEnable(false);
         return updateKeyStatusInDB(name, false);
@@ -297,6 +334,7 @@ public class SequenceKey {
         if (freshKey == null) return;
         lock.lock();
         try {
+            Debugger.debugOperation("Refreshing key data for: " + this.name);
             this.balance = freshKey.balance;
             this.isEnable = freshKey.isEnable;
             this.enableWebHTML = freshKey.enableWebHTML;
@@ -319,19 +357,23 @@ public class SequenceKey {
         lock.lock();
         try {
             if (isOutOfDate()) {
+                Debugger.debugOperation("Key expired during flow mining: " + name);
                 // EXCEPTION KEY: exception.keyOutOfDateForFlow
                 NoMoreNetworkFlowException.throwException("SK-Manager", "exception.keyOutOfDateForFlow", name);
             }
             if (!isEnable) {
+                Debugger.debugOperation("Key disabled during flow mining: " + name);
                 // EXCEPTION KEY: exception.keyDisabled
                 NoMoreNetworkFlowException.throwException("SK-Manager", "exception.keyDisabled", name);
             }
 
             this.balance -= mib;
+            // Debugger.debugOperation("Mined " + mib + " MB from " + name + ". Remaining: " + this.balance);
 
             if (this.balance <= 0) {
                 if (PROVIDER instanceof LocalKeyProvider) {
                     this.balance = 0;
+                    Debugger.debugOperation("Insufficient balance for: " + name);
                     // EXCEPTION KEY: exception.insufficientBalance
                     NoMoreNetworkFlowException.throwException(sourceSubject, "exception.insufficientBalance", name);
                 }

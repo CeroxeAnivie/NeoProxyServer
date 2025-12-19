@@ -1,7 +1,7 @@
 package neoproxy.neoproxyserver.core.webadmin;
 
+import fun.ceroxe.api.thread.ThreadManager;
 import neoproxy.neoproxyserver.core.ServerLogger;
-import plethora.thread.ThreadManager;
 
 import java.io.IOException;
 import java.io.InputStream;

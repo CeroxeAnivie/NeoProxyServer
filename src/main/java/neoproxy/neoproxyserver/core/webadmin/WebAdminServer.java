@@ -3,12 +3,13 @@ package neoproxy.neoproxyserver.core.webadmin;
 import fi.iki.elonen.NanoHTTPD;
 import fi.iki.elonen.NanoHTTPD.Response.Status;
 import fi.iki.elonen.NanoWSD;
+import fun.ceroxe.api.thread.ThreadManager;
 import neoproxy.neoproxyserver.NeoProxyServer;
+import neoproxy.neoproxyserver.core.Debugger;
 import neoproxy.neoproxyserver.core.HostClient;
 import neoproxy.neoproxyserver.core.ServerLogger;
 import neoproxy.neoproxyserver.core.management.IPGeolocationHelper;
 import neoproxy.neoproxyserver.core.threads.UDPTransformer;
-import plethora.thread.ThreadManager;
 
 import java.io.*;
 import java.net.SocketException;
@@ -26,21 +27,12 @@ import java.util.logging.Logger;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
-import static neoproxy.neoproxyserver.NeoProxyServer.debugOperation;
-
-/**
- * WebAdminServer (Java 21 Virtual Threads Compatible)
- * <p>
- * 修改：使用统一的 ReentrantLock 替代 synchronized (LOCK) 和 synchronized (logHistory)。
- * 解决了潜在的锁顺序死锁问题，并防止 IO Pinning。
- */
 public class WebAdminServer extends NanoWSD {
 
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-    private static final LinkedList<String> logHistory = new LinkedList<>(); // 不再使用 synchronizedList，由 GLOBAL_LOCK 保护
+    private static final LinkedList<String> logHistory = new LinkedList<>();
     private static final int MAX_HISTORY_SIZE = 1000;
 
-    // 【修改】全局锁，保护 Socket 状态和日志历史
     private static final ReentrantLock GLOBAL_LOCK = new ReentrantLock();
 
     private static final long ZOMBIE_TIMEOUT_MS = 10000;
@@ -96,7 +88,6 @@ public class WebAdminServer extends NanoWSD {
         saveAndBroadcast(String.format("{\"type\": \"log\", \"payload\": \"%s\"}", safeLog));
     }
 
-    // 必须在持有 GLOBAL_LOCK 时调用，或允许并发（此处实现为加锁以确保安全）
     private static void broadcastJson(String json) {
         GLOBAL_LOCK.lock();
         try {
@@ -123,7 +114,6 @@ public class WebAdminServer extends NanoWSD {
             if (logHistory.size() >= MAX_HISTORY_SIZE) logHistory.removeFirst();
             logHistory.add(json);
 
-            // 在锁内广播，防止乱序
             if (activeTempSocket != null && activeTempSocket.isOpen()) {
                 try {
                     activeTempSocket.send(json);
@@ -204,6 +194,9 @@ public class WebAdminServer extends NanoWSD {
             Map<String, String> params = session.getParms();
             String filenameEncoded = params.get("filename");
             String relPath = params.get("path");
+
+            Debugger.debugOperation("WebAdmin Upload Request: " + filenameEncoded + " -> " + relPath);
+
             if (filenameEncoded == null)
                 return newFixedLengthResponse(Status.BAD_REQUEST, "application/json", "{\"status\":\"error\",\"msg\":\"Missing filename\"}");
             if (relPath == null) relPath = "";
@@ -241,10 +234,12 @@ public class WebAdminServer extends NanoWSD {
                     while ((read = in.read(buf)) != -1) out.write(buf, 0, read);
                 }
                 isUploadSuccessful = true;
+                Debugger.debugOperation("WebAdmin Upload Success: " + targetFile.getAbsolutePath());
             }
             broadcastJson("{\"type\":\"action\", \"payload\":\"refresh_files\"}");
             return newFixedLengthResponse(Status.OK, "application/json", "{\"status\":\"success\"}");
         } catch (Exception e) {
+            Debugger.debugOperation("WebAdmin Upload Failed: " + e.getMessage());
             if (!isUploadSuccessful && targetFile != null && targetFile.exists()) {
                 try {
                     if (!targetFile.delete()) targetFile.deleteOnExit();
@@ -261,6 +256,7 @@ public class WebAdminServer extends NanoWSD {
 
     private Response handleFileDownload(IHTTPSession session) {
         String relPath = session.getParms().get("file");
+        Debugger.debugOperation("WebAdmin Download Request: " + relPath);
         if (relPath == null || relPath.contains(".."))
             return newFixedLengthResponse(Status.FORBIDDEN, NanoHTTPD.MIME_PLAINTEXT, "Invalid File");
         File f = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
@@ -275,6 +271,7 @@ public class WebAdminServer extends NanoWSD {
                         zipFile(f, f.getName(), zos);
                     } catch (Exception e) {
                         ServerLogger.errorWithSource("WebAdmin", "Zip Error", e);
+                        Debugger.debugOperation("Zip Error: " + e.getMessage());
                     } finally {
                         try {
                             out.close();
@@ -295,6 +292,7 @@ public class WebAdminServer extends NanoWSD {
                 return res;
             }
         } catch (Exception e) {
+            Debugger.debugOperation("Download Error: " + e.getMessage());
             return newFixedLengthResponse(Status.INTERNAL_ERROR, NanoHTTPD.MIME_PLAINTEXT, "Error");
         }
     }
@@ -345,6 +343,7 @@ public class WebAdminServer extends NanoWSD {
             long now = System.currentTimeMillis();
             if ((now - lastActive) > ZOMBIE_TIMEOUT_MS) {
                 ServerLogger.warnWithSource("WebAdmin", "webAdmin.clientOffline", targetSocket.getRemoteIp());
+                Debugger.debugOperation("WebAdmin: Zombie session detected for " + targetSocket.getRemoteIp());
                 final AdminWebSocket socketToClose = targetSocket;
                 ThreadManager.runAsync(() -> {
                     try {
@@ -454,6 +453,7 @@ public class WebAdminServer extends NanoWSD {
 
         @Override
         protected void onOpen() {
+            Debugger.debugOperation("WebAdmin WebSocket Open: " + remoteIp);
             isConnected = true;
             startHeartbeat();
 
@@ -508,7 +508,6 @@ public class WebAdminServer extends NanoWSD {
                 }
                 lastConflictWarning.remove(remoteIp);
 
-                // 发送历史日志（在锁内进行，保证顺序）
                 ServerLogger.infoWithSource("WebAdmin", "webAdmin.session.connected", remoteIp);
                 sendJsonRaw("{\"type\": \"logo\", \"payload\": \"" + escapeJson(NeoProxyServer.ASCII_LOGO) + "\"}");
                 String msg = ServerLogger.getMessage("webAdmin.connected", remoteIp + (sessionType == 2 ? " (Perm)" : " (Temp)"));
@@ -531,6 +530,7 @@ public class WebAdminServer extends NanoWSD {
 
         @Override
         protected void onClose(WebSocketFrame.CloseCode code, String reason, boolean initiatedByRemote) {
+            Debugger.debugOperation("WebAdmin WebSocket Close: " + remoteIp + " Reason: " + reason);
             isConnected = false;
             GLOBAL_LOCK.lock();
             try {
@@ -558,6 +558,8 @@ public class WebAdminServer extends NanoWSD {
             lastActiveTime = System.currentTimeMillis();
             String text = message.getTextPayload().trim();
             if (text.equalsIgnoreCase("PING") || text.equalsIgnoreCase("P")) return;
+
+            Debugger.debugOperation("WebAdmin Command: " + text);
 
             GLOBAL_LOCK.lock();
             try {
@@ -630,12 +632,13 @@ public class WebAdminServer extends NanoWSD {
                     String result = NeoProxyServer.myConsole.execute(text);
                     if (result != null && !result.isEmpty()) sendJson("cmd_result", result);
                 } catch (Exception e) {
-                    if (NeoProxyServer.IS_DEBUG_MODE) debugOperation(e);
+                    Debugger.debugOperation(e);
                 }
             });
         }
 
         private void handleRenameFile(String payload) {
+            Debugger.debugOperation("Rename File: " + payload);
             try {
                 String[] parts = payload.split("\\|");
                 if (parts.length < 3) return;
@@ -669,6 +672,7 @@ public class WebAdminServer extends NanoWSD {
                 String[] parts = payload.split("\\|");
                 if (parts.length < 2) return;
                 String targetRelPath = parts[0];
+                Debugger.debugOperation("Move Files to: " + targetRelPath);
                 if (targetRelPath.contains("..")) throw new SecurityException("Invalid target path");
                 File targetDir = new File(NeoProxyServer.CURRENT_DIR_PATH, targetRelPath);
                 if (!targetDir.exists()) targetDir.mkdirs();
@@ -763,6 +767,7 @@ public class WebAdminServer extends NanoWSD {
 
         private void handleSaveFile(String relPath, String content) {
             try {
+                Debugger.debugOperation("Save File: " + relPath);
                 if (relPath.contains("..")) throw new SecurityException("Access Denied");
                 File f = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
                 Files.writeString(f.toPath(), content, StandardCharsets.UTF_8);
@@ -774,6 +779,7 @@ public class WebAdminServer extends NanoWSD {
 
         private void handleDeleteFile(String relPath) {
             try {
+                Debugger.debugOperation("Delete File: " + relPath);
                 if (relPath.contains("..")) throw new SecurityException("Access Denied");
                 File f = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
                 if (deleteRecursively(f)) {
@@ -795,6 +801,7 @@ public class WebAdminServer extends NanoWSD {
 
         private void handleCreateFile(String relPath, String name, boolean isDir) {
             try {
+                Debugger.debugOperation("Create " + (isDir ? "Dir" : "File") + ": " + name + " in " + relPath);
                 if (relPath.contains("..") || name.contains("..") || name.contains("/") || name.contains("\\"))
                     throw new SecurityException("Invalid name");
                 File f = new File(new File(NeoProxyServer.CURRENT_DIR_PATH, relPath), name);

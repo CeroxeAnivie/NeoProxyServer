@@ -1,24 +1,28 @@
 package neoproxy.neoproxyserver.core.threads;
 
+import fun.ceroxe.api.management.bufferedFile.SizeCalculator;
+import fun.ceroxe.api.net.SecureSocket;
+import fun.ceroxe.api.thread.ThreadManager;
 import neoproxy.neoproxyserver.core.HostClient;
 import neoproxy.neoproxyserver.core.HostReply;
 import neoproxy.neoproxyserver.core.LanguageData;
 import neoproxy.neoproxyserver.core.ServerLogger;
 import neoproxy.neoproxyserver.core.exceptions.IllegalWebSiteException;
 import neoproxy.neoproxyserver.core.exceptions.NoMoreNetworkFlowException;
-import plethora.management.bufferedFile.SizeCalculator;
-import plethora.net.SecureSocket;
-import plethora.thread.ThreadManager;
 
-import java.io.*;
+import java.io.BufferedOutputStream;
+import java.io.Closeable;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.regex.Matcher;
 
-import static neoproxy.neoproxyserver.NeoProxyServer.debugOperation;
+import static neoproxy.neoproxyserver.core.Debugger.debugOperation;
 import static neoproxy.neoproxyserver.core.InternetOperator.*;
 
 public class TCPTransformer {
@@ -30,11 +34,8 @@ public class TCPTransformer {
     private static String FORBIDDEN_HTML_TEMPLATE;
 
     static {
-        // 既然确认资源绝对可达，这里保持原逻辑，但为了安全起见，
-        // 建议在 catch 中也赋予一个包含 {{CUSTOM_MESSAGE}} 的简单模板，以防万一。
         try (InputStream inputStream = TCPTransformer.class.getResourceAsStream("/templates/forbidden.html")) {
             if (inputStream == null) {
-                // 如果真的发生了不可能的情况，至少让 fallback 也能显示消息
                 FORBIDDEN_HTML_TEMPLATE = "<html><body><h1>403 Forbidden</h1><p>{{CUSTOM_MESSAGE}}</p></body></html>";
             } else {
                 FORBIDDEN_HTML_TEMPLATE = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
@@ -48,8 +49,9 @@ public class TCPTransformer {
     private final HostClient hostClient;
     private final Socket client;
     private final HostReply hostReply;
-    private final byte[] clientToHostBuffer = new byte[BUFFER_LEN];
     private final InputStream clientInputStream;
+
+    // 【优化】移除了 clientToHostBuffer 字段，内存更节省
 
     private TCPTransformer(HostClient hostClient, Socket client, HostReply hostReply, InputStream clientInputStream) {
         this.hostClient = hostClient;
@@ -119,7 +121,6 @@ public class TCPTransformer {
         if (headerEndIndex == -1) return false;
 
         String headersSection = headerRaw.substring(0, headerEndIndex).toLowerCase();
-
         if (!headersSection.startsWith("http/")) return false;
 
         boolean isHtml = false;
@@ -142,17 +143,10 @@ public class TCPTransformer {
         if (isHtml && !isAttachment) {
             try (BufferedOutputStream out = new BufferedOutputStream(clientSocket.getOutputStream())) {
                 String template = (FORBIDDEN_HTML_TEMPLATE != null) ? FORBIDDEN_HTML_TEMPLATE : "<h1>403 Forbidden</h1><p>{{CUSTOM_MESSAGE}}</p>";
-
                 String message = CUSTOM_BLOCKING_MESSAGE != null ? CUSTOM_BLOCKING_MESSAGE : "";
-
-                // 【修改 1】使用 replaceAll 和正则，允许占位符中存在空格 (例如 {{ CUSTOM_MESSAGE }})，提高容错率
-                // 同时也使用了 Matcher.quoteReplacement 避免消息中包含 $ 或 \ 导致报错
                 String finalHtml = template.replaceAll("\\{\\{\\s*CUSTOM_MESSAGE\\s*\\}\\}", Matcher.quoteReplacement(message));
-
                 byte[] errorHtmlBytes = finalHtml.getBytes(StandardCharsets.UTF_8);
 
-                // 【修改 2】添加 Cache-Control 头部，强制浏览器不要缓存 403 页面
-                // 解决“消息修改后浏览器看不到”的问题
                 String httpResponseHeader = "HTTP/1.1 403 Forbidden\r\n" +
                         "Content-Type: text/html; charset=utf-8\r\n" +
                         "Content-Length: " + errorHtmlBytes.length + "\r\n" +
@@ -167,7 +161,6 @@ public class TCPTransformer {
                 out.flush();
 
                 clientSocket.shutdownOutput();
-
                 Thread.sleep(800);
             } catch (Exception e) {
                 // ignore
@@ -205,21 +198,25 @@ public class TCPTransformer {
             byte famTrans = isIPv4 ? (byte) 0x11 : (byte) 0x21;
             byte[] srcIpBytes = srcIp.getAddress();
             byte[] dstIpBytes = dstIp.getAddress();
+
+            // 计算 PPv2 地址段长度: SRC_IP + DST_IP + SRC_PORT(2) + DST_PORT(2)
             int addrLen = srcIpBytes.length + dstIpBytes.length + 2 + 2;
 
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            baos.write(signature);
-            baos.write(verCmd);
-            baos.write(famTrans);
-            baos.write((addrLen >> 8) & 0xFF);
-            baos.write(addrLen & 0xFF);
-            baos.write(srcIpBytes);
-            baos.write(dstIpBytes);
-            baos.write((srcPort >> 8) & 0xFF);
-            baos.write(srcPort & 0xFF);
-            baos.write((dstPort >> 8) & 0xFF);
-            baos.write(dstPort & 0xFF);
-            return baos.toByteArray();
+            // 【严谨优化】计算精确的 Buffer 大小: Header(16) + addrLen
+            // Header: Sig(12) + Ver(1) + Fam(1) + Len(2) = 16 bytes
+            int totalLen = 16 + addrLen;
+            ByteBuffer buffer = ByteBuffer.allocate(totalLen);
+
+            buffer.put(signature);
+            buffer.put(verCmd);
+            buffer.put(famTrans);
+            buffer.putShort((short) addrLen);
+            buffer.put(srcIpBytes);
+            buffer.put(dstIpBytes);
+            buffer.putShort((short) srcPort);
+            buffer.putShort((short) dstPort);
+
+            return buffer.array();
         } catch (Exception e) {
             debugOperation(e);
             return null;
@@ -236,13 +233,17 @@ public class TCPTransformer {
             debugOperation(e);
         }
 
-        try (BufferedInputStream bufferedInputStream = new BufferedInputStream(this.clientInputStream)) {
+        // 【优化】局部变量分配，随着方法结束自动回收
+        byte[] buffer = new byte[BUFFER_LEN];
+
+        // 【优化】直接使用 Socket 的 InputStream，移除冗余的 BufferedInputStream
+        try (InputStream input = this.clientInputStream) {
             RateLimiter limiter = hostClient.getGlobalRateLimiter();
             int len;
-            while ((len = bufferedInputStream.read(clientToHostBuffer)) != -1) {
+            while ((len = input.read(buffer)) != -1) {
                 if (len <= 0) continue;
 
-                int enLength = hostReply.host().sendByte(clientToHostBuffer, 0, len);
+                int enLength = hostReply.host().sendByte(buffer, 0, len);
 
                 if (enLength > 0) {
                     hostClient.getKey().mineMib("TCP-Transformer:C->H", SizeCalculator.byteToMib(enLength + 10));

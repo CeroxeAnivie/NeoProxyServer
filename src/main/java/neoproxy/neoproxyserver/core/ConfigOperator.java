@@ -1,11 +1,11 @@
 package neoproxy.neoproxyserver.core;
 
+import fun.ceroxe.api.utils.config.LineConfigReader;
 import neoproxy.neoproxyserver.NeoProxyServer;
 import neoproxy.neoproxyserver.core.management.IPChecker;
 import neoproxy.neoproxyserver.core.management.TransferSocketAdapter;
 import neoproxy.neoproxyserver.core.threads.TCPTransformer;
 import neoproxy.neoproxyserver.core.webadmin.WebAdminManager;
-import plethora.utils.config.LineConfigReader;
 
 import java.io.File;
 import java.io.IOException;

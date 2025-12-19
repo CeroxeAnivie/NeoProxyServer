@@ -1,5 +1,6 @@
 package neoproxy.neoproxyserver.core.management.provider;
 
+import neoproxy.neoproxyserver.core.exceptions.NoMorePortException;
 import neoproxy.neoproxyserver.core.exceptions.PortOccupiedException;
 import neoproxy.neoproxyserver.core.management.SequenceKey;
 
@@ -12,7 +13,7 @@ public interface KeyDataProvider {
     /**
      * 获取 Key 信息 (登录/启动时调用)
      */
-    SequenceKey getKey(String name) throws PortOccupiedException;
+    SequenceKey getKey(String name) throws PortOccupiedException, NoMorePortException;
 
     /**
      * 消费流量通知

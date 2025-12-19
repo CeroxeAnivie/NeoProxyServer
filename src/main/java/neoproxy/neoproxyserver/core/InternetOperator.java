@@ -1,14 +1,14 @@
 package neoproxy.neoproxyserver.core;
 
+import fun.ceroxe.api.management.bufferedFile.SizeCalculator;
+import fun.ceroxe.api.net.SecureSocket;
 import neoproxy.neoproxyserver.core.exceptions.NoMoreNetworkFlowException;
-import plethora.management.bufferedFile.SizeCalculator;
-import plethora.net.SecureSocket;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.net.*;
 
-import static neoproxy.neoproxyserver.NeoProxyServer.debugOperation;
+import static neoproxy.neoproxyserver.core.Debugger.debugOperation;
 
 public final class InternetOperator {
     public static final String COMMAND_PREFIX = ":>";

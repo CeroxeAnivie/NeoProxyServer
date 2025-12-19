@@ -1,11 +1,13 @@
 package neoproxy.neoproxyserver.core.management.provider;
 
+import fun.ceroxe.api.thread.ThreadManager;
 import neoproxy.neoproxyserver.NeoProxyServer;
+import neoproxy.neoproxyserver.core.Debugger;
 import neoproxy.neoproxyserver.core.HostClient;
 import neoproxy.neoproxyserver.core.ServerLogger;
+import neoproxy.neoproxyserver.core.exceptions.NoMorePortException;
 import neoproxy.neoproxyserver.core.exceptions.PortOccupiedException;
 import neoproxy.neoproxyserver.core.management.SequenceKey;
-import plethora.thread.ThreadManager;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -21,6 +23,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.DoubleAdder;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static neoproxy.neoproxyserver.core.Debugger.debugOperation;
 
 /**
  * 工业级 NKM 远程适配器 (Golden Fix)
@@ -53,6 +57,7 @@ public class RemoteKeyProvider implements KeyDataProvider {
     });
 
     public RemoteKeyProvider(String url, String token, String nodeId) {
+        Debugger.debugOperation("Creating RemoteKeyProvider. URL: " + url + ", NodeID: " + nodeId);
         this.managerUrl = url;
         this.token = token;
         this.nodeId = nodeId;
@@ -64,6 +69,7 @@ public class RemoteKeyProvider implements KeyDataProvider {
 
     @Override
     public void init() {
+        Debugger.debugOperation("Initializing RemoteKeyProvider scheduler. Interval: " + SYNC_INTERVAL_SECONDS + "s");
         scheduler.scheduleAtFixedRate(this::tryTriggerFlush, SYNC_INTERVAL_SECONDS, SYNC_INTERVAL_SECONDS, TimeUnit.SECONDS);
         ServerLogger.info("remoteProvider.initInfo", managerUrl, nodeId);
     }
@@ -71,24 +77,45 @@ public class RemoteKeyProvider implements KeyDataProvider {
     // ==================== 1. 登录鉴权 (Login) ====================
 
     @Override
-    public SequenceKey getKey(String name) throws PortOccupiedException {
+    public SequenceKey getKey(String name) throws PortOccupiedException, NoMorePortException {
+        Debugger.debugOperation("Remote getKey request: " + name);
         try {
             String endpoint = String.format("%s/api/key?name=%s&nodeId=%s", managerUrl, name, nodeId);
             HttpRequest req = buildRequest(endpoint).GET().build();
 
+            Debugger.debugOperation("Sending HTTP GET to: " + endpoint);
             HttpResponse<String> response = sendWithRetry(req);
+            Debugger.debugOperation("Received response: " + response.statusCode());
 
             if (response.statusCode() == 200) {
-                // 【修复点 1】此处调用修复后的 JSON 解析逻辑
+                Debugger.debugOperation("Key fetch success. Body: " + response.body());
                 return parseKeyFromJson(response.body());
             } else if (response.statusCode() == 409) {
-                throw new PortOccupiedException("Max connections reached (Rejected by NKM)");
+                // [核心修改] 根据响应体内容区分异常类型
+                String body = response.body();
+                Debugger.debugOperation("Key fetch failed: 409 Conflict. Body: " + body);
+
+                if (body != null) {
+                    if (body.contains("No more ports available on")) {
+                        // 场景：单节点单端口被占用
+                        NoMorePortException.throwException();
+                    } else if (body.contains("Max connections reached")) {
+                        // 场景：总连接数超限
+                        PortOccupiedException.throwException(name);
+                    }
+                }
+
+                // 兜底：如果 JSON 格式不匹配，默认视为端口被占用（或者你可以选择抛出运行时异常）
+                PortOccupiedException.throwException(name);
+
             } else {
+                Debugger.debugOperation("Key fetch failed with status: " + response.statusCode());
                 ServerLogger.warn("remoteProvider.getKeyFail", name, response.statusCode());
             }
-        } catch (PortOccupiedException e) {
-            throw e;
+        } catch (PortOccupiedException | NoMorePortException e) {
+            throw e; // 重新抛出业务异常
         } catch (Exception e) {
+            debugOperation(e);
             ServerLogger.error("remoteProvider.getKeyError", e.getMessage());
         }
         return null;
@@ -98,8 +125,10 @@ public class RemoteKeyProvider implements KeyDataProvider {
 
     @Override
     public void consumeFlow(String name, double mib) {
+        // Debugger.debugOperation("Consuming flow for " + name + ": " + mib + "MB");
         trafficBuffer.computeIfAbsent(name, k -> new DoubleAdder()).add(mib);
         if (trafficBuffer.get(name).sum() >= SYNC_THRESHOLD_MB) {
+            Debugger.debugOperation("Traffic threshold reached for " + name + ". Triggering flush.");
             tryTriggerFlush();
         }
     }
@@ -107,10 +136,13 @@ public class RemoteKeyProvider implements KeyDataProvider {
     private void tryTriggerFlush() {
         if (isFlushing.compareAndSet(false, true)) {
             ThreadManager.runAsync(this::flushTraffic);
+        } else {
+            Debugger.debugOperation("Flush skipped: Already flushing.");
         }
     }
 
     private void flushTraffic() {
+        Debugger.debugOperation("Starting traffic flush...");
         ConcurrentHashMap<String, Double> snapshot = new ConcurrentHashMap<>();
         try {
             // 1. 提取流量快照
@@ -126,7 +158,12 @@ public class RemoteKeyProvider implements KeyDataProvider {
                 }
             }
 
-            if (snapshot.isEmpty()) return;
+            if (snapshot.isEmpty()) {
+                Debugger.debugOperation("No traffic to sync.");
+                return;
+            }
+
+            Debugger.debugOperation("Syncing " + snapshot.size() + " keys.");
 
             // 3. 发送请求
             String jsonBody = buildSyncJson(snapshot);
@@ -137,18 +174,22 @@ public class RemoteKeyProvider implements KeyDataProvider {
             HttpResponse<String> response = sendWithRetry(req);
 
             if (response.statusCode() == 200) {
+                Debugger.debugOperation("Sync success. Processing response.");
                 // 【修复点 2】处理全量同步响应
                 processSyncResponse(response.body());
             } else {
+                Debugger.debugOperation("Sync failed: " + response.statusCode());
                 // 失败回滚流量
                 snapshot.forEach((k, v) -> trafficBuffer.computeIfAbsent(k, x -> new DoubleAdder()).add(v));
                 ServerLogger.warn("remoteProvider.syncFail", response.statusCode());
             }
         } catch (Exception e) {
+            debugOperation(e);
             snapshot.forEach((k, v) -> trafficBuffer.computeIfAbsent(k, x -> new DoubleAdder()).add(v));
             ServerLogger.error("remoteProvider.syncError", e.getMessage());
         } finally {
             isFlushing.set(false);
+            Debugger.debugOperation("Flush completed.");
         }
     }
 
@@ -157,6 +198,7 @@ public class RemoteKeyProvider implements KeyDataProvider {
      * 遵循职责分离：只更新 SequenceKey 数据模型，不直接操作 HostClient 的 Socket/Threads
      */
     private void processSyncResponse(String json) {
+        Debugger.debugOperation("Processing Sync Response JSON...");
         for (HostClient client : NeoProxyServer.availableHostClient) {
             if (client.getKey() == null) continue;
 
@@ -167,6 +209,7 @@ public class RemoteKeyProvider implements KeyDataProvider {
             Boolean isValid = extractBooleanFromMetadata(json, name, "isValid");
             if (isValid != null && !isValid) {
                 String reason = extractStringFromMetadata(json, name, "reason");
+                Debugger.debugOperation("Sync Kill received for " + name + ". Reason: " + reason);
                 ServerLogger.warn("remoteProvider.syncKill", name, reason);
                 client.close(); // 唯一例外：Kill 信号需要立即断开
                 continue;
@@ -174,15 +217,22 @@ public class RemoteKeyProvider implements KeyDataProvider {
 
             // 2. 同步余额 (Balance)
             Double newBalance = extractDoubleFromMetadata(json, name, "balance");
-            if (newBalance != null) key.setBalance(newBalance);
+            if (newBalance != null) {
+                // Debugger.debugOperation("Sync Balance for " + name + ": " + newBalance);
+                key.setBalance(newBalance);
+            }
 
             // 3. 同步 Web 开关 (WebHTML) - 修复 Bug 的核心
             Boolean webEnabled = extractBooleanFromMetadata(json, name, "enableWebHTML");
-            if (webEnabled != null) key.setHTMLEnabled(webEnabled);
+            if (webEnabled != null) {
+                Debugger.debugOperation("Sync WebHTML for " + name + ": " + webEnabled);
+                key.setHTMLEnabled(webEnabled);
+            }
 
             // 4. 同步限速 (Rate)
             Double newRate = extractDoubleFromMetadata(json, name, "rate");
             if (newRate != null) {
+                Debugger.debugOperation("Sync Rate for " + name + ": " + newRate);
                 key.setRate(newRate);
                 // 触发 HostClient 内部的动态限速更新（如果在 HostClient 中有此方法）
                 // 即使没有，RateLimiter 下次读取 Rate 时也会生效
@@ -191,7 +241,10 @@ public class RemoteKeyProvider implements KeyDataProvider {
 
             // 5. 同步过期时间 (ExpireTime)
             String newExpire = extractStringFromMetadata(json, name, "expireTime");
-            if (newExpire != null) key.setExpireTime(newExpire);
+            if (newExpire != null) {
+                Debugger.debugOperation("Sync ExpireTime for " + name + ": " + newExpire);
+                key.setExpireTime(newExpire);
+            }
         }
     }
 
@@ -199,6 +252,7 @@ public class RemoteKeyProvider implements KeyDataProvider {
 
     @Override
     public void releaseKey(String name) {
+        Debugger.debugOperation("Releasing key remotely: " + name);
         ThreadManager.runAsync(() -> {
             try {
                 String body = String.format("{\"serial\":\"%s\", \"nodeId\":\"%s\"}", name, nodeId);
@@ -206,13 +260,16 @@ public class RemoteKeyProvider implements KeyDataProvider {
                         .POST(HttpRequest.BodyPublishers.ofString(body))
                         .build();
                 httpClient.send(req, HttpResponse.BodyHandlers.discarding());
-            } catch (Exception ignored) {
+                Debugger.debugOperation("Key release request sent for " + name);
+            } catch (Exception e) {
+                debugOperation(e);
             }
         });
     }
 
     @Override
     public boolean sendHeartbeat(Protocol.HeartbeatPayload payload) {
+        // Debugger.debugOperation("Sending Heartbeat for " + payload.serial);
         try {
             String jsonBody = String.format(
                     "{\"serial\":\"%s\", \"nodeId\":\"%s\", \"port\":\"%s\"}",
@@ -226,16 +283,21 @@ public class RemoteKeyProvider implements KeyDataProvider {
             HttpResponse<String> response = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() == 200) {
-                return !response.body().contains("\"status\":\"kill\"");
+                boolean kill = response.body().contains("\"status\":\"kill\"");
+                if (kill) Debugger.debugOperation("Heartbeat response indicates KILL for " + payload.serial);
+                return !kill;
             }
+            Debugger.debugOperation("Heartbeat failed with status: " + response.statusCode());
             return true;
         } catch (Exception e) {
+            debugOperation(e);
             return true;
         }
     }
 
     @Override
     public void shutdown() {
+        Debugger.debugOperation("Shutting down RemoteKeyProvider...");
         scheduler.shutdownNow();
         flushTraffic();
     }

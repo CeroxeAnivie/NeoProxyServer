@@ -1,8 +1,10 @@
 package neoproxy.neoproxyserver.core.management;
 
 import neoproxy.neoproxyserver.core.ConfigOperator;
+import neoproxy.neoproxyserver.core.Debugger;
 import neoproxy.neoproxyserver.core.HostClient;
 import neoproxy.neoproxyserver.core.ServerLogger;
+import neoproxy.neoproxyserver.core.exceptions.NoMorePortException;
 import neoproxy.neoproxyserver.core.exceptions.PortOccupiedException;
 import neoproxy.neoproxyserver.core.management.provider.RemoteKeyProvider;
 import neoproxy.neoproxyserver.core.webadmin.WebAdminManager;
@@ -36,7 +38,7 @@ public class ConsoleManager {
             initCommand();
             myConsole.start();
         } catch (Exception e) {
-            debugOperation(e);
+            Debugger.debugOperation(e);
         }
     }
 
@@ -161,7 +163,7 @@ public class ConsoleManager {
                     default -> printKeyUsage();
                 }
             } catch (Exception e) {
-                debugOperation(e);
+                Debugger.debugOperation(e);
                 ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.internalKeyError");
             }
         });
@@ -229,7 +231,7 @@ public class ConsoleManager {
                 } else {
                     ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.criticalDbError", keyName);
                 }
-            } catch (PortOccupiedException e) {
+            } catch (PortOccupiedException | NoMorePortException e) {
                 ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyError", e.getMessage());
             }
         });
@@ -370,17 +372,22 @@ public class ConsoleManager {
             ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.noActiveHostClients");
             return;
         }
-        Map<String, Integer> accessCodeCounts = new HashMap<>();
-        Map<String, HostClient> accessCodeRepresentatives = new HashMap<>();
-        Map<String, List<HostClient>> accessCodeToHostClients = new HashMap<>();
+
+        // 【修复 1】: 创建一个基于 "AccessCode + IP" 的分组 Map
+        // Key: 组合键 (例如 "KeyName::192.168.1.1"), Value: 该 IP 下该 Key 的所有客户端列表
+        Map<String, List<HostClient>> ipGroupedClients = new HashMap<>();
+
         for (HostClient hostClient : availableHostClient) {
             String accessCode = hostClient.getKey() != null ? hostClient.getKey().getName() : "Unknown";
-            accessCodeCounts.put(accessCode, accessCodeCounts.getOrDefault(accessCode, 0) + 1);
-            if (!accessCodeRepresentatives.containsKey(accessCode)) {
-                accessCodeRepresentatives.put(accessCode, hostClient);
-            }
-            accessCodeToHostClients.computeIfAbsent(accessCode, k -> new ArrayList<>()).add(hostClient);
+            String ip = hostClient.getIP(); // 使用 HostClient 现有的 getIP() 方法
+
+            // 组合键：确保只有 IP 和 Key 都相同才分到一组
+            String compositeKey = accessCode + "::" + ip;
+
+            ipGroupedClients.computeIfAbsent(compositeKey, k -> new ArrayList<>()).add(hostClient);
         }
+
+        // 缓存地理位置信息的逻辑保持不变
         for (HostClient hostClient : availableHostClient) {
             if (hostClient.getCachedLocation() == null || hostClient.getCachedISP() == null) {
                 String ip = hostClient.getHostServerHook().getInetAddress().getHostAddress();
@@ -389,15 +396,28 @@ public class ConsoleManager {
                 hostClient.setCachedISP(locInfo.isp());
             }
         }
+
         String[] headers = ServerLogger.getMessage("consoleManager.headers.list").split("\\|");
         List<String[]> rows = new ArrayList<>();
-        for (Map.Entry<String, HostClient> entry : accessCodeRepresentatives.entrySet()) {
-            HostClient hostClient = entry.getValue();
-            String accessCode = entry.getKey();
-            boolean isRepresentative = true;
-            List<HostClient> allHostClientsForAccessCode = accessCodeToHostClients.get(accessCode);
-            rows.add(hostClient.formatAsTableRow(accessCodeCounts, isRepresentative, allHostClientsForAccessCode));
+
+        // 【修复 2】: 遍历分组后的 Map
+        for (List<HostClient> group : ipGroupedClients.values()) {
+            if (group.isEmpty()) continue;
+
+            // 取该组的第一个作为代表用于显示静态信息
+            HostClient representative = group.get(0);
+
+            // 计算当前 IP 下的具体连接数
+            int countInThisIp = group.size();
+
+            // 将该组的所有客户端传进去（用于统计 TCP/UDP 连接数）
+            // 注意：这里需要修改 HostClient 的方法签名，直接传 int 类型的 count
+            rows.add(representative.formatAsTableRow(countInThisIp, true, group));
         }
+
+        // 按照 Access Code 排序一下，让显示更整齐
+        rows.sort((r1, r2) -> r1[1].compareTo(r2[1]));
+
         printAsciiTable(headers, rows);
     }
 
@@ -481,7 +501,7 @@ public class ConsoleManager {
             } else {
                 ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFound");
             }
-        } catch (PortOccupiedException e) {
+        } catch (PortOccupiedException | NoMorePortException e) {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyError", e.getMessage());
         }
     }
@@ -525,9 +545,11 @@ public class ConsoleManager {
         }
         String name = params.get(1);
 
-        // 禁止在 Remote 模式下修改受控 Key
+        // 检查是否正在使用远程 Provider，且该 Key 是否存在于远程缓存中
         if (SequenceKey.PROVIDER instanceof RemoteKeyProvider) {
+            // 获取当前的远程 Key 缓存快照
             Map<String, SequenceKey> remoteCache = SequenceKey.getKeyCacheSnapshot();
+            // 如果缓存中包含该 Key，说明它是远程下发的，禁止修改
             if (remoteCache.containsKey(name)) {
                 ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.error.remoteKeyModification");
                 return;
@@ -558,7 +580,7 @@ public class ConsoleManager {
                     return;
                 }
             }
-        } catch (PortOccupiedException e) {
+        } catch (PortOccupiedException | NoMorePortException e) {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyError", e.getMessage());
             return;
         }
@@ -733,7 +755,7 @@ public class ConsoleManager {
                 keyMap.put(name, dto);
             }
         } catch (Exception e) {
-            debugOperation(e);
+            Debugger.debugOperation(e);
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.dbQueryFailed");
             return;
         }
@@ -897,7 +919,7 @@ public class ConsoleManager {
                 ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFound");
             }
         } catch (Exception e) {
-            debugOperation(e);
+            Debugger.debugOperation(e);
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.dbQueryFailed");
         }
     }
@@ -941,7 +963,7 @@ public class ConsoleManager {
             rows.add(data);
             printAsciiTable(headers, rows);
         } catch (Exception e) {
-            debugOperation(e);
+            Debugger.debugOperation(e);
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.failedToFormatKey");
         }
     }
@@ -1020,14 +1042,7 @@ public class ConsoleManager {
             this.isEnable = key.isEnable();
             this.enableWebHTML = key.isHTMLEnabled();
             this.sourceTag = sourceTag;
-            // 尝试获取 protected port
-            // 注意：因为 ConsoleManager 与 SequenceKey 在同包，所以可以直接访问 protected 字段
-            // 但为了编译通过性，这里用反射兜底或者直接访问（如果确实在同包）
-            // 在这里我们假设可以直接访问 key.port 或者通过 getter
-            // 如果你之前没有为 port 添加 getter，这里可能需要调整
             this.port = key.getPort() == -1 ? "Dynamic" : String.valueOf(key.getPort());
-            // 更稳妥的方式，如果你能保证在同包：
-            // this.port = key.port;
         }
     }
 }

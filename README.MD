@@ -44,9 +44,6 @@
 ### 构建项目
 
 ```bash
-git clone https://github.com/CeroxeAnivie/PlethoraAPI
-mvn install
-
 git clone https://github.com/CeroxeAnivie/NeoProxyServer.git
 cd NeoProxyServer
 mvn clean package

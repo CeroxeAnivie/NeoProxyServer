@@ -2,7 +2,7 @@ package neoproxy.neoproxyserver.core.threads;
 
 import java.util.concurrent.locks.ReentrantLock;
 
-import static neoproxy.neoproxyserver.NeoProxyServer.debugOperation;
+import static neoproxy.neoproxyserver.core.Debugger.debugOperation;
 
 public class RateLimiter {
     // 使用 ReentrantLock 替代 synchronized，避免虚拟线程 Pinning 问题

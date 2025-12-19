@@ -10,10 +10,8 @@ import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
-import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -24,21 +22,14 @@ import static neoproxy.neoproxyserver.core.InternetOperator.close;
 import static neoproxy.neoproxyserver.core.threads.TCPTransformer.TELL_BALANCE_MIB;
 
 public class UDPTransformer implements Runnable {
-    // 保持 CopyOnWriteArrayList 以兼容 Server 的调用
     public static final CopyOnWriteArrayList<UDPTransformer> udpClientConnections = new CopyOnWriteArrayList<>();
-
     private final HostClient hostClient;
     private final HostReply hostReply;
     private final DatagramSocket sharedDatagramSocket;
     private final String clientIP;
     private final int clientOutPort;
-
-    // 优化：增大队列缓冲，配合批处理提升吞吐
-    private final ArrayBlockingQueue<byte[]> sendQueue = new ArrayBlockingQueue<>(512);
+    private final ArrayBlockingQueue<byte[]> sendQueue = new ArrayBlockingQueue<>(100);
     private volatile boolean isRunning = true;
-
-    // 优化：缓存InetAddress，避免高频DNS解析/对象创建
-    private InetAddress cachedClientAddress;
 
     public UDPTransformer(HostClient hostClient, HostReply hostReply, DatagramSocket sharedDatagramSocket, String clientIP, int clientOutPort) {
         this.hostClient = hostClient;
@@ -46,18 +37,8 @@ public class UDPTransformer implements Runnable {
         this.sharedDatagramSocket = sharedDatagramSocket;
         this.clientIP = clientIP;
         this.clientOutPort = clientOutPort;
-        try {
-            // 在构造时解析一次IP，后续直接复用
-            this.cachedClientAddress = InetAddress.getByName(clientIP);
-        } catch (UnknownHostException e) {
-            debugOperation(e);
-        }
     }
 
-    /**
-     * 保持公开方法签名不变，兼容外部调用。
-     * 内部实现未变，保证协议格式一致。
-     */
     public static byte[] serializeDatagramPacket(DatagramPacket packet) {
         byte[] data = packet.getData();
         int offset = packet.getOffset();
@@ -68,51 +49,63 @@ public class UDPTransformer implements Runnable {
         byte[] ipBytes = address.getAddress();
         int ipLength = ipBytes.length;
 
-        int totalLen = 14 + ipLength + length; // 4+4+4+ipLen+2+data
-        byte[] buffer = new byte[totalLen];
-        ByteBuffer bb = ByteBuffer.wrap(buffer);
-        bb.order(ByteOrder.BIG_ENDIAN);
+        int totalLen = 4 + 4 + 4 + ipLength + 2 + length;
+        ByteBuffer buffer = ByteBuffer.allocate(totalLen);
+        buffer.order(ByteOrder.BIG_ENDIAN);
 
-        bb.putInt(0xDEADBEEF);
-        bb.putInt(length);
-        bb.putInt(ipLength);
-        bb.put(ipBytes);
-        bb.putShort((short) port);
-        bb.put(data, offset, length);
+        buffer.putInt(0xDEADBEEF);
+        buffer.putInt(length);
+        buffer.putInt(ipLength);
+        buffer.put(ipBytes);
+        buffer.putShort((short) port);
+        buffer.put(data, offset, length);
 
-        return buffer;
+        return buffer.array();
     }
 
-    /**
-     * 保持公开方法签名不变。
-     * 优化后的内部循环中不再调用此方法，而是使用内联解析以提升性能。
-     * 但保留此方法以防其他类有偶发调用。
-     */
     public static DatagramPacket deserializeToDatagramPacket(byte[] serializedData) {
-        if (serializedData == null || serializedData.length < 14) return null;
+        if (serializedData == null || serializedData.length < 14) {
+            debugOperation(new IllegalArgumentException("Serialized data is too short or null"));
+            return null;
+        }
 
         ByteBuffer buffer = ByteBuffer.wrap(serializedData);
         buffer.order(ByteOrder.BIG_ENDIAN);
 
-        if (buffer.getInt() != 0xDEADBEEF) return null;
+        int magic = buffer.getInt();
+        if (magic != 0xDEADBEEF) {
+            debugOperation(new IllegalArgumentException("Invalid magic number in serialized data"));
+            return null;
+        }
 
         int dataLen = buffer.getInt();
         int ipLen = buffer.getInt();
 
-        if (dataLen < 0 || dataLen > 65507 || (ipLen != 4 && ipLen != 16)) return null;
-        if (serializedData.length < 14 + ipLen + dataLen) return null;
+        if (dataLen < 0 || dataLen > 65507 || ipLen != 4 && ipLen != 16) {
+            debugOperation(new IllegalArgumentException("Invalid data or IP length in serialized data"));
+            return null;
+        }
+
+        int expectedLength = 4 + 4 + 4 + ipLen + 2 + dataLen;
+        if (serializedData.length < expectedLength) {
+            debugOperation(new IllegalArgumentException("Incomplete serialized data"));
+            return null;
+        }
 
         byte[] ipBytes = new byte[ipLen];
         buffer.get(ipBytes);
+        InetAddress address;
+        try {
+            address = InetAddress.getByAddress(ipBytes);
+        } catch (Exception e) {
+            debugOperation(e);
+            return null;
+        }
         int port = buffer.getShort() & 0xFFFF;
         byte[] data = new byte[dataLen];
         buffer.get(data);
 
-        try {
-            return new DatagramPacket(data, dataLen, InetAddress.getByAddress(ipBytes), port);
-        } catch (UnknownHostException e) {
-            return null;
-        }
+        return new DatagramPacket(data, data.length, address, port);
     }
 
     public static void tellRestBalance(HostClient hostClient, double[] aTenMibSize, int len, LanguageData languageData) {
@@ -120,14 +113,8 @@ public class UDPTransformer implements Runnable {
             aTenMibSize[0] = aTenMibSize[0] + SizeCalculator.byteToMib(len);
         } else {
             try {
-                // 异步通知，减少对数据线程的阻塞
-                ThreadManager.runAsync(() -> {
-                    try {
-                        InternetOperator.sendStr(hostClient, languageData.THIS_ACCESS_CODE_HAVE + hostClient.getKey().getBalance() + languageData.MB_OF_FLOW_LEFT);
-                    } catch (Exception ignored) {
-                    }
-                });
-            } catch (Exception e) {
+                InternetOperator.sendStr(hostClient, languageData.THIS_ACCESS_CODE_HAVE + hostClient.getKey().getBalance() + languageData.MB_OF_FLOW_LEFT);
+            } catch (IOException e) {
                 debugOperation(e);
             }
             aTenMibSize[0] = 0;
@@ -168,45 +155,23 @@ public class UDPTransformer implements Runnable {
         return false;
     }
 
-    // 优化：用户 -> 代理 -> 内网 (User -> HostClient)
-    // 引入批处理 (drainTo)
     private void outClientToHostClient(double[] aTenMibSize) {
-        List<byte[]> batchBuffer = new ArrayList<>(64);
         try {
+            // 【核心修改】获取全局限速器
             RateLimiter limiter = hostClient.getGlobalRateLimiter();
 
-            while (isRunning) {
-                // 1. 阻塞等待第一个包，避免空转
-                byte[] first = sendQueue.poll(1, TimeUnit.SECONDS);
-                if (first == null) continue;
+            byte[] data;
+            while (isRunning && (data = sendQueue.poll(1, TimeUnit.SECONDS)) != null) {
+                int enLength = hostReply.host().sendByte(data);
 
-                batchBuffer.add(first);
-                // 2. 将队列中剩余的包一次性取出（最多63个），大幅减少锁竞争
-                sendQueue.drainTo(batchBuffer, 63);
+                if (enLength > 0) {
+                    hostClient.getKey().mineMib("UDP-Transformer", SizeCalculator.byteToMib(enLength + 10));
+                    tellRestBalance(hostClient, aTenMibSize, enLength, hostClient.getLangData());
 
-                int batchTotalBytes = 0;
-
-                // 3. 循环发送
-                for (byte[] data : batchBuffer) {
-                    try {
-                        int enLength = hostReply.host().sendByte(data);
-                        if (enLength > 0) {
-                            batchTotalBytes += (enLength + 10);
-                            tellRestBalance(hostClient, aTenMibSize, enLength, hostClient.getLangData());
-                        }
-                    } catch (IOException e) {
-                        throw e; // 抛出异常以终止线程
-                    }
+                    // 【核心修改】直接调用共享限速器
+                    limiter.setMaxMbps(hostClient.getKey().getRate());
+                    limiter.onBytesTransferred(enLength);
                 }
-
-                // 4. 批量提交计费和限速（实时获取最新限速值）
-                if (batchTotalBytes > 0) {
-                    hostClient.getKey().mineMib("UDP-Transformer", SizeCalculator.byteToMib(batchTotalBytes));
-                    limiter.setMaxMbps(hostClient.getKey().getRate()); // 确保实时更新
-                    limiter.onBytesTransferred(batchTotalBytes);
-                }
-
-                batchBuffer.clear();
             }
         } catch (Exception e) {
             debugOperation(e);
@@ -215,53 +180,36 @@ public class UDPTransformer implements Runnable {
         }
     }
 
-    // 优化：内网 -> 代理 -> 用户 (HostClient -> User)
-    // 引入内联解析 (Zero-Copy 思想) 和 对象复用
     private void hostClientToOutClient(double[] aTenMibSize) {
         try {
+            // 【核心修改】获取全局限速器
             RateLimiter limiter = hostClient.getGlobalRateLimiter();
+
             byte[] data;
-
-            // 复用 Packet 对象，避免在 while 循环中疯狂创建对象
-            byte[] dummy = new byte[0];
-            DatagramPacket reusePacket = new DatagramPacket(dummy, 0, cachedClientAddress, clientOutPort);
-
             while (isRunning && (data = hostReply.host().receiveByte()) != null) {
-                // 基础长度校验
-                if (data.length < 14) continue;
+                if (data.length <= 0) continue;
 
-                // --- 内联解析开始 (替代 deserializeToDatagramPacket 以减少对象分配) ---
+                DatagramPacket packetToClient = deserializeToDatagramPacket(data);
+                if (packetToClient != null) {
+                    int packetLength = packetToClient.getLength();
 
-                // Magic Check (Big Endian)
-                int magic = ((data[0] & 0xFF) << 24) | ((data[1] & 0xFF) << 16) |
-                        ((data[2] & 0xFF) << 8) | (data[3] & 0xFF);
-                if (magic != 0xDEADBEEF) continue;
+                    if (packetLength > 0) {
+                        hostClient.getKey().mineMib("UDP-Transformer", SizeCalculator.byteToMib(packetLength + 10));
+                        tellRestBalance(hostClient, aTenMibSize, packetLength, hostClient.getLangData());
 
-                // Read Lengths
-                int dataLen = ((data[4] & 0xFF) << 24) | ((data[5] & 0xFF) << 16) |
-                        ((data[6] & 0xFF) << 8) | (data[7] & 0xFF);
-                int ipLen = ((data[8] & 0xFF) << 24) | ((data[9] & 0xFF) << 16) |
-                        ((data[10] & 0xFF) << 8) | (data[11] & 0xFF);
+                        // 【核心修改】直接调用共享限速器
+                        limiter.setMaxMbps(hostClient.getKey().getRate());
+                        limiter.onBytesTransferred(packetLength);
 
-                // 校验
-                if (dataLen <= 0 || dataLen > 65507 || (ipLen != 4 && ipLen != 16)) continue;
-                if (data.length < 14 + ipLen + dataLen) continue;
-
-                // 计算数据段的起始位置：14 (header) + ipLen + 2 (port)
-                // 这里跳过了IP和Port的解析，因为我们知道要发给谁 (cachedClientAddress:clientOutPort)
-                int dataStartIndex = 14 + ipLen + 2;
-
-                // --- 内联解析结束 ---
-
-                // 计费与限速（实时获取最新限速值）
-                hostClient.getKey().mineMib("UDP-Transformer", SizeCalculator.byteToMib(dataLen + 10));
-                tellRestBalance(hostClient, aTenMibSize, dataLen, hostClient.getLangData());
-                limiter.setMaxMbps(hostClient.getKey().getRate()); // 确保实时更新
-                limiter.onBytesTransferred(dataLen);
-
-                // 直接设置数据，发送
-                reusePacket.setData(data, dataStartIndex, dataLen);
-                sharedDatagramSocket.send(reusePacket);
+                        DatagramPacket outgoingPacket = new DatagramPacket(
+                                packetToClient.getData(),
+                                packetToClient.getLength(),
+                                InetAddress.getByName(clientIP),
+                                clientOutPort
+                        );
+                        sharedDatagramSocket.send(outgoingPacket);
+                    }
+                }
             }
         } catch (Exception e) {
             debugOperation(e);
@@ -273,9 +221,7 @@ public class UDPTransformer implements Runnable {
     @Override
     public void run() {
         try {
-            // 使用数组作为简单的引用容器
             final double[] aTenMibSize = {0};
-
             Runnable clientToHostClientThread = () -> outClientToHostClient(aTenMibSize);
             Runnable hostClientToClientThread = () -> hostClientToOutClient(aTenMibSize);
 

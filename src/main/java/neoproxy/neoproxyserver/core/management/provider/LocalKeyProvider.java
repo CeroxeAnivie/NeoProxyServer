@@ -43,8 +43,7 @@ public class LocalKeyProvider implements KeyDataProvider {
     }
 
     @Override
-    public SequenceKey getKey(String name) {
-        // Debugger.debugOperation("Local getKey request: " + name);
+    public SequenceKey getKey(String name) { // 虽然本地模式不抛出 OutDated，但接口需要兼容
         return SequenceKey.loadKeyFromDatabase(name, false);
     }
 

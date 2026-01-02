@@ -57,7 +57,6 @@ public class NeoProxyServer {
     public static String VERSION = getFromAppProperties("app.version");
     public static String EXPECTED_CLIENT_VERSION = getFromAppProperties("app.expected.client.version");
 
-    // 修改点 1: 这里去掉了 ArrayUtils，直接调用类内部定义的静态方法
     public static final CopyOnWriteArrayList<String> availableVersions = toCopyOnWriteArrayListWithLoop(EXPECTED_CLIENT_VERSION.split("\\|"));
 
     public static int HOST_HOOK_PORT = 44801;
@@ -69,7 +68,6 @@ public class NeoProxyServer {
     public static MyConsole myConsole;
     public static boolean isStopped = false;
 
-    // 修改点 2: 手动实现 toCopyOnWriteArrayListWithLoop 方法
     private static CopyOnWriteArrayList<String> toCopyOnWriteArrayListWithLoop(String[] array) {
         CopyOnWriteArrayList<String> list = new CopyOnWriteArrayList<>();
         if (array != null) {
@@ -171,6 +169,8 @@ public class NeoProxyServer {
                 NeoProxyServer.handleTransformerServiceWithNewThread(hostClient);
             } catch (IndexOutOfBoundsException | IOException | NoMorePortException | PortOccupiedException |
                      UnRecognizedKeyException | OutDatedKeyException e) {
+                // 如果异常冒泡到这里，说明 checkHostClientLegitimacyAndTellInfo 内没有处理
+                // 通常是 Local 模式或未预料的 IO 异常
                 Debugger.debugOperation("Handshake failed with exception: " + e.getClass().getSimpleName() + ": " + e.getMessage());
                 ServerLogger.sayHostClientDiscInfo(hostClient, "NeoProxyServer");
                 hostClient.close();
@@ -178,6 +178,7 @@ public class NeoProxyServer {
                 Debugger.debugOperation("Unsupported version detected for client: " + hostClient.getIP());
                 UpdateManager.handle(hostClient);
             } catch (SilentException ignore) {
+                // 已在 checkHostClientVersionAndKeyAndLang 中处理并通知了客户端，此处静默退出
             } catch (Exception e) {
                 Debugger.debugOperation(e);
                 hostClient.close();
@@ -227,18 +228,14 @@ public class NeoProxyServer {
 
                 ThreadManager.runAsync(() -> {
                     try {
-                        // 1. 反扫描：强制延迟 200ms
                         Sleeper.sleep(200);
-
-                        // 2. 预读并检查
-                        PushbackInputStream pbis = new PushbackInputStream(client.getInputStream(), 8); // 增加缓冲区以容纳 HTTP 方法检查
+                        PushbackInputStream pbis = new PushbackInputStream(client.getInputStream(), 8);
                         int originalTimeout = client.getSoTimeout();
-                        client.setSoTimeout(1000); // 临时超时，防止读取阻塞过久
+                        client.setSoTimeout(1000);
 
                         byte[] headerBytes = new byte[8];
                         int readLen = 0;
                         try {
-                            // 尝试读取最多 8 个字节
                             int b = pbis.read();
                             if (b == -1) {
                                 Debugger.debugOperation("TCP Probe: Client sent EOS immediately.");
@@ -248,7 +245,6 @@ public class NeoProxyServer {
                             headerBytes[0] = (byte) b;
                             readLen = 1;
 
-                            // 往后读取8个字节看看是什么头（debug下）
                             if (IS_DEBUG_MODE) {
                                 int available = pbis.available();
                                 if (available > 0) {
@@ -258,13 +254,10 @@ public class NeoProxyServer {
                                 }
                                 Debugger.debugOperation("TCP Probe: Read " + readLen + " bytes: " + Arrays.toString(Arrays.copyOf(headerBytes, readLen)));
                             }
-
-                            // 将读取的所有字节推回流中
                             pbis.unread(headerBytes, 0, readLen);
 
                         } catch (SocketTimeoutException e) {
                             Debugger.debugOperation("TCP Probe: Timeout while pre-reading. Continuing...");
-                            // 仅超时，流可能还是有效的，继续
                         } catch (IOException e) {
                             Debugger.debugOperation(e);
                             client.close();
@@ -302,7 +295,6 @@ public class NeoProxyServer {
             Debugger.debugOperation("TCP Service Loop exited for client: " + hostClient.getIP());
         });
 
-        // ... (UDP 逻辑保持不变) ...
         ThreadManager.runAsync(() -> {
             Debugger.debugOperation("UDP Service Loop started for client: " + hostClient.getIP());
             while (!hostClient.isStopped()) {
@@ -318,7 +310,6 @@ public class NeoProxyServer {
                     continue;
                 }
 
-                // ... (UDP existing logic) ...
                 final String clientIP = datagramPacket.getAddress().getHostAddress();
                 final int clientOutPort = datagramPacket.getPort();
 
@@ -421,7 +412,7 @@ public class NeoProxyServer {
 
         String clientAddress = InternetOperator.getInternetAddressAndPort(hostClient.getHostServerHook());
         ServerLogger.info("neoProxyServer.hostClientRegisterSuccess", clientAddress);
-        // 端口已准备好，Key 已设置，启动心跳
+
         hostClient.startRemoteHeartbeat();
 
         InternetOperator.sendCommand(hostClient, String.valueOf(port));
@@ -447,20 +438,41 @@ public class NeoProxyServer {
             InternetOperator.sendStr(hostClient, languageData.UNSUPPORTED_VERSION_MSG + availableVersions.getLast());
             UnSupportHostVersionException.throwException(hostClient.getIP(), info[1]);
         }
+
         SequenceKey currentSequenceKey = null;
         try {
+            // 这里会抛出 RemoteKeyProvider 的各种异常
             currentSequenceKey = SequenceKey.getEnabledKeyFromDB(info[2]);
         } catch (PortOccupiedException | NoMorePortException e) {
+            Debugger.debugOperation("Port occupied or connections full for key: " + info[2]);
             InternetOperator.sendStr(hostClient, languageData.REMOTE_PORT_OCCUPIED);
             hostClient.close();
             SilentException.throwException();
+        } catch (OutDatedKeyException e) {
+            Debugger.debugOperation("Key out of date for key: " + info[2]);
+            InternetOperator.sendStr(hostClient, languageData.KEY + info[2] + languageData.ARE_OUT_OF_DATE);
+            hostClient.close();
+            SilentException.throwException();
+        } catch (UnRecognizedKeyException e) {
+            Debugger.debugOperation("Unrecognized/Disabled key: " + info[2]);
+            InternetOperator.sendStr(hostClient, languageData.ACCESS_DENIED_FORCE_EXITING);
+            hostClient.close();
+            SilentException.throwException();
+        } catch (NoMoreNetworkFlowException e) {
+            Debugger.debugOperation("No network flow left for key: " + info[2]);
+            InternetOperator.sendStr(hostClient, languageData.THIS_KEY_HAVE_NO_NETWORK_FLOW_LEFT);
+            hostClient.close();
+            SilentException.throwException();
         }
+
+        // 兼容本地模式：LocalProvider 可能会返回 null 而不是抛异常
         if (currentSequenceKey == null) {
-            Debugger.debugOperation("Key validation failed for: " + info[2]);
+            Debugger.debugOperation("Key validation failed (Local Null) for: " + info[2]);
             InternetOperator.sendStr(hostClient, languageData.ACCESS_DENIED_FORCE_EXITING);
             hostClient.close();
             UnRecognizedKeyException.throwException(info[2]);
         }
+
         if (info.length == 4) {
             hostClient.setTCPEnabled(info[3].startsWith("T"));
             hostClient.setUDPEnabled(info[3].endsWith("U"));
@@ -483,12 +495,13 @@ public class NeoProxyServer {
                 NoMorePortException.throwException(currentSequenceKey.getDyStart(), currentSequenceKey.getDyEnd());
             }
         }
-        // 【检测】检查过期
+
         if (currentSequenceKey.isOutOfDate()) {
-            Debugger.debugOperation("Key expired: " + info[2]);
+            Debugger.debugOperation("Key expired (Double Check): " + info[2]);
             InternetOperator.sendStr(hostClient, languageData.KEY + info[2] + languageData.ARE_OUT_OF_DATE);
             OutDatedKeyException.throwException(currentSequenceKey);
         }
+
         hostClient.setKey(currentSequenceKey);
         hostClient.setLangData(languageData);
         hostClient.enableCheckAliveThread();

@@ -316,7 +316,6 @@ public final class HostClient implements Closeable {
         return activeTcpSockets;
     }
 
-    // 【保持修复】保持了你之前满意的 list 逻辑
     public String[] formatAsTableRow(int count, boolean isRepresentative, List<HostClient> clientsInThisGroup) {
         String hostClientIP = this.getIP();
         String accessCode = this.getKey() != null ? this.getKey().getName() : "Unknown";
@@ -328,6 +327,9 @@ public final class HostClient implements Closeable {
 
         String location = this.getCachedLocation() != null ? this.getCachedLocation() : "Unknown";
         String isp = this.getCachedISP() != null ? this.getCachedISP() : "Unknown";
+
+        // 新增：获取物理端口
+        String port = String.valueOf(this.getOutPort());
 
         Map<String, Integer> tcpCounts = new HashMap<>();
         Map<String, Integer> udpCounts = new HashMap<>();
@@ -366,11 +368,13 @@ public final class HostClient implements Closeable {
             externalClientIPs = "None";
         }
 
+        // 修改返回值，在 ISP 和 externalClientIPs 之间插入 Port
         return new String[]{
                 displayHostClientIP,
                 accessCode,
                 location,
                 isp,
+                port, // 新增的列
                 externalClientIPs
         };
     }

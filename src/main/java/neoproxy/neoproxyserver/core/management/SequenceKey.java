@@ -3,9 +3,7 @@ package neoproxy.neoproxyserver.core.management;
 import neoproxy.neoproxyserver.core.ConfigOperator;
 import neoproxy.neoproxyserver.core.Debugger;
 import neoproxy.neoproxyserver.core.ServerLogger;
-import neoproxy.neoproxyserver.core.exceptions.NoMoreNetworkFlowException;
-import neoproxy.neoproxyserver.core.exceptions.NoMorePortException;
-import neoproxy.neoproxyserver.core.exceptions.PortOccupiedException;
+import neoproxy.neoproxyserver.core.exceptions.*;
 import neoproxy.neoproxyserver.core.management.provider.KeyDataProvider;
 import neoproxy.neoproxyserver.core.management.provider.LocalKeyProvider;
 import neoproxy.neoproxyserver.core.management.provider.RemoteKeyProvider;
@@ -144,32 +142,26 @@ public class SequenceKey {
         return DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
     }
 
-    public static SequenceKey getKeyFromDB(String name) throws PortOccupiedException, NoMorePortException {
-        // Debugger.debugOperation("Fetching key from DB: " + name);
+    // 必须添加 throws 声明，将异常向上传递给调用者 (例如 Server 握手层)
+    public static SequenceKey getKeyFromDB(String name)
+            throws PortOccupiedException, NoMorePortException, UnRecognizedKeyException, OutDatedKeyException {
+
         if (name == null) return null;
         if (PROVIDER instanceof LocalKeyProvider) {
-            SequenceKey cached = keyCache.get(name);
-            if (cached != null) {
-                // Debugger.debugOperation("Key found in local cache: " + name);
-                return cached;
-            }
-        }
-        if (PROVIDER == null) {
-            Debugger.debugOperation("Provider is null, cannot fetch key.");
-            return null;
+            // 本地模式：获取对象后，由上层调用者调用 isOutOfDate() 检查
+            return keyCache.get(name);
         }
 
-        SequenceKey key = PROVIDER.getKey(name);
-        if (key != null) {
-            keyCache.put(name, key);
-            Debugger.debugOperation("Key fetched from provider and cached: " + name);
-        } else {
-            Debugger.debugOperation("Key not found in provider: " + name);
+        // 远程模式：getKey 内部直接抛出异常
+        if (PROVIDER != null) {
+            SequenceKey key = PROVIDER.getKey(name);
+            if (key != null) keyCache.put(name, key);
+            return key;
         }
-        return key;
+        return null;
     }
 
-    public static SequenceKey getEnabledKeyFromDB(String name) throws PortOccupiedException, NoMorePortException {
+    public static SequenceKey getEnabledKeyFromDB(String name) throws PortOccupiedException, NoMorePortException, UnRecognizedKeyException, OutDatedKeyException {
         SequenceKey key = getKeyFromDB(name);
         if (key != null && key.isEnable()) return key;
         if (key != null) Debugger.debugOperation("Key exists but disabled: " + name);

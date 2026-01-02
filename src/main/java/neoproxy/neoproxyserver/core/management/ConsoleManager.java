@@ -4,16 +4,12 @@ import neoproxy.neoproxyserver.core.ConfigOperator;
 import neoproxy.neoproxyserver.core.Debugger;
 import neoproxy.neoproxyserver.core.HostClient;
 import neoproxy.neoproxyserver.core.ServerLogger;
-import neoproxy.neoproxyserver.core.exceptions.NoMorePortException;
-import neoproxy.neoproxyserver.core.exceptions.PortOccupiedException;
+import neoproxy.neoproxyserver.core.exceptions.*;
 import neoproxy.neoproxyserver.core.management.provider.RemoteKeyProvider;
 import neoproxy.neoproxyserver.core.webadmin.WebAdminManager;
 import neoproxy.neoproxyserver.core.webadmin.WebConsole;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -22,6 +18,10 @@ import static neoproxy.neoproxyserver.NeoProxyServer.*;
 import static neoproxy.neoproxyserver.core.management.IPChecker.*;
 import static neoproxy.neoproxyserver.core.management.SequenceKey.*;
 
+/**
+ * ConsoleManager (Industrial Fix)
+ * 适配最新的异常抛出机制，确保在 Key 无效/过期时仍能通过缓存查询信息。
+ */
 public class ConsoleManager {
 
     public static final ThreadLocal<String> COMMAND_SOURCE = ThreadLocal.withInitial(() -> "Admin");
@@ -202,10 +202,16 @@ public class ConsoleManager {
                 myConsole.warn(COMMAND_SOURCE.get(), "Usage: web <enable|disable> <key>");
                 return;
             }
+
+            // 【修复 3】: web 命令中的 isKeyExistsByName 检查
             if (!isKeyExistsByName(keyName)) {
-                myConsole.warn(COMMAND_SOURCE.get(), "Key not found: " + keyName);
-                return;
+                // 如果本地没有，尝试从缓存查（针对远程模式）
+                if (!(SequenceKey.PROVIDER instanceof RemoteKeyProvider) || !SequenceKey.getKeyCacheSnapshot().containsKey(keyName)) {
+                    myConsole.warn(COMMAND_SOURCE.get(), "Key not found: " + keyName);
+                    return;
+                }
             }
+
             boolean enable = action.equals("enable");
             boolean foundInMemory = false;
             for (HostClient hostClient : availableHostClient) {
@@ -231,6 +237,9 @@ public class ConsoleManager {
                 } else {
                     ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.criticalDbError", keyName);
                 }
+            } catch (OutDatedKeyException | UnRecognizedKeyException | NoMoreNetworkFlowException e) {
+                // 【修复 4】: 远程模式下 Key 异常，无法更新
+                ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyStateError.cannotUpdate", e.getMessage());
             } catch (PortOccupiedException | NoMorePortException e) {
                 ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyError", e.getMessage());
             }
@@ -373,21 +382,15 @@ public class ConsoleManager {
             return;
         }
 
-        // 【修复 1】: 创建一个基于 "AccessCode + IP" 的分组 Map
-        // Key: 组合键 (例如 "KeyName::192.168.1.1"), Value: 该 IP 下该 Key 的所有客户端列表
         Map<String, List<HostClient>> ipGroupedClients = new HashMap<>();
 
         for (HostClient hostClient : availableHostClient) {
             String accessCode = hostClient.getKey() != null ? hostClient.getKey().getName() : "Unknown";
-            String ip = hostClient.getIP(); // 使用 HostClient 现有的 getIP() 方法
-
-            // 组合键：确保只有 IP 和 Key 都相同才分到一组
+            String ip = hostClient.getIP();
             String compositeKey = accessCode + "::" + ip;
-
             ipGroupedClients.computeIfAbsent(compositeKey, k -> new ArrayList<>()).add(hostClient);
         }
 
-        // 缓存地理位置信息的逻辑保持不变
         for (HostClient hostClient : availableHostClient) {
             if (hostClient.getCachedLocation() == null || hostClient.getCachedISP() == null) {
                 String ip = hostClient.getHostServerHook().getInetAddress().getHostAddress();
@@ -397,35 +400,32 @@ public class ConsoleManager {
             }
         }
 
-        String[] headers = ServerLogger.getMessage("consoleManager.headers.list").split("\\|");
+        // 修改表头逻辑：从 ServerLogger 获取原始表头，然后手动插入 "Port" 列
+        String rawHeaders = ServerLogger.getMessage("consoleManager.headers.list");
+        String[] originalHeaders = rawHeaders.split("\\|");
+
+        // 创建新的表头列表
+        List<String> headerList = new ArrayList<>(Arrays.asList(originalHeaders));
+        // 假设原始顺序为：IP | AccessCode | Location | ISP | Clients
+        // 我们在 HostClient 中是在第 4 位 (索引从0开始) 插入的 Port (在 ISP 之后)
+        // Header 对应位置应该是 Index 4
+        if (headerList.size() >= 4) {
+            headerList.add(4, "Port");
+        } else {
+            headerList.add("Port"); // 兜底
+        }
+        String[] headers = headerList.toArray(new String[0]);
+
         List<String[]> rows = new ArrayList<>();
 
-        // 【修复 2】: 遍历分组后的 Map
         for (List<HostClient> group : ipGroupedClients.values()) {
             if (group.isEmpty()) continue;
-
-            // 取该组的第一个作为代表用于显示静态信息
             HostClient representative = group.get(0);
-
-            // 计算当前 IP 下的具体连接数
             int countInThisIp = group.size();
-
-            // 将该组的所有客户端传进去（用于统计 TCP/UDP 连接数）
-            // 注意：这里需要修改 HostClient 的方法签名，直接传 int 类型的 count
             rows.add(representative.formatAsTableRow(countInThisIp, true, group));
         }
 
-        // 按照 Access Code 排序一下，让显示更整齐
-        rows.sort((r1, r2) -> r1[1].compareTo(r2[1]));
-
-        printAsciiTable(headers, rows);
-    }
-
-    public static void printClientRegistrationTable(String accessCode, String ip, String location, String isp) {
-        String[] headers = ServerLogger.getMessage("consoleManager.headers.registration").split("\\|");
-        String[] data = {accessCode, ip, location, isp};
-        List<String[]> rows = new ArrayList<>();
-        rows.add(data);
+        rows.sort(Comparator.comparing(r -> r[1]));
         printAsciiTable(headers, rows);
     }
 
@@ -488,6 +488,7 @@ public class ConsoleManager {
         }
     }
 
+    // 【核心修复 1】: handleLookupCommand (key lp)
     private static void handleLookupCommand(List<String> params) {
         if (params.size() != 2) {
             myConsole.warn(COMMAND_SOURCE.get(), "Usage: key lp <name>");
@@ -495,11 +496,22 @@ public class ConsoleManager {
         }
         String name = params.get(1);
         try {
+            // 尝试正常获取 (如果 Key 正常，这里会返回对象)
             SequenceKey sequenceKey = getKeyFromDB(name);
             if (sequenceKey != null) {
                 outputSingleKeyAsTable(sequenceKey);
             } else {
                 ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFound");
+            }
+        } catch (OutDatedKeyException | UnRecognizedKeyException | NoMoreNetworkFlowException e) {
+            // 捕获异常：说明远程 NKM 拒绝了该 Key (409/403)
+            // 尝试从 Sync 缓存中获取最后已知状态
+            SequenceKey cached = SequenceKey.getKeyCacheSnapshot().get(name);
+            if (cached != null) {
+                outputSingleKeyAsTable(cached);
+                ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.keyInfo.cachedDisplay", e.getMessage());
+            } else {
+                ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyInfo.queryFailed", e.getMessage());
             }
         } catch (PortOccupiedException | NoMorePortException e) {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyError", e.getMessage());
@@ -538,6 +550,7 @@ public class ConsoleManager {
         }
     }
 
+    // 【核心修复 2】: handleSetCommand
     private static void handleSetCommand(List<String> params) {
         if (params.size() < 2) {
             myConsole.warn(COMMAND_SOURCE.get(), "Usage: key set <name> [b=<balance>] [r=<rate>] [p=<outPort>] [t=<expireTime>] [w=<webHTML>]");
@@ -547,15 +560,15 @@ public class ConsoleManager {
 
         // 检查是否正在使用远程 Provider，且该 Key 是否存在于远程缓存中
         if (SequenceKey.PROVIDER instanceof RemoteKeyProvider) {
-            // 获取当前的远程 Key 缓存快照
             Map<String, SequenceKey> remoteCache = SequenceKey.getKeyCacheSnapshot();
-            // 如果缓存中包含该 Key，说明它是远程下发的，禁止修改
             if (remoteCache.containsKey(name)) {
                 ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.error.remoteKeyModification");
                 return;
             }
         }
 
+        // isKeyExistsByName 只检查 Cache，对于远程无效 Key 可能会返回 true (Cache中) 或 false (未知)
+        // 但这里为了安全，还是保留检查
         if (!isKeyExistsByName(name)) {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFoundSpecific", name);
             return;
@@ -580,6 +593,11 @@ public class ConsoleManager {
                     return;
                 }
             }
+        } catch (OutDatedKeyException | UnRecognizedKeyException | NoMoreNetworkFlowException e) {
+            // 如果是在 set 命令中抛出，说明该 Key 已失效且当前无活跃连接
+            // 且因为是远程 Provider (否则 Local Provider 不会抛异常)，所以我们本就不该修改它
+            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.error.keyInvalidForSet", e.getMessage());
+            return;
         } catch (PortOccupiedException | NoMorePortException e) {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyError", e.getMessage());
             return;
@@ -681,7 +699,6 @@ public class ConsoleManager {
         }
         String name = params.get(1);
 
-        // 如果是 RemoteKeyProvider，检查缓存；如果是 Local，isKeyExistsByName 已包含检查
         if (isKeyExistsByName(name)) {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.error.keyAlreadyExists");
             return;
@@ -735,7 +752,6 @@ public class ConsoleManager {
     private static void listAllKeys() {
         Map<String, KeyListDTO> keyMap = new HashMap<>();
 
-        // 1. 获取本地数据库中的 Key (默认为 L)
         String sql = "SELECT name, balance, expireTime, port, rate, isEnable, enableWebHTML FROM sk";
         try (var conn = getConnection();
              var stmt = conn.prepareStatement(sql);
@@ -760,7 +776,6 @@ public class ConsoleManager {
             return;
         }
 
-        // 2. 如果是 RemoteProvider，获取缓存中的 Key (标记为 R)
         if (SequenceKey.PROVIDER instanceof RemoteKeyProvider) {
             Map<String, SequenceKey> cache = SequenceKey.getKeyCacheSnapshot();
             for (SequenceKey k : cache.values()) {
@@ -773,7 +788,6 @@ public class ConsoleManager {
             return;
         }
 
-        // 3. 排序
         List<KeyListDTO> sortedList = new ArrayList<>(keyMap.values());
         sortedList.sort((k1, k2) -> {
             boolean isR1 = k1.sourceTag.contains("(R)");
@@ -783,7 +797,6 @@ public class ConsoleManager {
             return k1.name.compareToIgnoreCase(k2.name);
         });
 
-        // 4. 构建表格
         List<String[]> rows = new ArrayList<>();
         for (KeyListDTO dto : sortedList) {
             int clientNum = findKeyClientNum(dto.name);
@@ -930,14 +943,8 @@ public class ConsoleManager {
             double balance = sequenceKey.getBalance();
             String expireTime = sequenceKey.getExpireTime();
             String portStr = sequenceKey.getPort() == -1 ? "Dynamic" : (sequenceKey.getDyStart() != sequenceKey.getDyEnd() ? sequenceKey.getDyStart() + "-" + sequenceKey.getDyEnd() : String.valueOf(sequenceKey.getDyStart()));
-            // 如果能直接访问 SequenceKey.port 字段，可以直接用
             try {
-                // 利用同包访问权限
-                // 如果 port 字段在 SequenceKey 中被定义为 protected
-                // 这里其实访问不了 SequenceKey 实例的 protected 字段，除非 SequenceKey 和 ConsoleManager 在同一个包
-                // 假设它们都在 neoproxy.neoproxyserver.core.management 包下，可以直接访问
-                // portStr = sequenceKey.port;
-                // 为了保险，我们通过 getter 或者推算
+                // 尝试访问受保护字段 (如果在同一包下)
             } catch (Exception ignored) {
             }
 
@@ -1012,7 +1019,6 @@ public class ConsoleManager {
         String process(java.sql.ResultSet rs) throws java.sql.SQLException;
     }
 
-    // DTO for listAllKeys
     private static class KeyListDTO {
         String name;
         double balance;

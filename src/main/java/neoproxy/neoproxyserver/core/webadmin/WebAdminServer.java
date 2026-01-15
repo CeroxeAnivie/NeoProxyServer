@@ -559,7 +559,10 @@ public class WebAdminServer extends NanoWSD {
             String text = message.getTextPayload().trim();
             if (text.equalsIgnoreCase("PING") || text.equalsIgnoreCase("P")) return;
 
-            Debugger.debugOperation("WebAdmin Command: " + text);
+            // Only log if it is NOT a polling command
+            if (!text.startsWith("#GET_DASHBOARD") && !text.startsWith("#GET_PERFORMANCE") && !text.startsWith("#GET_PORTS")) {
+                Debugger.debugOperation("WebAdmin Command: " + text);
+            }
 
             GLOBAL_LOCK.lock();
             try {

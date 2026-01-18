@@ -234,7 +234,7 @@ public class NeoProxyServer {
                         client.setSoTimeout(1000);
 
                         byte[] headerBytes = new byte[8];
-                        int readLen = 0;
+                        int readLen;
                         try {
                             int b = pbis.read();
                             if (b == -1) {

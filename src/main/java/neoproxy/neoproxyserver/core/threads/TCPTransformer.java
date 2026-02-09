@@ -10,7 +10,6 @@ import neoproxy.neoproxyserver.core.ServerLogger;
 import neoproxy.neoproxyserver.core.exceptions.IllegalWebSiteException;
 import neoproxy.neoproxyserver.core.exceptions.NoMoreNetworkFlowException;
 
-import java.io.BufferedOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
@@ -28,7 +27,7 @@ import static neoproxy.neoproxyserver.core.InternetOperator.*;
 public class TCPTransformer {
 
     public static int TELL_BALANCE_MIB = 10;
-    public static int BUFFER_LEN = 8192;
+    public static int BUFFER_LEN = 65535;
     public static String CUSTOM_BLOCKING_MESSAGE = "如有疑问，请联系您的系统管理员。";
 
     private static String FORBIDDEN_HTML_TEMPLATE;
@@ -141,7 +140,8 @@ public class TCPTransformer {
         }
 
         if (isHtml && !isAttachment) {
-            try (BufferedOutputStream out = new BufferedOutputStream(clientSocket.getOutputStream())) {
+            // 【优化】移除 BufferedOutputStream
+            try (var out = clientSocket.getOutputStream()) {
                 String template = (FORBIDDEN_HTML_TEMPLATE != null) ? FORBIDDEN_HTML_TEMPLATE : "<h1>403 Forbidden</h1><p>{{CUSTOM_MESSAGE}}</p>";
                 String message = CUSTOM_BLOCKING_MESSAGE != null ? CUSTOM_BLOCKING_MESSAGE : "";
                 String finalHtml = template.replaceAll("\\{\\{\\s*CUSTOM_MESSAGE\\s*\\}\\}", Matcher.quoteReplacement(message));
@@ -158,7 +158,7 @@ public class TCPTransformer {
 
                 out.write(httpResponseHeader.getBytes(StandardCharsets.UTF_8));
                 out.write(errorHtmlBytes);
-                out.flush();
+                out.flush(); // 这里是最后一次发送，可以 flush 一下确保发出
 
                 clientSocket.shutdownOutput();
                 Thread.sleep(800);
@@ -263,7 +263,8 @@ public class TCPTransformer {
     }
 
     private void hostToClient(double[] aTenMibSize) {
-        try (BufferedOutputStream bufferedOutputStream = new BufferedOutputStream(client.getOutputStream())) {
+        // 【优化】直接使用 Socket 输出流，移除 BufferedOutputStream
+        try (var outputStream = client.getOutputStream()) {
             RateLimiter limiter = hostClient.getGlobalRateLimiter();
 
             byte[] data;
@@ -274,13 +275,15 @@ public class TCPTransformer {
 
                 if (!isHtmlResponseChecked && !hostClient.getKey().isHTMLEnabled()) {
                     isHtmlResponseChecked = true;
+                    // 注意：这里的 checkAndBlockHtmlResponse 逻辑保持不变
                     if (checkAndBlockHtmlResponse(data, client, hostReply.host().getRemoteSocketAddress().toString(), hostClient)) {
                         return;
                     }
                 }
 
-                bufferedOutputStream.write(data);
-                bufferedOutputStream.flush();
+                // 【优化】直接写入 Socket，减少用户态内存拷贝
+                outputStream.write(data);
+                // outputStream.flush(); // SocketOutputStream 自动处理，不需要频繁显式 flush
 
                 hostClient.getKey().mineMib("TCP-Transformer:H->C", SizeCalculator.byteToMib(data.length));
                 tellRestBalance(hostClient, aTenMibSize, data.length, hostClient.getLangData());

@@ -8,7 +8,6 @@ import neoproxy.neoproxyserver.core.management.provider.KeyDataProvider;
 import neoproxy.neoproxyserver.core.management.provider.LocalKeyProvider;
 import neoproxy.neoproxyserver.core.management.provider.RemoteKeyProvider;
 
-import java.sql.*;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -19,14 +18,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 
-import static neoproxy.neoproxyserver.core.Debugger.debugOperation;
-
 public class SequenceKey {
     public static final int DYNAMIC_PORT = -1;
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy/MM/dd-HH:mm");
-    private static final String DB_URL = "jdbc:h2:./sk";
-    private static final String DB_USER = "sa";
-    private static final String DB_PASSWORD = "";
 
     private static final Map<String, SequenceKey> keyCache = new ConcurrentHashMap<>();
 
@@ -62,6 +56,11 @@ public class SequenceKey {
         updateExpireTimestamp(expireTime);
     }
 
+    // [新增] 获取当前的 Provider 实例，供 UpdateManager 调用
+    public static KeyDataProvider getKeyDataProvider() {
+        return PROVIDER;
+    }
+
     public static Map<String, SequenceKey> getKeyCacheSnapshot() {
         return new HashMap<>(keyCache);
     }
@@ -72,7 +71,6 @@ public class SequenceKey {
             try {
                 PROVIDER.shutdown();
             } catch (Exception e) {
-                // Log: Error shutting down provider during reload: {0}
                 ServerLogger.error("sequenceKey.providerShutdownError", e, e.getMessage());
                 Debugger.debugOperation(e);
             }
@@ -81,8 +79,7 @@ public class SequenceKey {
         keyCache.clear();
         initProvider();
 
-        String type = (PROVIDER instanceof RemoteKeyProvider) ? "REMOTE (NKM)" : "LOCAL (H2)";
-        // Log: Provider reloaded. Current type: {0}
+        String type = (PROVIDER instanceof RemoteKeyProvider) ? "REMOTE (NKM)" : "LOCAL (SQLite)";
         ServerLogger.info("sequenceKey.providerReloaded", type);
         Debugger.debugOperation("Provider reloaded. Type: " + type);
     }
@@ -97,49 +94,15 @@ public class SequenceKey {
                     ConfigOperator.NODE_ID
             );
         } else {
-            Debugger.debugOperation("Using LocalKeyProvider (H2 Database).");
+            Debugger.debugOperation("Using LocalKeyProvider (SQLite Database).");
             PROVIDER = new LocalKeyProvider();
         }
         PROVIDER.init();
     }
 
     public static void initKeyDatabase() {
-        Debugger.debugOperation("Initializing Key Database (sk table)...");
-        try {
-            try (Connection conn = getConnection()) {
-                String createTableSql = """
-                        CREATE TABLE IF NOT EXISTS sk (
-                            name VARCHAR(50) PRIMARY KEY,
-                            balance DOUBLE NOT NULL,
-                            expireTime VARCHAR(50) NOT NULL,
-                            port VARCHAR(50) NOT NULL, 
-                            rate DOUBLE NOT NULL,
-                            isEnable BOOLEAN DEFAULT TRUE NOT NULL,
-                            enableWebHTML BOOLEAN DEFAULT FALSE NOT NULL
-                        )
-                        """;
-                try (PreparedStatement stmt = conn.prepareStatement(createTableSql)) {
-                    stmt.execute();
-                    Debugger.debugOperation("Table 'sk' check/creation completed.");
-                }
-                try (Statement stmt = conn.createStatement()) {
-                    try {
-                        stmt.execute("ALTER TABLE sk ADD COLUMN IF NOT EXISTS isEnable BOOLEAN DEFAULT TRUE");
-                    } catch (SQLException ignored) {
-                    }
-                    try {
-                        stmt.execute("ALTER TABLE sk ADD COLUMN IF NOT EXISTS enableWebHTML BOOLEAN DEFAULT FALSE");
-                    } catch (SQLException ignored) {
-                    }
-                }
-            }
-        } catch (Exception e) {
-            debugOperation(e);
-        }
-    }
-
-    static Connection getConnection() throws SQLException {
-        return DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+        // [Refactor] 委托给 Database 类处理
+        Database.init();
     }
 
     // 必须添加 throws 声明，将异常向上传递给调用者 (例如 Server 握手层)
@@ -149,7 +112,10 @@ public class SequenceKey {
         if (name == null) return null;
         if (PROVIDER instanceof LocalKeyProvider) {
             // 本地模式：获取对象后，由上层调用者调用 isOutOfDate() 检查
-            return keyCache.get(name);
+            // 注意：LocalKeyProvider 内部通常会调用 loadKeyFromDatabase
+            SequenceKey cached = keyCache.get(name);
+            if (cached != null) return cached;
+            return loadKeyFromDatabase(name, false);
         }
 
         // 远程模式：getKey 内部直接抛出异常
@@ -177,28 +143,11 @@ public class SequenceKey {
 
     public static SequenceKey loadKeyFromDatabase(String name, boolean onlyEnabled) {
         Debugger.debugOperation("Loading key directly from DB: " + name + " (onlyEnabled=" + onlyEnabled + ")");
-        try {
-            String sql = "SELECT * FROM sk WHERE name = ?" + (onlyEnabled ? " AND isEnable = TRUE" : "");
-            try (Connection conn = getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                stmt.setString(1, name);
-                try (ResultSet rs = stmt.executeQuery()) {
-                    if (rs.next()) {
-                        Debugger.debugOperation("Key found in DB: " + name);
-                        return new SequenceKey(
-                                rs.getString("name"),
-                                rs.getDouble("balance"),
-                                rs.getString("expireTime"),
-                                rs.getString("port"),
-                                rs.getDouble("rate"),
-                                rs.getBoolean("isEnable"),
-                                rs.getBoolean("enableWebHTML")
-                        );
-                    }
-                }
-            }
-        } catch (Exception e) {
-            debugOperation(e);
+        // [Refactor] 调用 Database
+        SequenceKey key = Database.getKey(name, onlyEnabled);
+        if (key != null) {
+            Debugger.debugOperation("Key found in DB: " + name);
+            return key;
         }
         Debugger.debugOperation("Key not found in DB: " + name);
         return null;
@@ -206,26 +155,10 @@ public class SequenceKey {
 
     public static boolean saveToDB(SequenceKey sequenceKey) {
         if (sequenceKey == null) return false;
-        // Debugger.debugOperation("Saving key to DB: " + sequenceKey.getName());
         sequenceKey.lock.lock();
         try {
-            String sql = "MERGE INTO sk KEY(name) VALUES (?, ?, ?, ?, ?, ?, ?)";
-            try (Connection conn = getConnection();
-                 PreparedStatement stmt = conn.prepareStatement(sql)) {
-                stmt.setString(1, sequenceKey.getName());
-                stmt.setDouble(2, sequenceKey.getBalanceNoLock());
-                stmt.setString(3, sequenceKey.getExpireTime());
-                stmt.setString(4, sequenceKey.port);
-                stmt.setDouble(5, sequenceKey.getRateNoLock());
-                stmt.setBoolean(6, sequenceKey.isEnable);
-                stmt.setBoolean(7, sequenceKey.enableWebHTML);
-                boolean result = stmt.executeUpdate() > 0;
-                // Debugger.debugOperation("Save result for " + sequenceKey.getName() + ": " + result);
-                return result;
-            } catch (Exception e) {
-                debugOperation(e);
-                return false;
-            }
+            // [Refactor] 调用 Database
+            return Database.saveKey(sequenceKey);
         } finally {
             sequenceKey.lock.unlock();
         }
@@ -234,83 +167,45 @@ public class SequenceKey {
     public static boolean createNewKey(String name, double balance, String expireTime, String portStr, double rate) {
         Debugger.debugOperation("Creating new key: " + name + " Port: " + portStr);
         if (name == null) return false;
-        try (Connection conn = getConnection();
-             PreparedStatement stmt = conn.prepareStatement(
-                     "INSERT INTO sk (name, balance, expireTime, port, rate, isEnable, enableWebHTML) VALUES (?, ?, ?, ?, ?, TRUE, FALSE)")) {
-            stmt.setString(1, name);
-            stmt.setDouble(2, balance);
-            stmt.setString(3, expireTime);
-            stmt.setString(4, portStr);
-            stmt.setDouble(5, rate);
-            return stmt.executeUpdate() > 0;
-        } catch (Exception e) {
-            debugOperation(e);
-            return false;
-        }
+        // [Refactor] 调用 Database
+        return Database.createKey(name, balance, expireTime, portStr, rate);
     }
 
     public static boolean removeKey(String name) {
         Debugger.debugOperation("Removing key: " + name);
         keyCache.remove(name);
-        try (Connection conn = getConnection();
-             PreparedStatement stmt = conn.prepareStatement("DELETE FROM sk WHERE name = ?")) {
-            stmt.setString(1, name);
-            return stmt.executeUpdate() > 0;
-        } catch (Exception e) {
-            debugOperation(e);
-            return false;
-        }
+        // [Refactor] 调用 Database
+        return Database.deleteKey(name);
     }
 
     public static boolean isKeyExistsByName(String name) {
         if (keyCache.containsKey(name)) return true;
-        try (Connection conn = getConnection();
-             PreparedStatement stmt = conn.prepareStatement("SELECT 1 FROM sk WHERE name = ? LIMIT 1")) {
-            stmt.setString(1, name);
-            ResultSet rs = stmt.executeQuery();
-            return rs.next();
-        } catch (Exception e) {
-            return false;
-        }
+        // [Refactor] 调用 Database
+        return Database.exists(name);
     }
 
     public static void updateBalanceInDB(String name, double mib) {
-        // Debugger.debugOperation("Updating balance in DB for: " + name + " decreasing by " + mib);
-        try (Connection conn = getConnection();
-             PreparedStatement stmt = conn.prepareStatement("UPDATE sk SET balance = balance - ? WHERE name = ?")) {
-            stmt.setDouble(1, mib);
-            stmt.setString(2, name);
-            stmt.executeUpdate();
-        } catch (Exception e) {
-            debugOperation(e);
-        }
+        // [Refactor] 调用 Database
+        Database.updateBalance(name, mib);
     }
 
     public static boolean enableKey(String name) {
         Debugger.debugOperation("Enabling key: " + name);
         SequenceKey key = keyCache.get(name);
         if (key != null) key.setEnable(true);
-        return updateKeyStatusInDB(name, true);
+        // [Refactor] 调用 Database
+        return Database.updateStatus(name, true);
     }
 
     public static boolean disableKey(String name) {
         Debugger.debugOperation("Disabling key: " + name);
         SequenceKey key = keyCache.get(name);
         if (key != null) key.setEnable(false);
-        return updateKeyStatusInDB(name, false);
+        // [Refactor] 调用 Database
+        return Database.updateStatus(name, false);
     }
 
-    private static boolean updateKeyStatusInDB(String name, boolean status) {
-        try (Connection conn = getConnection();
-             PreparedStatement stmt = conn.prepareStatement("UPDATE sk SET isEnable = ? WHERE name = ?")) {
-            stmt.setBoolean(1, status);
-            stmt.setString(2, name);
-            return stmt.executeUpdate() > 0;
-        } catch (Exception e) {
-            debugOperation(e);
-            return false;
-        }
-    }
+    // ================== 下方业务逻辑保持不变 ==================
 
     public static boolean isOutOfDate(String endTime) {
         try {
@@ -350,23 +245,19 @@ public class SequenceKey {
         try {
             if (isOutOfDate()) {
                 Debugger.debugOperation("Key expired during flow mining: " + name);
-                // EXCEPTION KEY: exception.keyOutOfDateForFlow
                 NoMoreNetworkFlowException.throwException("SK-Manager", "exception.keyOutOfDateForFlow", name);
             }
             if (!isEnable) {
                 Debugger.debugOperation("Key disabled during flow mining: " + name);
-                // EXCEPTION KEY: exception.keyDisabled
                 NoMoreNetworkFlowException.throwException("SK-Manager", "exception.keyDisabled", name);
             }
 
             this.balance -= mib;
-            // Debugger.debugOperation("Mined " + mib + " MB from " + name + ". Remaining: " + this.balance);
 
             if (this.balance <= 0) {
                 if (PROVIDER instanceof LocalKeyProvider) {
                     this.balance = 0;
                     Debugger.debugOperation("Insufficient balance for: " + name);
-                    // EXCEPTION KEY: exception.insufficientBalance
                     NoMoreNetworkFlowException.throwException(sourceSubject, "exception.insufficientBalance", name);
                 }
             }
@@ -496,6 +387,16 @@ public class SequenceKey {
         lock.lock();
         try {
             this.enableWebHTML = enable;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    // 新增：获取原始端口字符串，供 Database 类使用
+    public String getPortStr() {
+        lock.lock();
+        try {
+            return port;
         } finally {
             lock.unlock();
         }

@@ -173,7 +173,10 @@ public final class HostClient implements Closeable {
                 payload.nodeId = ConfigOperator.NODE_ID;
                 payload.port = String.valueOf(this.outPort);
                 payload.timestamp = System.currentTimeMillis();
-                payload.currentConnections = this.activeTcpSockets.size();
+                payload.currentConnections = this.activeTcpSockets.size(); // 保持兼容旧字段
+
+                // [新增] 获取外部连接的详细字符串 (T:X U:X)
+                payload.connectionDetail = getExternalConnectionsStr();
 
                 boolean keepAlive = SequenceKey.PROVIDER.sendHeartbeat(payload);
 
@@ -415,6 +418,49 @@ public final class HostClient implements Closeable {
             neoproxy.neoproxyserver.core.management.SequenceKey.releaseKey(this.sequenceKey.getName());
         }
         Debugger.debugOperation("HostClient closed: " + getIP());
+    }
+
+    /**
+     * [修改] 获取外部连接详情字符串
+     * 变化：不再遍历 IP，而是直接统计该 HostClient 下的总连接数。
+     * 格式：(T:5 U:2) 或 (T:1)
+     * 目的：不在 NKM 列表中显示杂乱的 IP 地址，只显示负载情况。
+     */
+    public String getExternalConnectionsStr() {
+        // 1. 统计 TCP 总连接数 (直接获取 Set 大小)
+        int tcpCount = this.activeTcpSockets.size();
+
+        // 2. 统计 UDP 总连接数 (遍历全局列表筛选属于自己的)
+        int udpCount = 0;
+        try {
+            for (UDPTransformer udp : UDPTransformer.udpClientConnections) {
+                if (udp.getHostClient() == this && udp.isRunning()) {
+                    udpCount++;
+                }
+            }
+        } catch (Exception e) {
+            // 忽略并发遍历异常
+        }
+
+        // 如果没有连接，返回 None (NKM 端会处理为空白)
+        if (tcpCount == 0 && udpCount == 0) {
+            return "None";
+        }
+
+        // 3. 格式化输出 (只显示数量，不显示 IP)
+        StringBuilder sb = new StringBuilder();
+        boolean hasT = tcpCount > 0;
+        boolean hasU = udpCount > 0;
+
+        if (hasT && hasU) {
+            sb.append("(T:").append(tcpCount).append(" U:").append(udpCount).append(")");
+        } else if (hasT) {
+            sb.append("(T:").append(tcpCount).append(")");
+        } else if (hasU) {
+            sb.append("(U:").append(udpCount).append(")");
+        }
+
+        return sb.toString();
     }
 
     public SequenceKey getKey() {

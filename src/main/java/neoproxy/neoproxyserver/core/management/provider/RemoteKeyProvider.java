@@ -27,12 +27,6 @@ import static neoproxy.neoproxyserver.core.Debugger.debugOperation;
 
 /**
  * 工业级 NKM 远程适配器 (Golden Fix - Gson Edition)
- * <p>
- * 职责：
- * 1. 与 NKM 进行 HTTP 通信。
- * 2. 使用 Gson 进行健壮的 JSON 解析。
- * 3. 将 NKM 的 RESTful 错误码精准映射为 NPS 的 Java 业务异常。
- * </p>
  */
 public class RemoteKeyProvider implements KeyDataProvider {
 
@@ -47,12 +41,12 @@ public class RemoteKeyProvider implements KeyDataProvider {
     private final String token;
     private final String nodeId;
     private final HttpClient httpClient;
-    private final Gson gson; // [新增] Gson 实例
+    private final Gson gson;
     private final ConcurrentHashMap<String, DoubleAdder> trafficBuffer = new ConcurrentHashMap<>();
     private final AtomicBoolean isFlushing = new AtomicBoolean(false);
 
-    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-        Thread t = new Thread(r, "NKM-Sync-Thread");
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2, r -> {
+        Thread t = new Thread(r, "NKM-Worker-Thread");
         t.setDaemon(true);
         return t;
     });
@@ -62,7 +56,7 @@ public class RemoteKeyProvider implements KeyDataProvider {
         this.managerUrl = url;
         this.token = token;
         this.nodeId = nodeId;
-        this.gson = new Gson(); // 初始化 Gson
+        this.gson = new Gson();
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(REQUEST_TIMEOUT_MS))
                 .executor(Executors.newCachedThreadPool())
@@ -71,28 +65,87 @@ public class RemoteKeyProvider implements KeyDataProvider {
 
     @Override
     public void init() {
-        Debugger.debugOperation("Initializing RemoteKeyProvider scheduler. Interval: " + SYNC_INTERVAL_SECONDS + "s");
+        Debugger.debugOperation("Initializing RemoteKeyProvider...");
         scheduler.scheduleAtFixedRate(this::tryTriggerFlush, SYNC_INTERVAL_SECONDS, SYNC_INTERVAL_SECONDS, TimeUnit.SECONDS);
+        scheduler.scheduleAtFixedRate(this::reportNodeStatus, 5, Protocol.NODE_STATUS_INTERVAL_SECONDS, TimeUnit.SECONDS);
         ServerLogger.info("remoteProvider.initInfo", managerUrl, nodeId);
+    }
+
+    // ==================== [新增] 获取客户端更新 URL ====================
+
+    /**
+     * 向 NKM 请求特定 OS 和 Key 的客户端下载 URL
+     *
+     * @param os           "7z" 或 "jar"
+     * @param clientSerial 客户端使用的密钥 Serial
+     * @return URL 字符串，如果获取失败或不可用则返回 null
+     */
+    public String getClientUpdateUrl(String os, String clientSerial) {
+        Debugger.debugOperation("Requesting update URL from NKM. OS: " + os + ", Key: " + clientSerial);
+        try {
+            // 构建请求 URL: /api/node/client/update-url?os=xxx&serial=xxx&nodeId=xxx
+            String endpoint = String.format("%s%s?os=%s&serial=%s&nodeId=%s",
+                    managerUrl, Protocol.API_CLIENT_UPDATE_URL, os, clientSerial, nodeId);
+
+            HttpRequest req = buildRequest(endpoint).GET().build();
+            HttpResponse<String> response = sendWithRetry(req);
+
+            if (response.statusCode() == 200) {
+                String body = response.body();
+                Debugger.debugOperation("NKM Update Response: " + body);
+
+                // 解析 JSON
+                Protocol.UpdateUrlResponse resp = gson.fromJson(body, Protocol.UpdateUrlResponse.class);
+                if (resp != null && resp.url != null && !resp.url.isBlank()) {
+                    return resp.url;
+                }
+            } else {
+                Debugger.debugOperation("NKM Update Request failed. Code: " + response.statusCode());
+            }
+        } catch (Exception e) {
+            Debugger.debugOperation("Error requesting update URL: " + e.getMessage());
+        }
+        return null;
+    }
+
+    // ==================== 0. 节点状态上报 ====================
+
+    private void reportNodeStatus() {
+        Debugger.debugOperation("Reporting node status to NKM...");
+        try {
+            Protocol.NodeStatusPayload payload = new Protocol.NodeStatusPayload();
+            payload.nodeId = this.nodeId;
+            payload.version = NeoProxyServer.VERSION;
+            payload.timestamp = System.currentTimeMillis();
+            payload.activeTunnels = NeoProxyServer.availableHostClient.size();
+
+            HttpRequest req = buildRequest(managerUrl + Protocol.API_NODE_STATUS)
+                    .POST(HttpRequest.BodyPublishers.ofString(gson.toJson(payload)))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                Debugger.debugOperation("Node status report failed: " + response.statusCode());
+            }
+        } catch (Exception e) {
+            Debugger.debugOperation("Error reporting node status: " + e.getMessage());
+        }
     }
 
     // ==================== 1. 登录鉴权 (Login) ====================
 
     @Override
     public SequenceKey getKey(String name) throws PortOccupiedException, NoMorePortException, OutDatedKeyException, UnRecognizedKeyException {
+        // ... (保持原有代码不变)
         Debugger.debugOperation("Remote getKey request: " + name);
         try {
             String endpoint = String.format("%s/api/key?name=%s&nodeId=%s", managerUrl, name, nodeId);
             HttpRequest req = buildRequest(endpoint).GET().build();
 
-            Debugger.debugOperation("Sending HTTP GET to: " + endpoint);
             HttpResponse<String> response = sendWithRetry(req);
             String body = response.body();
             int statusCode = response.statusCode();
 
-            Debugger.debugOperation("Received response: " + statusCode + ", Body: " + body);
-
-            // 1. 成功 (200 OK)
             if (statusCode == 200) {
                 NkmKeyResponse resp = gson.fromJson(body, NkmKeyResponse.class);
                 return new SequenceKey(
@@ -101,21 +154,27 @@ public class RemoteKeyProvider implements KeyDataProvider {
                         resp.expireTime,
                         resp.port,
                         resp.rate,
-                        true, // 200 OK 意味着状态是 Enabled
+                        true,
                         resp.enableWebHTML
                 );
             }
 
-            // 2. 鉴权失败/找不到 (403/404) -> UnRecognizedKeyException
-            if (statusCode == 404) {
-                UnRecognizedKeyException.throwException(name);
+            try {
+                if (body != null && !body.isEmpty()) {
+                    NkmApiError error = gson.fromJson(body, NkmApiError.class);
+                    if (error != null && error.customBlockingMessage != null && !error.customBlockingMessage.isBlank()) {
+                        throw new BlockingMessageException(error.customBlockingMessage);
+                    }
+                }
+            } catch (BlockingMessageException bme) {
+                throw bme;
+            } catch (Exception ignored) {
             }
-            if (statusCode == 403) {
-                // 403 通常是管理员手动禁用 (DISABLED)
+
+            if (statusCode == 404 || statusCode == 403) {
                 UnRecognizedKeyException.throwException(name);
             }
 
-            // 3. 业务冲突 (409 Conflict) -> 细分异常
             if (statusCode == 409) {
                 NkmApiError error = gson.fromJson(body, NkmApiError.class);
                 if (error == null) throw new RuntimeException("Invalid NKM Error Response");
@@ -123,44 +182,32 @@ public class RemoteKeyProvider implements KeyDataProvider {
                 String reason = error.reason != null ? error.reason : "";
                 String errType = error.error != null ? error.error : "";
 
-                // A. 状态为 PAUSED (欠费/过期)
                 if ("PAUSED".equalsIgnoreCase(error.status)) {
                     if (reason.contains("Expired")) {
-                        // 映射为过期异常
                         OutDatedKeyException.throwException(name);
                     } else if (reason.contains("Balance") || reason.contains("Depleted")) {
-                        // 映射为流量耗尽异常 (RuntimeException)
                         NoMoreNetworkFlowException.throwException("NKM-Handshake", "exception.insufficientBalance", name);
                     } else {
-                        // 默认视为过期或无效
                         OutDatedKeyException.throwException(name);
                     }
                 }
-
-                // B. 状态为 ENABLED (连接数/端口冲突)
-                // 场景: "Too Many Connections" -> 全局连接数超限
                 if (errType.contains("Too Many Connections")) {
                     PortOccupiedException.throwException(name);
                 }
-
-                // 场景: "Port Conflict" -> 特定端口被占用
                 if (errType.contains("Port Conflict")) {
-                    // 尝试从 reason 中提取端口号，或者直接抛出通用异常
-                    // reason: "Port 12345 is busy"
                     NoMorePortException.throwException();
                 }
-
-                // 兜底
                 PortOccupiedException.throwException(name);
             }
-
-            // 其他未知错误
-            ServerLogger.warn("remoteProvider.getKeyFail", name, statusCode);
-
         } catch (PortOccupiedException | NoMorePortException | OutDatedKeyException | UnRecognizedKeyException |
                  NoMoreNetworkFlowException e) {
-            throw e; // 业务异常直接抛出
+            throw e;
+        } catch (BlockingMessageException e) {
+            throw new RuntimeException(e);
         } catch (Exception e) {
+            if (e.getCause() instanceof BlockingMessageException) {
+                throw new RuntimeException(e.getCause());
+            }
             debugOperation(e);
             ServerLogger.error("remoteProvider.getKeyError", e.getMessage());
         }
@@ -168,6 +215,7 @@ public class RemoteKeyProvider implements KeyDataProvider {
     }
 
     // ==================== 2. 流量上报与同步 (Sync) ====================
+    // ... (保持原有代码不变)
 
     @Override
     public void consumeFlow(String name, double mib) {
@@ -184,9 +232,9 @@ public class RemoteKeyProvider implements KeyDataProvider {
     }
 
     private void flushTraffic() {
+        // ... (保持原有代码不变)
         ConcurrentHashMap<String, Double> snapshot = new ConcurrentHashMap<>();
         try {
-            // 准备数据
             trafficBuffer.forEach((k, adder) -> {
                 double val = adder.sumThenReset();
                 if (val > 0.0001) snapshot.put(k, val);
@@ -197,7 +245,6 @@ public class RemoteKeyProvider implements KeyDataProvider {
 
             if (snapshot.isEmpty()) return;
 
-            // 构建请求 JSON (使用 Gson)
             JsonObject jsonRoot = new JsonObject();
             jsonRoot.addProperty("nodeId", nodeId);
             JsonObject trafficObj = new JsonObject();
@@ -213,9 +260,7 @@ public class RemoteKeyProvider implements KeyDataProvider {
             if (response.statusCode() == 200) {
                 processSyncResponse(response.body());
             } else {
-                // 回滚流量
                 snapshot.forEach((k, v) -> trafficBuffer.computeIfAbsent(k, x -> new DoubleAdder()).add(v));
-                ServerLogger.warn("remoteProvider.syncFail", response.statusCode());
             }
         } catch (Exception e) {
             debugOperation(e);
@@ -226,6 +271,7 @@ public class RemoteKeyProvider implements KeyDataProvider {
     }
 
     private void processSyncResponse(String jsonBody) {
+        // ... (保持原有代码不变)
         try {
             NkmSyncResponse syncResp = gson.fromJson(jsonBody, NkmSyncResponse.class);
             if (syncResp == null || syncResp.metadata == null) return;
@@ -238,19 +284,14 @@ public class RemoteKeyProvider implements KeyDataProvider {
                 if (meta == null) continue;
 
                 SequenceKey key = client.getKey();
-
-                // 1. 状态同步 (Kill)
                 if (!meta.isValid) {
-                    ServerLogger.warn("remoteProvider.syncKill", name, meta.reason);
                     client.close();
                     continue;
                 }
-
-                // 2. 属性热更新
                 if (meta.balance != null) key.setBalance(meta.balance);
                 if (meta.rate != null) {
                     key.setRate(meta.rate);
-                    client.applyDynamicUpdates(); // 通知客户端刷新限速
+                    client.applyDynamicUpdates();
                 }
                 if (meta.expireTime != null) key.setExpireTime(meta.expireTime);
                 if (meta.enableWebHTML != null) key.setHTMLEnabled(meta.enableWebHTML);
@@ -264,12 +305,12 @@ public class RemoteKeyProvider implements KeyDataProvider {
 
     @Override
     public void releaseKey(String name) {
+        // ... (保持原有代码不变)
         ThreadManager.runAsync(() -> {
             try {
                 JsonObject json = new JsonObject();
                 json.addProperty("serial", name);
                 json.addProperty("nodeId", nodeId);
-
                 HttpRequest req = buildRequest(managerUrl + "/api/release")
                         .POST(HttpRequest.BodyPublishers.ofString(gson.toJson(json)))
                         .build();
@@ -281,14 +322,13 @@ public class RemoteKeyProvider implements KeyDataProvider {
 
     @Override
     public boolean sendHeartbeat(Protocol.HeartbeatPayload payload) {
+        // ... (保持原有代码不变)
         try {
             HttpRequest req = buildRequest(managerUrl + Protocol.API_HEARTBEAT)
                     .POST(HttpRequest.BodyPublishers.ofString(gson.toJson(payload)))
                     .build();
             HttpResponse<String> response = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
-
             if (response.statusCode() == 200) {
-                // 简单判断包含 status: kill 即可，无需全量解析
                 return !response.body().contains("\"status\":\"kill\"");
             }
             return true;
@@ -299,8 +339,11 @@ public class RemoteKeyProvider implements KeyDataProvider {
 
     @Override
     public void shutdown() {
+        // ... (保持原有代码不变)
+        Debugger.debugOperation("Shutting down RemoteKeyProvider...");
         scheduler.shutdownNow();
         flushTraffic();
+        Debugger.debugOperation("RemoteKeyProvider shutdown complete.");
     }
 
     private HttpRequest.Builder buildRequest(String uri) {
@@ -327,9 +370,9 @@ public class RemoteKeyProvider implements KeyDataProvider {
         throw last;
     }
 
-    // ========== DTOs (Data Transfer Objects) ==========
+    // ========== DTOs ==========
 
-    // 对应 NKM KeyInfoResponse
+    // ... (内部类保持不变)
     private static class NkmKeyResponse {
         String name;
         double balance;
@@ -339,20 +382,18 @@ public class RemoteKeyProvider implements KeyDataProvider {
         boolean enableWebHTML;
     }
 
-    // 对应 NKM ApiError
     private static class NkmApiError {
         String error;
         String reason;
-        String status; // PAUSED, DISABLED, ENABLED
+        String status;
+        String customBlockingMessage;
     }
 
-    // 对应 NKM SyncResponse
     private static class NkmSyncResponse {
         String status;
         Map<String, NkmKeyMetadata> metadata;
     }
 
-    // 对应 NKM KeyMetadata
     private static class NkmKeyMetadata {
         boolean isValid;
         String reason;

@@ -165,21 +165,40 @@ public class NeoProxyServer {
         Debugger.debugOperation("Entry: handleNewHostClient for IP: " + hostClient.getIP());
         ThreadManager.runAsync(() -> {
             try {
+                // 执行握手和合法性检查
                 NeoProxyServer.checkHostClientLegitimacyAndTellInfo(hostClient);
+                // 握手成功后，启动传输服务
                 NeoProxyServer.handleTransformerServiceWithNewThread(hostClient);
             } catch (IndexOutOfBoundsException | IOException | NoMorePortException | PortOccupiedException |
                      UnRecognizedKeyException | OutDatedKeyException e) {
-                // 如果异常冒泡到这里，说明 checkHostClientLegitimacyAndTellInfo 内没有处理
-                // 通常是 Local 模式或未预料的 IO 异常
+                // 这些是常规业务异常，记录日志并断开
                 Debugger.debugOperation("Handshake failed with exception: " + e.getClass().getSimpleName() + ": " + e.getMessage());
                 ServerLogger.sayHostClientDiscInfo(hostClient, "NeoProxyServer");
                 hostClient.close();
             } catch (UnSupportHostVersionException e) {
+                // 版本不支持
                 Debugger.debugOperation("Unsupported version detected for client: " + hostClient.getIP());
                 UpdateManager.handle(hostClient);
             } catch (SilentException ignore) {
-                // 已在 checkHostClientVersionAndKeyAndLang 中处理并通知了客户端，此处静默退出
+                // 静默异常（如IP封禁），不处理
             } catch (Exception e) {
+                // [重点修改] 捕获由 RemoteKeyProvider 抛出的包含 BlockingMessageException 的运行时异常
+                if (e instanceof RuntimeException && e.getCause() instanceof BlockingMessageException) {
+                    String msg = ((BlockingMessageException) e.getCause()).getCustomMessage();
+                    Debugger.debugOperation("Blocking client with message: " + msg);
+                    try {
+                        // 将 NKM 返回的自定义消息发送给 HostClient
+                        InternetOperator.sendStr(hostClient, msg);
+                        // 发送 exit 指令确保客户端知道要退出了
+                        InternetOperator.sendCommand(hostClient, "exit");
+                    } catch (Exception ignoreSend) {
+                        // 忽略发送失败
+                    }
+                    hostClient.close();
+                    return;
+                }
+
+                // 其他未知异常
                 Debugger.debugOperation(e);
                 hostClient.close();
             }
@@ -430,80 +449,69 @@ public class NeoProxyServer {
 
         if (hostClientInfo == null || hostClientInfo.isEmpty())
             UnSupportHostVersionException.throwException(hostClient.getIP(), "_NULL_");
+
         String[] info = hostClientInfo.split(";");
         if (info.length < 3 || info.length > 4)
             UnSupportHostVersionException.throwException(hostClient.getIP(), "_NULL_");
+
         LanguageData languageData = "zh".equals(info[0]) ? LanguageData.getChineseLanguage() : new LanguageData();
-        if (!availableVersions.contains(info[1])) {
-            InternetOperator.sendStr(hostClient, languageData.UNSUPPORTED_VERSION_MSG + availableVersions.getLast());
-            UnSupportHostVersionException.throwException(hostClient.getIP(), info[1]);
-        }
+
+        // [修改点1] 先记录版本是否支持，不要立即抛出异常
+        boolean isVersionSupported = availableVersions.contains(info[1]);
+        String clientVersion = info[1];
 
         SequenceKey currentSequenceKey = null;
         try {
-            // 这里会抛出 RemoteKeyProvider 的各种异常
+            // 这里会向 NKM 验证密钥合法性
             currentSequenceKey = SequenceKey.getEnabledKeyFromDB(info[2]);
         } catch (PortOccupiedException | NoMorePortException e) {
-            Debugger.debugOperation("Port occupied or connections full for key: " + info[2]);
             InternetOperator.sendStr(hostClient, languageData.REMOTE_PORT_OCCUPIED);
             hostClient.close();
             SilentException.throwException();
         } catch (OutDatedKeyException e) {
-            Debugger.debugOperation("Key out of date for key: " + info[2]);
             InternetOperator.sendStr(hostClient, languageData.KEY + info[2] + languageData.ARE_OUT_OF_DATE);
             hostClient.close();
             SilentException.throwException();
         } catch (UnRecognizedKeyException e) {
-            Debugger.debugOperation("Unrecognized/Disabled key: " + info[2]);
             InternetOperator.sendStr(hostClient, languageData.ACCESS_DENIED_FORCE_EXITING);
             hostClient.close();
             SilentException.throwException();
         } catch (NoMoreNetworkFlowException e) {
-            Debugger.debugOperation("No network flow left for key: " + info[2]);
             InternetOperator.sendStr(hostClient, languageData.THIS_KEY_HAVE_NO_NETWORK_FLOW_LEFT);
             hostClient.close();
             SilentException.throwException();
         }
 
-        // 兼容本地模式：LocalProvider 可能会返回 null 而不是抛异常
         if (currentSequenceKey == null) {
-            Debugger.debugOperation("Key validation failed (Local Null) for: " + info[2]);
             InternetOperator.sendStr(hostClient, languageData.ACCESS_DENIED_FORCE_EXITING);
             hostClient.close();
             UnRecognizedKeyException.throwException(info[2]);
         }
 
+        // [重要] 在这里先给 hostClient 绑定 Key，这样 UpdateManager 就能拿到正确的密钥名了
+        hostClient.setKey(currentSequenceKey);
+        hostClient.setLangData(languageData);
+
+        // [修改点2] 密钥验证通过后，再检查版本。如果版本不支持，此时再抛出异常
+        if (!isVersionSupported) {
+            Debugger.debugOperation("Version unsupported, but key is valid. Triggering update for: " + currentSequenceKey.getName());
+            InternetOperator.sendStr(hostClient, languageData.UNSUPPORTED_VERSION_MSG + availableVersions.getLast());
+            UnSupportHostVersionException.throwException(hostClient.getIP(), clientVersion);
+        }
+
+        // 以下是版本正确后的正常逻辑
         if (info.length == 4) {
             hostClient.setTCPEnabled(info[3].startsWith("T"));
             hostClient.setUDPEnabled(info[3].endsWith("U"));
-            Debugger.debugOperation("Client capabilities - TCP: " + hostClient.isTCPEnabled() + ", UDP: " + hostClient.isUDPEnabled());
         }
-        assert currentSequenceKey != null;
+
         if (currentSequenceKey.getPort() != DYNAMIC_PORT) {
-            boolean isTCPAvailable = isTCPAvailable(currentSequenceKey.getPort());
-            boolean isUDPAvailable = isUDPAvailable(currentSequenceKey.getPort());
-            if (!isTCPAvailable || !isUDPAvailable) {
-                Debugger.debugOperation("Static port " + currentSequenceKey.getPort() + " already bind.");
+            if (!isTCPAvailable(currentSequenceKey.getPort()) || !isUDPAvailable(currentSequenceKey.getPort())) {
                 InternetOperator.sendStr(hostClient, languageData.THE_PORT_HAS_ALREADY_BIND);
                 NoMorePortException.throwException(currentSequenceKey.getPort());
             }
-        } else {
-            int i = getCurrentAvailableOutPort(currentSequenceKey);
-            if (i == -1) {
-                Debugger.debugOperation("No dynamic ports available for key: " + info[2]);
-                InternetOperator.sendStr(hostClient, languageData.THE_PORT_HAS_ALREADY_BIND);
-                NoMorePortException.throwException(currentSequenceKey.getDyStart(), currentSequenceKey.getDyEnd());
-            }
         }
 
-        if (currentSequenceKey.isOutOfDate()) {
-            Debugger.debugOperation("Key expired (Double Check): " + info[2]);
-            InternetOperator.sendStr(hostClient, languageData.KEY + info[2] + languageData.ARE_OUT_OF_DATE);
-            OutDatedKeyException.throwException(currentSequenceKey);
-        }
-
-        hostClient.setKey(currentSequenceKey);
-        hostClient.setLangData(languageData);
         hostClient.enableCheckAliveThread();
         availableHostClient.add(hostClient);
         InternetOperator.sendStr(hostClient, languageData.CONNECTION_BUILD_UP_SUCCESSFULLY);

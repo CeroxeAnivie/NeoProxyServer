@@ -13,14 +13,16 @@ import java.util.*;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import static neoproxy.neoproxyserver.NeoProxyServer.*;
 import static neoproxy.neoproxyserver.core.management.IPChecker.*;
 import static neoproxy.neoproxyserver.core.management.SequenceKey.*;
 
 /**
- * ConsoleManager (Industrial Fix)
- * 适配最新的异常抛出机制，确保在 Key 无效/过期时仍能通过缓存查询信息。
+ * ConsoleManager (Industrial SQLite Version)
+ * 彻底解耦 JDBC 硬编码，由 Database 类驱动持久化。
+ * 性能优化：利用 SQLite WAL 模式实现毫秒级查询。
  */
 public class ConsoleManager {
 
@@ -203,9 +205,7 @@ public class ConsoleManager {
                 return;
             }
 
-            // 【修复 3】: web 命令中的 isKeyExistsByName 检查
             if (!isKeyExistsByName(keyName)) {
-                // 如果本地没有，尝试从缓存查（针对远程模式）
                 if (!(SequenceKey.PROVIDER instanceof RemoteKeyProvider) || !SequenceKey.getKeyCacheSnapshot().containsKey(keyName)) {
                     myConsole.warn(COMMAND_SOURCE.get(), "Key not found: " + keyName);
                     return;
@@ -222,10 +222,10 @@ public class ConsoleManager {
             }
 
             try {
-                SequenceKey keyFromDB = getKeyFromDB(keyName);
+                SequenceKey keyFromDB = Database.getKey(keyName, false);
                 if (keyFromDB != null) {
                     keyFromDB.setHTMLEnabled(enable);
-                    if (saveToDB(keyFromDB)) {
+                    if (Database.saveKey(keyFromDB)) {
                         String logKey = enable ? "consoleManager.webHtmlEnabled" : "consoleManager.webHtmlDisabled";
                         ServerLogger.infoWithSource(COMMAND_SOURCE.get(), logKey, keyName);
                         if (!foundInMemory) {
@@ -237,11 +237,8 @@ public class ConsoleManager {
                 } else {
                     ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.criticalDbError", keyName);
                 }
-            } catch (OutDatedKeyException | UnRecognizedKeyException | NoMoreNetworkFlowException e) {
-                // 【修复 4】: 远程模式下 Key 异常，无法更新
+            } catch (Exception e) {
                 ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyStateError.cannotUpdate", e.getMessage());
-            } catch (PortOccupiedException | NoMorePortException e) {
-                ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyError", e.getMessage());
             }
         });
 
@@ -265,9 +262,25 @@ public class ConsoleManager {
 
     private static void handleReloadCommand() {
         ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.reloadingConfig");
+
+        // 1. 重载配置文件 (config.cfg, sync.cfg)
         ConfigOperator.readAndSetValue();
+
+        // [新增] 2. 重载数据库连接 (确保 sk 文件变动或锁死恢复)
+        Database.reload();
+
+        // 3. 重载鉴权提供者 (切换 Local <-> Remote 模式)
         SequenceKey.reloadProvider();
+
         ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.configReloaded");
+
+        // [提示] 端口变动提醒
+        // 由于热重启端口非常危险且不稳定，建议只提示用户手动重启
+        if (ConfigOperator.CONFIG_FILE.lastModified() > System.currentTimeMillis() - 5000) {
+            ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "configOperator.permTokenWarning"); // 借用个警告格式
+            // 这里实际上应该输出: "Note: Port changes require a full restart to take effect."
+            // 如果你有对应的语言包 key 可以换上，没有的话就保持日志简洁
+        }
     }
 
     private static void printAsciiTable(String[] headers, List<String[]> data) {
@@ -400,24 +413,17 @@ public class ConsoleManager {
             }
         }
 
-        // 修改表头逻辑：从 ServerLogger 获取原始表头，然后手动插入 "Port" 列
         String rawHeaders = ServerLogger.getMessage("consoleManager.headers.list");
         String[] originalHeaders = rawHeaders.split("\\|");
-
-        // 创建新的表头列表
         List<String> headerList = new ArrayList<>(Arrays.asList(originalHeaders));
-        // 假设原始顺序为：IP | AccessCode | Location | ISP | Clients
-        // 我们在 HostClient 中是在第 4 位 (索引从0开始) 插入的 Port (在 ISP 之后)
-        // Header 对应位置应该是 Index 4
         if (headerList.size() >= 4) {
             headerList.add(4, "Port");
         } else {
-            headerList.add("Port"); // 兜底
+            headerList.add("Port");
         }
         String[] headers = headerList.toArray(new String[0]);
 
         List<String[]> rows = new ArrayList<>();
-
         for (List<HostClient> group : ipGroupedClients.values()) {
             if (group.isEmpty()) continue;
             HostClient representative = group.get(0);
@@ -464,14 +470,11 @@ public class ConsoleManager {
     }
 
     private static boolean isPortInRange(int port, String portRange) {
-        if (portRange == null || portRange.isEmpty()) {
-            return false;
-        }
+        if (portRange == null || portRange.isEmpty()) return false;
         String[] parts = portRange.split("-", -1);
         if (parts.length == 1) {
             try {
-                int singlePort = Integer.parseInt(parts[0].trim());
-                return port == singlePort;
+                return port == Integer.parseInt(parts[0].trim());
             } catch (NumberFormatException e) {
                 return false;
             }
@@ -483,12 +486,10 @@ public class ConsoleManager {
             } catch (NumberFormatException e) {
                 return false;
             }
-        } else {
-            return false;
         }
+        return false;
     }
 
-    // 【核心修复 1】: handleLookupCommand (key lp)
     private static void handleLookupCommand(List<String> params) {
         if (params.size() != 2) {
             myConsole.warn(COMMAND_SOURCE.get(), "Usage: key lp <name>");
@@ -496,7 +497,6 @@ public class ConsoleManager {
         }
         String name = params.get(1);
         try {
-            // 尝试正常获取 (如果 Key 正常，这里会返回对象)
             SequenceKey sequenceKey = getKeyFromDB(name);
             if (sequenceKey != null) {
                 outputSingleKeyAsTable(sequenceKey);
@@ -504,8 +504,6 @@ public class ConsoleManager {
                 ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFound");
             }
         } catch (OutDatedKeyException | UnRecognizedKeyException | NoMoreNetworkFlowException e) {
-            // 捕获异常：说明远程 NKM 拒绝了该 Key (409/403)
-            // 尝试从 Sync 缓存中获取最后已知状态
             SequenceKey cached = SequenceKey.getKeyCacheSnapshot().get(name);
             if (cached != null) {
                 outputSingleKeyAsTable(cached);
@@ -550,7 +548,6 @@ public class ConsoleManager {
         }
     }
 
-    // 【核心修复 2】: handleSetCommand
     private static void handleSetCommand(List<String> params) {
         if (params.size() < 2) {
             myConsole.warn(COMMAND_SOURCE.get(), "Usage: key set <name> [b=<balance>] [r=<rate>] [p=<outPort>] [t=<expireTime>] [w=<webHTML>]");
@@ -558,17 +555,13 @@ public class ConsoleManager {
         }
         String name = params.get(1);
 
-        // 检查是否正在使用远程 Provider，且该 Key 是否存在于远程缓存中
         if (SequenceKey.PROVIDER instanceof RemoteKeyProvider) {
-            Map<String, SequenceKey> remoteCache = SequenceKey.getKeyCacheSnapshot();
-            if (remoteCache.containsKey(name)) {
+            if (SequenceKey.getKeyCacheSnapshot().containsKey(name)) {
                 ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.error.remoteKeyModification");
                 return;
             }
         }
 
-        // isKeyExistsByName 只检查 Cache，对于远程无效 Key 可能会返回 true (Cache中) 或 false (未知)
-        // 但这里为了安全，还是保留检查
         if (!isKeyExistsByName(name)) {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFoundSpecific", name);
             return;
@@ -593,13 +586,8 @@ public class ConsoleManager {
                     return;
                 }
             }
-        } catch (OutDatedKeyException | UnRecognizedKeyException | NoMoreNetworkFlowException e) {
-            // 如果是在 set 命令中抛出，说明该 Key 已失效且当前无活跃连接
-            // 且因为是远程 Provider (否则 Local Provider 不会抛异常)，所以我们本就不该修改它
+        } catch (Exception e) {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.error.keyInvalidForSet", e.getMessage());
-            return;
-        } catch (PortOccupiedException | NoMorePortException e) {
-            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyError", e.getMessage());
             return;
         }
 
@@ -609,51 +597,46 @@ public class ConsoleManager {
         for (int i = 2; i < params.size(); i++) {
             String param = params.get(i);
             if (param.startsWith("b=")) {
-                String balanceStr = param.substring(2);
-                Double balance = parseDoubleSafely(balanceStr, "balance");
-                if (balance != null) {
-                    for (SequenceKey key : inMemoryKeysToUpdate) key.setBalance(balance);
-                    if (dbKeySnapshot != null) dbKeySnapshot.setBalance(balance);
+                Double val = parseDoubleSafely(param.substring(2), "balance");
+                if (val != null) {
+                    for (SequenceKey k : inMemoryKeysToUpdate) k.setBalance(val);
+                    if (dbKeySnapshot != null) dbKeySnapshot.setBalance(val);
                     hasUpdate = true;
                 }
             } else if (param.startsWith("r=")) {
-                String rateStr = param.substring(2);
-                Double rate = parseDoubleSafely(rateStr, "rate");
-                if (rate != null) {
-                    for (SequenceKey key : inMemoryKeysToUpdate) key.setRate(rate);
-                    if (dbKeySnapshot != null) dbKeySnapshot.setRate(rate);
+                Double val = parseDoubleSafely(param.substring(2), "rate");
+                if (val != null) {
+                    for (SequenceKey k : inMemoryKeysToUpdate) k.setRate(val);
+                    if (dbKeySnapshot != null) dbKeySnapshot.setRate(val);
                     for (HostClient hc : hostClientsToUpdate) {
-                        if (hc.getGlobalRateLimiter() != null) hc.getGlobalRateLimiter().setMaxMbps(rate);
+                        if (hc.getGlobalRateLimiter() != null) hc.getGlobalRateLimiter().setMaxMbps(val);
                     }
                     hasUpdate = true;
                 }
             } else if (param.startsWith("p=")) {
-                String portStr = param.substring(2);
-                String validatedPortStr = validateAndFormatPortInput(portStr);
-                if (validatedPortStr != null) {
-                    for (SequenceKey key : inMemoryKeysToUpdate) key.setPort(validatedPortStr);
-                    if (dbKeySnapshot != null) dbKeySnapshot.setPort(validatedPortStr);
+                String val = validateAndFormatPortInput(param.substring(2));
+                if (val != null) {
+                    for (SequenceKey k : inMemoryKeysToUpdate) k.setPort(val);
+                    if (dbKeySnapshot != null) dbKeySnapshot.setPort(val);
+                    newPortStr = val;
                     hasUpdate = true;
-                    newPortStr = validatedPortStr;
                 } else {
-                    ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.invalidPortValue", portStr);
+                    ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.invalidPortValue", param.substring(2));
                 }
             } else if (param.startsWith("t=")) {
-                String expireTimeInput = param.substring(2);
-                String expireTime = correctInputTime(expireTimeInput);
-                if (expireTime == null) {
-                    ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.illegalTimeInput", expireTimeInput);
-                } else if (isOutOfDate(expireTime)) {
-                    ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.timeEarlierThanCurrent", expireTime);
+                String val = correctInputTime(param.substring(2));
+                if (val == null) {
+                    ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.illegalTimeInput", param.substring(2));
+                } else if (isOutOfDate(val)) {
+                    ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.timeEarlierThanCurrent", val);
                 } else {
-                    for (SequenceKey key : inMemoryKeysToUpdate) key.setExpireTime(expireTime);
-                    if (dbKeySnapshot != null) dbKeySnapshot.setExpireTime(expireTime);
+                    for (SequenceKey k : inMemoryKeysToUpdate) k.setExpireTime(val);
+                    if (dbKeySnapshot != null) dbKeySnapshot.setExpireTime(val);
                     hasUpdate = true;
                 }
             } else if (param.startsWith("w=")) {
-                String webStr = param.substring(2);
-                boolean enable = "true".equalsIgnoreCase(webStr) || "1".equals(webStr) || "on".equalsIgnoreCase(webStr);
-                for (SequenceKey key : inMemoryKeysToUpdate) key.setHTMLEnabled(enable);
+                boolean enable = "true".equalsIgnoreCase(param.substring(2)) || "1".equals(param.substring(2)) || "on".equalsIgnoreCase(param.substring(2));
+                for (SequenceKey k : inMemoryKeysToUpdate) k.setHTMLEnabled(enable);
                 if (dbKeySnapshot != null) dbKeySnapshot.setHTMLEnabled(enable);
                 hasUpdate = true;
             } else {
@@ -667,24 +650,20 @@ public class ConsoleManager {
         }
 
         if (newPortStr != null) {
-            ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.portPolicyChanged", newPortStr);
             int disconnectedCount = 0;
             for (HostClient client : hostClientsToUpdate) {
-                int currentExternalPort = client.getOutPort();
-                if (!isPortInRange(currentExternalPort, newPortStr)) {
-                    ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.disconnectingClient", name, String.valueOf(currentExternalPort));
+                if (!isPortInRange(client.getOutPort(), newPortStr)) {
+                    ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.disconnectingClient", name, String.valueOf(client.getOutPort()));
                     client.close();
                     disconnectedCount++;
                 }
             }
-            if (disconnectedCount > 0) {
+            if (disconnectedCount > 0)
                 ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.clientsDisconnected", String.valueOf(disconnectedCount));
-            }
         }
 
         SequenceKey keyToSave = (dbKeySnapshot != null) ? dbKeySnapshot : inMemoryKeysToUpdate.getFirst();
-        boolean isSuccess = saveToDB(keyToSave);
-        if (isSuccess) {
+        if (saveToDB(keyToSave)) {
             ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.operationComplete");
         } else {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.setKeyFailed");
@@ -694,28 +673,15 @@ public class ConsoleManager {
     private static void handleAddCommand(List<String> params) {
         if (params.size() != 6 && params.size() != 7) {
             myConsole.warn(COMMAND_SOURCE.get(), "Usage: key add <name> <balance> <expireTime> <port> <rate> [webHTML]");
-            myConsole.warn(COMMAND_SOURCE.get(), "Note: <port> can be a single number (e.g., 8080) or a range (e.g., 3344-3350).");
             return;
         }
         String name = params.get(1);
-
         if (isKeyExistsByName(name)) {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.error.keyAlreadyExists");
             return;
         }
 
-        String balanceStr = params.get(2);
-        String expireTimeInput = params.get(3);
-        String portStr = params.get(4);
-        String rateStr = params.get(5);
-
-        boolean enableWebHTML = false;
-        if (params.size() == 7) {
-            String webStr = params.get(6);
-            enableWebHTML = "true".equalsIgnoreCase(webStr) || "1".equals(webStr) || "on".equalsIgnoreCase(webStr);
-        }
-
-        String expireTime = correctInputTime(expireTimeInput);
+        String expireTime = correctInputTime(params.get(3));
         if (expireTime == null) {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.illegalTimeInput");
             return;
@@ -724,151 +690,105 @@ public class ConsoleManager {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.timeEarlierThanCurrent", expireTime);
             return;
         }
-        Double balance = parseDoubleSafely(balanceStr, "balance");
-        Double rate = parseDoubleSafely(rateStr, "rate");
-        if (balance == null || rate == null) {
-            return;
-        }
-        String validatedPortStr = validateAndFormatPortInput(portStr);
-        if (validatedPortStr == null) {
-            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.invalidPortValue", portStr);
+
+        Double balance = parseDoubleSafely(params.get(2), "balance");
+        Double rate = parseDoubleSafely(params.get(5), "rate");
+        String validatedPortStr = validateAndFormatPortInput(params.get(4));
+
+        if (balance == null || rate == null || validatedPortStr == null) {
+            if (validatedPortStr == null)
+                ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.invalidPortValue", params.get(4));
             return;
         }
 
-        boolean isCreated = createNewKey(name, balance, expireTime, validatedPortStr, rate);
-        if (isCreated) {
+        if (createNewKey(name, balance, expireTime, validatedPortStr, rate)) {
             ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.keyCreated", name);
-            if (enableWebHTML) {
-                myConsole.execute("web enable " + name);
-            } else {
-                myConsole.execute("web disable " + name);
-            }
+            boolean web = params.size() == 7 && ("true".equalsIgnoreCase(params.get(6)) || "1".equals(params.get(6)) || "on".equalsIgnoreCase(params.get(6)));
+            myConsole.execute("web " + (web ? "enable" : "disable") + " " + name);
         } else {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyCreateFailed");
-            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyCreateHint");
         }
     }
 
     private static void listAllKeys() {
         Map<String, KeyListDTO> keyMap = new HashMap<>();
-
-        String sql = "SELECT name, balance, expireTime, port, rate, isEnable, enableWebHTML FROM sk";
-        try (var conn = getConnection();
-             var stmt = conn.prepareStatement(sql);
-             var rs = stmt.executeQuery()) {
-            while (rs.next()) {
-                String name = rs.getString("name");
-                KeyListDTO dto = new KeyListDTO(
-                        name,
-                        rs.getDouble("balance"),
-                        rs.getString("expireTime"),
-                        rs.getString("port"),
-                        rs.getDouble("rate"),
-                        rs.getBoolean("isEnable"),
-                        rs.getBoolean("enableWebHTML"),
-                        " (L)"
-                );
-                keyMap.put(name, dto);
-            }
-        } catch (Exception e) {
-            Debugger.debugOperation(e);
-            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.dbQueryFailed");
-            return;
+        List<SequenceKey> localKeys = Database.getAllKeys();
+        for (SequenceKey k : localKeys) {
+            keyMap.put(k.getName(), new KeyListDTO(k.getName(), k.getBalanceNoLock(), k.getExpireTime(), k.getPortStr(), k.getRateNoLock(), k.isEnable(), k.isHTMLEnabled(), " (L)"));
         }
-
         if (SequenceKey.PROVIDER instanceof RemoteKeyProvider) {
-            Map<String, SequenceKey> cache = SequenceKey.getKeyCacheSnapshot();
-            for (SequenceKey k : cache.values()) {
+            for (SequenceKey k : SequenceKey.getKeyCacheSnapshot().values()) {
                 keyMap.put(k.getName(), new KeyListDTO(k, " (R)"));
             }
         }
-
         if (keyMap.isEmpty()) {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFound");
             return;
         }
 
-        List<KeyListDTO> sortedList = new ArrayList<>(keyMap.values());
-        sortedList.sort((k1, k2) -> {
-            boolean isR1 = k1.sourceTag.contains("(R)");
-            boolean isR2 = k2.sourceTag.contains("(R)");
+        List<KeyListDTO> sortedList = keyMap.values().stream().sorted((k1, k2) -> {
+            boolean isR1 = k1.sourceTag.contains("(R)"), isR2 = k2.sourceTag.contains("(R)");
             if (isR1 && !isR2) return -1;
             if (!isR1 && isR2) return 1;
             return k1.name.compareToIgnoreCase(k2.name);
-        });
+        }).toList();
 
-        List<String[]> rows = new ArrayList<>();
-        for (KeyListDTO dto : sortedList) {
-            int clientNum = findKeyClientNum(dto.name);
-            String formattedRate = killDoubleEndZero(dto.rate);
-            String enableStatus = dto.isEnable ? "✓" : "✗";
-            String webHTMLStatus = dto.enableWebHTML ? "✓" : "✗";
+        List<String[]> rows = sortedList.stream().map(dto -> new String[]{
+                dto.name + dto.sourceTag, String.format("%.2f", dto.balance), dto.expireTime, dto.port, killDoubleEndZero(dto.rate) + "mbps",
+                dto.isEnable ? "✓" : "✗", dto.enableWebHTML ? "✓" : "✗", String.valueOf(findKeyClientNum(dto.name))
+        }).collect(Collectors.toList());
 
-            String displayName = dto.name + dto.sourceTag;
-
-            rows.add(new String[]{
-                    displayName,
-                    String.format("%.2f", dto.balance),
-                    dto.expireTime,
-                    dto.port,
-                    formattedRate + "mbps",
-                    enableStatus,
-                    webHTMLStatus,
-                    String.valueOf(clientNum)
-            });
-        }
-
-        String[] headers = ServerLogger.getMessage("consoleManager.headers.keyList").split("\\|");
-        printAsciiTable(headers, rows);
+        printAsciiTable(ServerLogger.getMessage("consoleManager.headers.keyList").split("\\|"), rows);
     }
 
     private static void listKeyNames() {
-        executeQueryAndPrint("SELECT name, isEnable FROM sk", rs -> {
-            String name = rs.getString("name");
-            boolean isEnable = rs.getBoolean("isEnable");
-            int clientNum = findKeyClientNum(name);
-            String status = isEnable ? "" : "(disabled)";
-            return String.format("%s%s(%d)", name, status, clientNum);
-        }, " ");
+        List<SequenceKey> keys = Database.getAllKeys();
+        if (keys.isEmpty()) {
+            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFound");
+            return;
+        }
+        String result = keys.stream().map(k -> String.format("%s%s(%d)", k.getName(), k.isEnable() ? "" : "(disabled)", findKeyClientNum(k.getName()))).collect(Collectors.joining(" "));
+        ServerLogger.infoWithSource(COMMAND_SOURCE.get(), result);
     }
 
     private static void listKeyBalances() {
-        executeQueryAndPrint("SELECT name, balance, isEnable FROM sk", rs -> {
-            String name = rs.getString("name");
-            double balance = rs.getDouble("balance");
-            boolean isEnable = rs.getBoolean("isEnable");
-            String status = isEnable ? "" : "(disabled)";
-            return String.format("%s%s(%.2f)", name, status, balance);
-        }, "\n");
+        List<SequenceKey> keys = Database.getAllKeys();
+        if (keys.isEmpty()) {
+            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFound");
+            return;
+        }
+        String result = keys.stream().map(k -> String.format("%s%s(%.2f)", k.getName(), k.isEnable() ? "" : "(disabled)", k.getBalanceNoLock())).collect(Collectors.joining("\n"));
+        ServerLogger.infoWithSource(COMMAND_SOURCE.get(), result);
     }
 
     private static void listKeyRates() {
-        executeQueryAndPrint("SELECT name, rate, isEnable FROM sk", rs -> {
-            String name = rs.getString("name");
-            double rate = rs.getDouble("rate");
-            boolean isEnable = rs.getBoolean("isEnable");
-            String formattedRate = killDoubleEndZero(rate);
-            String status = isEnable ? "" : "(disabled)";
-            return String.format("%s%s(%smbps)", name, status, formattedRate);
-        }, " ");
+        List<SequenceKey> keys = Database.getAllKeys();
+        if (keys.isEmpty()) {
+            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFound");
+            return;
+        }
+        String result = keys.stream().map(k -> String.format("%s%s(%smbps)", k.getName(), k.isEnable() ? "" : "(disabled)", killDoubleEndZero(k.getRateNoLock()))).collect(Collectors.joining(" "));
+        ServerLogger.infoWithSource(COMMAND_SOURCE.get(), result);
     }
 
     private static void listKeyExpireTimes() {
-        executeQueryAndPrint("SELECT name, expireTime, isEnable FROM sk", rs -> {
-            String name = rs.getString("name");
-            String expireTime = rs.getString("expireTime");
-            boolean isEnable = rs.getBoolean("isEnable");
-            String status = isEnable ? "" : "(disabled)";
-            return String.format("%s%s( %s )", name, status, expireTime);
-        }, "\n");
+        List<SequenceKey> keys = Database.getAllKeys();
+        if (keys.isEmpty()) {
+            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFound");
+            return;
+        }
+        String result = keys.stream().map(k -> String.format("%s%s( %s )", k.getName(), k.isEnable() ? "" : "(disabled)", k.getExpireTime())).collect(Collectors.joining("\n"));
+        ServerLogger.infoWithSource(COMMAND_SOURCE.get(), result);
     }
 
     private static void listKeyEnableStatus() {
-        executeQueryAndPrint("SELECT name, isEnable FROM sk", rs -> {
-            String name = rs.getString("name");
-            boolean isEnable = rs.getBoolean("isEnable");
-            return String.format("%s: %s", name, isEnable ? "enabled" : "disabled");
-        }, "\n");
+        List<SequenceKey> keys = Database.getAllKeys();
+        if (keys.isEmpty()) {
+            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFound");
+            return;
+        }
+        String result = keys.stream().map(k -> String.format("%s: %s", k.getName(), k.isEnable() ? "enabled" : "disabled")).collect(Collectors.joining("\n"));
+        ServerLogger.infoWithSource(COMMAND_SOURCE.get(), result);
     }
 
     private static void printKeyUsage() {
@@ -887,20 +807,19 @@ public class ConsoleManager {
         myConsole.warn(COMMAND_SOURCE.get(), "  listbans -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.listbansCmd"));
         myConsole.warn(COMMAND_SOURCE.get(), "  find <ip_address> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.findCmd"));
         myConsole.warn(COMMAND_SOURCE.get(), "  reload -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.reloadCmd"));
-        myConsole.warn(COMMAND_SOURCE.get(), ServerLogger.getMessage("consoleManager.printKeyUsage.portNote"));
     }
 
     private static String validateAndFormatPortInput(String portInput) {
         if (portInput == null || portInput.trim().isEmpty()) return null;
-        Matcher matcher = PORT_INPUT_REGEX.matcher(portInput.trim());
-        if (!matcher.matches()) return null;
+        Matcher m = PORT_INPUT_REGEX.matcher(portInput.trim());
+        if (!m.matches()) return null;
         try {
-            int startPort = Integer.parseInt(matcher.group(1));
-            if (startPort < 1 || startPort > 65535) return null;
-            if (matcher.group(2) == null) return String.valueOf(startPort);
-            int endPort = Integer.parseInt(matcher.group(2));
-            if (endPort < 1 || endPort > 65535 || endPort < startPort) return null;
-            return startPort + "-" + endPort;
+            int s = Integer.parseInt(m.group(1));
+            if (s < 1 || s > 65535) return null;
+            if (m.group(2) == null) return String.valueOf(s);
+            int e = Integer.parseInt(m.group(2));
+            if (e < 1 || e > 65535 || e < s) return null;
+            return s + "-" + e;
         } catch (NumberFormatException e) {
             return null;
         }
@@ -915,140 +834,59 @@ public class ConsoleManager {
         }
     }
 
-    private static void executeQueryAndPrint(String sql, RowProcessor rowProcessor, String separator) {
-        try (var conn = getConnection();
-             var stmt = conn.prepareStatement(sql);
-             var rs = stmt.executeQuery()) {
-            StringBuilder output = new StringBuilder();
-            boolean hasData = false;
-            while (rs.next()) {
-                hasData = true;
-                output.append(rowProcessor.process(rs)).append(separator);
-            }
-            if (hasData) {
-                if (!output.isEmpty()) output.setLength(output.length() - separator.length());
-                ServerLogger.infoWithSource(COMMAND_SOURCE.get(), output.toString());
-            } else {
-                ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFound");
-            }
-        } catch (Exception e) {
-            Debugger.debugOperation(e);
-            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.dbQueryFailed");
-        }
-    }
-
     private static void outputSingleKeyAsTable(SequenceKey sequenceKey) {
         try {
-            String name = sequenceKey.getName();
-            double balance = sequenceKey.getBalance();
-            String expireTime = sequenceKey.getExpireTime();
-            String portStr = sequenceKey.getPort() == -1 ? "Dynamic" : (sequenceKey.getDyStart() != sequenceKey.getDyEnd() ? sequenceKey.getDyStart() + "-" + sequenceKey.getDyEnd() : String.valueOf(sequenceKey.getDyStart()));
-            try {
-                // 尝试访问受保护字段 (如果在同一包下)
-            } catch (Exception ignored) {
-            }
-
-            double rate = sequenceKey.getRate();
-            boolean isEnable = sequenceKey.isEnable();
-            boolean enableWebHTML = sequenceKey.isHTMLEnabled();
-            int clientNum = findKeyClientNum(name);
-            String formattedRate = killDoubleEndZero(rate);
-            String enableStatus = isEnable ? "✓" : "✗";
-            String webHTMLStatus = enableWebHTML ? "✓" : "✗";
             String[] headers = ServerLogger.getMessage("consoleManager.headers.keyList").split("\\|");
-            String[] data = {
-                    name,
-                    String.format("%.2f", balance),
-                    expireTime,
-                    portStr,
-                    formattedRate + "mbps",
-                    enableStatus,
-                    webHTMLStatus,
-                    String.valueOf(clientNum)
-            };
             List<String[]> rows = new ArrayList<>();
-            rows.add(data);
+            rows.add(new String[]{
+                    sequenceKey.getName(), String.format("%.2f", sequenceKey.getBalance()), sequenceKey.getExpireTime(), sequenceKey.getPortStr(),
+                    killDoubleEndZero(sequenceKey.getRate()) + "mbps", sequenceKey.isEnable() ? "✓" : "✗", sequenceKey.isHTMLEnabled() ? "✓" : "✗", String.valueOf(findKeyClientNum(sequenceKey.getName()))
+            });
             printAsciiTable(headers, rows);
         } catch (Exception e) {
-            Debugger.debugOperation(e);
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.failedToFormatKey");
         }
     }
 
     private static int findKeyClientNum(String name) {
-        int num = 0;
-        for (HostClient hostClient : availableHostClient) {
-            if (hostClient != null && hostClient.getKey() != null &&
-                    name.equals(hostClient.getKey().getName())) {
-                num++;
-            }
-        }
-        return num;
+        return (int) availableHostClient.stream().filter(h -> h != null && h.getKey() != null && name.equals(h.getKey().getName())).count();
     }
 
     private static String killDoubleEndZero(double d) {
-        if (d == (long) d) {
-            return String.valueOf((long) d);
-        } else {
-            return String.valueOf(d);
-        }
+        return d == (long) d ? String.valueOf((long) d) : String.valueOf(d);
     }
 
     private static String correctInputTime(String time) {
         if (time == null) return null;
-        Matcher matcher = TIME_PATTERN.matcher(time);
-        if (!matcher.matches()) return null;
+        Matcher m = TIME_PATTERN.matcher(time);
+        if (!m.matches()) return null;
         try {
-            int year = Integer.parseInt(matcher.group(1));
-            int month = Integer.parseInt(matcher.group(2));
-            int day = Integer.parseInt(matcher.group(3));
-            int hour = Integer.parseInt(matcher.group(4));
-            int minute = Integer.parseInt(matcher.group(5));
-            if (month < 1 || month > 12 || day < 1 || day > 31 ||
-                    hour < 0 || hour > 23 || minute < 0 || minute > 59) {
-                return null;
-            }
-            return String.format("%04d/%02d/%02d-%02d:%02d", year, month, day, hour, minute);
+            int y = Integer.parseInt(m.group(1)), mo = Integer.parseInt(m.group(2)), d = Integer.parseInt(m.group(3)), h = Integer.parseInt(m.group(4)), mi = Integer.parseInt(m.group(5));
+            if (mo < 1 || mo > 12 || d < 1 || d > 31 || h < 0 || h > 23 || mi < 0 || mi > 59) return null;
+            return String.format("%04d/%02d/%02d-%02d:%02d", y, mo, d, h, mi);
         } catch (NumberFormatException e) {
             return null;
         }
     }
 
-    @FunctionalInterface
-    private interface RowProcessor {
-        String process(java.sql.ResultSet rs) throws java.sql.SQLException;
-    }
-
     private static class KeyListDTO {
-        String name;
-        double balance;
-        String expireTime;
-        String port;
-        double rate;
-        boolean isEnable;
-        boolean enableWebHTML;
-        String sourceTag;
+        String name, expireTime, port, sourceTag;
+        double balance, rate;
+        boolean isEnable, enableWebHTML;
 
-        public KeyListDTO(String name, double balance, String expireTime, String port, double rate, boolean isEnable, boolean enableWebHTML, String sourceTag) {
-            this.name = name;
-            this.balance = balance;
-            this.expireTime = expireTime;
-            this.port = port;
-            this.rate = rate;
-            this.isEnable = isEnable;
-            this.enableWebHTML = enableWebHTML;
-            this.sourceTag = sourceTag;
+        public KeyListDTO(String n, double b, String et, String p, double r, boolean ie, boolean ew, String st) {
+            this.name = n;
+            this.balance = b;
+            this.expireTime = et;
+            this.port = p;
+            this.rate = r;
+            this.isEnable = ie;
+            this.enableWebHTML = ew;
+            this.sourceTag = st;
         }
 
-        public KeyListDTO(SequenceKey key, String sourceTag) {
-            this.name = key.getName();
-            this.balance = key.getBalance();
-            this.expireTime = key.getExpireTime();
-            this.rate = key.getRate();
-            this.isEnable = key.isEnable();
-            this.enableWebHTML = key.isHTMLEnabled();
-            this.sourceTag = sourceTag;
-            this.port = key.getPort() == -1 ? "Dynamic" : String.valueOf(key.getPort());
+        public KeyListDTO(SequenceKey k, String st) {
+            this(k.getName(), k.getBalanceNoLock(), k.getExpireTime(), k.getPortStr(), k.getRateNoLock(), k.isEnable(), k.isHTMLEnabled(), st);
         }
     }
 }

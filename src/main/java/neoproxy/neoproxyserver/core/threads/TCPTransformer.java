@@ -3,6 +3,7 @@ package neoproxy.neoproxyserver.core.threads;
 import fun.ceroxe.api.management.bufferedFile.SizeCalculator;
 import fun.ceroxe.api.net.SecureSocket;
 import fun.ceroxe.api.thread.ThreadManager;
+import neoproxy.neoproxyserver.NeoProxyServer;
 import neoproxy.neoproxyserver.core.HostClient;
 import neoproxy.neoproxyserver.core.HostReply;
 import neoproxy.neoproxyserver.core.LanguageData;
@@ -246,6 +247,7 @@ public class TCPTransformer {
                 int enLength = hostReply.host().sendByte(buffer, 0, len);
 
                 if (enLength > 0) {
+                    NeoProxyServer.TOTAL_BYTES_COUNTER.add(enLength);
                     hostClient.getKey().mineMib("TCP-Transformer:C->H", SizeCalculator.byteToMib(enLength + 10));
                     tellRestBalance(hostClient, aTenMibSize, enLength, hostClient.getLangData());
                     limiter.setMaxMbps(hostClient.getKey().getRate());
@@ -284,7 +286,7 @@ public class TCPTransformer {
                 // 【优化】直接写入 Socket，减少用户态内存拷贝
                 outputStream.write(data);
                 // outputStream.flush(); // SocketOutputStream 自动处理，不需要频繁显式 flush
-
+                NeoProxyServer.TOTAL_BYTES_COUNTER.add(data.length);
                 hostClient.getKey().mineMib("TCP-Transformer:H->C", SizeCalculator.byteToMib(data.length));
                 tellRestBalance(hostClient, aTenMibSize, data.length, hostClient.getLangData());
                 limiter.setMaxMbps(hostClient.getKey().getRate());

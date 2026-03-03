@@ -42,6 +42,10 @@ public class WebAdminServer extends NanoWSD {
     private static volatile AdminWebSocket activePermSocket = null;
     private static volatile String activePermSessionId = null;
 
+    private static long lastTotalBytes = 0;
+    private static long lastCalcTime = System.currentTimeMillis();
+    private static double currentSpeedBps = 0; // 字节每秒
+
     static {
         try {
             Logger nanoLogger = Logger.getLogger("fi.iki.elonen.NanoHTTPD");
@@ -831,8 +835,26 @@ public class WebAdminServer extends NanoWSD {
             }
             int udpClientCount = UDPTransformer.udpClientConnections.size();
 
-            String json = String.format(Locale.US, "{\"hc\":%d, \"ec\":%d, \"uc\":%d, \"tb\":%.2f, \"v\":\"%s\", \"sv\":\"%s\", \"p\":\"%s\"}",
-                    hostClientCount, tcpClientCount, udpClientCount, totalBalance, NeoProxyServer.VERSION, NeoProxyServer.EXPECTED_CLIENT_VERSION, NeoProxyServer.HOST_HOOK_PORT + " / " + NeoProxyServer.HOST_CONNECT_PORT);
+            // --- 新增速率计算逻辑 ---
+            long now = System.currentTimeMillis();
+            long currentTotalBytes = NeoProxyServer.TOTAL_BYTES_COUNTER.sum();
+            long timeDiff = now - lastCalcTime;
+
+            if (timeDiff >= 500) { // 每500ms更新一次速率
+                currentSpeedBps = (double) (currentTotalBytes - lastTotalBytes) / (timeDiff / 1000.0);
+                lastTotalBytes = currentTotalBytes;
+                lastCalcTime = now;
+            }
+            // -----------------------
+
+            // 在 JSON 中增加 "gs" (Global Speed) 字段
+            String json = String.format(Locale.US,
+                    "{\"hc\":%d, \"ec\":%d, \"uc\":%d, \"tb\":%.2f, \"gs\":%.2f, \"v\":\"%s\", \"sv\":\"%s\", \"p\":\"%s\"}",
+                    hostClientCount, tcpClientCount, udpClientCount, totalBalance,
+                    currentSpeedBps, // 传递计算好的速率
+                    NeoProxyServer.VERSION, NeoProxyServer.EXPECTED_CLIENT_VERSION,
+                    NeoProxyServer.HOST_HOOK_PORT + " / " + NeoProxyServer.HOST_CONNECT_PORT);
+
             sendJson("dashboard_data", json);
         }
 

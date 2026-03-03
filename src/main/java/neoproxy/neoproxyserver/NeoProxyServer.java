@@ -53,12 +53,11 @@ public class NeoProxyServer {
                                                         \s
                                                          \
             """;
+    public static final java.util.concurrent.atomic.LongAdder TOTAL_BYTES_COUNTER = new java.util.concurrent.atomic.LongAdder();
     private static final ReentrantLock UDP_GLOBAL_LOCK = new ReentrantLock();
     public static String VERSION = getFromAppProperties("app.version");
     public static String EXPECTED_CLIENT_VERSION = getFromAppProperties("app.expected.client.version");
-
     public static final CopyOnWriteArrayList<String> availableVersions = toCopyOnWriteArrayListWithLoop(EXPECTED_CLIENT_VERSION.split("\\|"));
-
     public static int HOST_HOOK_PORT = 44801;
     public static int HOST_CONNECT_PORT = 44802;
     public static String LOCAL_DOMAIN_NAME = "localhost";
@@ -454,15 +453,16 @@ public class NeoProxyServer {
         if (info.length < 3 || info.length > 4)
             UnSupportHostVersionException.throwException(hostClient.getIP(), "_NULL_");
 
+        // 提取语言信息
         LanguageData languageData = "zh".equals(info[0]) ? LanguageData.getChineseLanguage() : new LanguageData();
 
-        // [修改点1] 先记录版本是否支持，不要立即抛出异常
-        boolean isVersionSupported = availableVersions.contains(info[1]);
+        // [修改点] 使用 VersionChecker 进行版本合法性判定
         String clientVersion = info[1];
+        boolean isVersionSupported = VersionChecker.isVersionSupported(clientVersion, availableVersions);
 
         SequenceKey currentSequenceKey = null;
         try {
-            // 这里会向 NKM 验证密钥合法性
+            // 向 NKM (或者本地 KeyProvider) 验证密钥合法性
             currentSequenceKey = SequenceKey.getEnabledKeyFromDB(info[2]);
         } catch (PortOccupiedException | NoMorePortException e) {
             InternetOperator.sendStr(hostClient, languageData.REMOTE_PORT_OCCUPIED);
@@ -488,23 +488,27 @@ public class NeoProxyServer {
             UnRecognizedKeyException.throwException(info[2]);
         }
 
-        // [重要] 在这里先给 hostClient 绑定 Key，这样 UpdateManager 就能拿到正确的密钥名了
+        // 绑定关键数据到 hostClient 对象，确保后续 UpdateManager 能够识别用户身份
         hostClient.setKey(currentSequenceKey);
         hostClient.setLangData(languageData);
 
-        // [修改点2] 密钥验证通过后，再检查版本。如果版本不支持，此时再抛出异常
+        // [修改点] 密钥通过后，如果版本不匹配，触发更新逻辑
         if (!isVersionSupported) {
-            Debugger.debugOperation("Version unsupported, but key is valid. Triggering update for: " + currentSequenceKey.getName());
+            Debugger.debugOperation("Version unsupported (including wildcard check), but key is valid. Triggering update.");
+            // 告知客户端当前服务器支持的版本范围（取列表最后一个作为推荐版本）
             InternetOperator.sendStr(hostClient, languageData.UNSUPPORTED_VERSION_MSG + availableVersions.getLast());
             UnSupportHostVersionException.throwException(hostClient.getIP(), clientVersion);
         }
 
-        // 以下是版本正确后的正常逻辑
+        // --- 以下为版本匹配成功后的逻辑 ---
+
+        // 处理 TCP/UDP 开启状态 (T/U 标志位)
         if (info.length == 4) {
             hostClient.setTCPEnabled(info[3].startsWith("T"));
             hostClient.setUDPEnabled(info[3].endsWith("U"));
         }
 
+        // 检查端口可用性 (如果是固定端口)
         if (currentSequenceKey.getPort() != DYNAMIC_PORT) {
             if (!isTCPAvailable(currentSequenceKey.getPort()) || !isUDPAvailable(currentSequenceKey.getPort())) {
                 InternetOperator.sendStr(hostClient, languageData.THE_PORT_HAS_ALREADY_BIND);
@@ -515,7 +519,7 @@ public class NeoProxyServer {
         hostClient.enableCheckAliveThread();
         availableHostClient.add(hostClient);
         InternetOperator.sendStr(hostClient, languageData.CONNECTION_BUILD_UP_SUCCESSFULLY);
-        Debugger.debugOperation("Handshake completed successfully.");
+        Debugger.debugOperation("Handshake completed successfully with version: " + clientVersion);
     }
 
     private static void shutdown() {

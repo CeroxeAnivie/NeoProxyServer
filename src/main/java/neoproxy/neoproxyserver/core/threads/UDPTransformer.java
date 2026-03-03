@@ -3,6 +3,7 @@ package neoproxy.neoproxyserver.core.threads;
 import fun.ceroxe.api.management.bufferedFile.SizeCalculator;
 import fun.ceroxe.api.net.SecureSocket;
 import fun.ceroxe.api.thread.ThreadManager;
+import neoproxy.neoproxyserver.NeoProxyServer;
 import neoproxy.neoproxyserver.core.*;
 import neoproxy.neoproxyserver.core.exceptions.NoMoreNetworkFlowException;
 
@@ -165,6 +166,7 @@ public class UDPTransformer implements Runnable {
                 int enLength = hostReply.host().sendByte(data);
 
                 if (enLength > 0) {
+                    NeoProxyServer.TOTAL_BYTES_COUNTER.add(enLength);
                     hostClient.getKey().mineMib("UDP-Transformer", SizeCalculator.byteToMib(enLength + 10));
                     tellRestBalance(hostClient, aTenMibSize, enLength, hostClient.getLangData());
 
@@ -194,6 +196,7 @@ public class UDPTransformer implements Runnable {
                     int packetLength = packetToClient.getLength();
 
                     if (packetLength > 0) {
+                        NeoProxyServer.TOTAL_BYTES_COUNTER.add(packetLength);
                         hostClient.getKey().mineMib("UDP-Transformer", SizeCalculator.byteToMib(packetLength + 10));
                         tellRestBalance(hostClient, aTenMibSize, packetLength, hostClient.getLangData());
 

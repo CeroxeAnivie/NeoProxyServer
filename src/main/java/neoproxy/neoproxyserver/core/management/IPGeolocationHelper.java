@@ -138,36 +138,53 @@ public class IPGeolocationHelper {
     }
 
     /**
-     * 智能解析：兼容 5段式 和 4段式 数据
-     * 5段式: 国家|区域|省份|城市|ISP
-     * 4段式: 国家|省份|城市|ISP
+     * 适配 v3.13.0 最新格式：国家|省份|城市|ISP|国家代码
+     * 示例1 (国内): 中国|广东省|深圳市|移动|CN
+     * 示例2 (国外): United Kingdom|England|Yateley|0|GB
+     * 示例3 (保留): Reserved|Reserved|Reserved|0|0
      */
     private static LocationInfo parseRegionStr(String region, String sourceName) {
-        String[] parts = region.split("\\|");
-        String location = "";
-        String isp = "Unknown";
+        if (region == null || region.isEmpty()) {
+            return LocationInfo.failed();
+        }
 
-        if (parts.length == 5) {
-            location = Arrays.stream(new String[]{parts[0], parts[2], parts[3]})
-                    .filter(s -> s != null && !"0".equals(s) && !"Unknown".equalsIgnoreCase(s))
-                    .distinct()
-                    .collect(Collectors.joining(" "));
-            isp = parts[4];
-        } else if (parts.length == 4) {
-            location = Arrays.stream(new String[]{parts[0], parts[1], parts[2]})
-                    .filter(s -> s != null && !"0".equals(s) && !"Unknown".equalsIgnoreCase(s))
-                    .distinct()
-                    .collect(Collectors.joining(" "));
-            isp = parts[3];
-        } else {
+        String[] parts = region.split("\\|");
+
+        // v3.13.0 统一为 5 段，如果不足 5 段说明数据文件版本不对
+        if (parts.length < 5) {
             return new LocationInfo(region, "Unknown", true, sourceName);
+        }
+
+        String country = parts[0]; // 国家
+        String province = parts[1]; // 省份
+        String city = parts[2]; // 城市
+        String isp = parts[3]; // ISP
+        String isoCode = parts[4]; // 国家代码 (iso-3166-alpha2)
+
+        // 1. 处理保留地址
+        if ("Reserved".equalsIgnoreCase(country)) {
+            return new LocationInfo("Reserved IP", "Unknown", true, sourceName);
+        }
+
+        // 2. 拼接地理位置 (国家 省份 城市)
+        // 过滤掉为 "0" 的字段（代表无该级信息）
+        String location = Arrays.stream(new String[]{country, province, city})
+                .filter(s -> s != null && !"0".equals(s))
+                .distinct()
+                .collect(Collectors.joining(" "));
+
+        // 3. 处理国家代码 (建议拼在位置后面，方便识别海外城市)
+        if (!"0".equals(isoCode)) {
+            location += " [" + isoCode + "]";
+        }
+
+        // 4. 处理 ISP
+        if (isp == null || "0".equals(isp)) {
+            isp = "Unknown";
         }
 
         if (location.isBlank()) {
             location = "Unknown Region";
-        }
-        if (isp == null || "0".equals(isp)) {
-            isp = "Unknown";
         }
 
         return new LocationInfo(location, isp, true, sourceName);

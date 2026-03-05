@@ -2,6 +2,8 @@ package neoproxy.neoproxyserver.core.exceptions;
 
 import neoproxy.neoproxyserver.core.ServerLogger;
 
+import static neoproxy.neoproxyserver.core.ServerLogger.alert;
+
 public class UnRecognizedKeyException extends Exception {
     /**
      * 构造函数，仅用于创建异常对象，不记录日志。
@@ -20,8 +22,9 @@ public class UnRecognizedKeyException extends Exception {
      * @throws UnRecognizedKeyException 总是抛出此异常
      */
     public static void throwException(String key) throws UnRecognizedKeyException {
-        // 使用 errorWithSource 来明确指定来源和消息键，避免重载歧义
-        ServerLogger.errorWithSource("NeoProxyServer", "exception.unRecognizedKey.message", key);
+        if (alert) {
+            ServerLogger.errorWithSource("NeoProxyServer", "exception.unRecognizedKey.message", key);
+        }
         String message = ServerLogger.getMessage("exception.unRecognizedKey.message", key);
         throw new UnRecognizedKeyException(message);
     }

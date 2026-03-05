@@ -2,12 +2,16 @@ package neoproxy.neoproxyserver.core.exceptions;
 
 import neoproxy.neoproxyserver.core.ServerLogger;
 
+import static neoproxy.neoproxyserver.core.ServerLogger.alert;
+
 public class PortOccupiedException extends Exception {
 
     // 私有构造器，强制使用静态方法抛出
     public PortOccupiedException(String key) {
         super(ServerLogger.getMessage("exception.portOccupied.message"));
-        ServerLogger.errorWithSource("NKM->" + key, "exception.portOccupied.message");
+        if (alert) {
+            ServerLogger.errorWithSource("NKM->" + key, "exception.portOccupied.message");
+        }
     }
 
     // 静态抛出方法

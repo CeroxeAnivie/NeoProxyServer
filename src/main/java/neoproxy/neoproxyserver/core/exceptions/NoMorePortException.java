@@ -16,7 +16,7 @@ public class NoMorePortException extends Exception {
         throw new NoMorePortException(message);
     }
 
-    // 场景 B: 特定端口被占用 (替代原本的 AlreadyBlindPortException)
+    // 场景 B: 特定端口被占用
     public static void throwException(int port) throws NoMorePortException {
         // 你可以在 messages.properties 里加一个 exception.portLocalOccupied = 本地端口 {0} 已被占用
         // 这里暂时用 warn 直接输出

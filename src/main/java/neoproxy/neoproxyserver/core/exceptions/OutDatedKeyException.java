@@ -3,10 +3,14 @@ package neoproxy.neoproxyserver.core.exceptions;
 import neoproxy.neoproxyserver.core.ServerLogger;
 import neoproxy.neoproxyserver.core.management.SequenceKey;
 
+import static neoproxy.neoproxyserver.core.ServerLogger.alert;
+
 public class OutDatedKeyException extends Exception {
     private OutDatedKeyException(String message) {
         super(message);
-        ServerLogger.error("exception.outDatedKey.message", message);
+        if (alert) {
+            ServerLogger.error("exception.outDatedKey.message", message);
+        }
     }
 
     public static void throwException(SequenceKey key) throws OutDatedKeyException {

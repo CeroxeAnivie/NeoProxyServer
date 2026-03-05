@@ -162,15 +162,20 @@ public class WebAdminServer extends NanoWSD {
 
         int tokenType = WebAdminManager.verifyTokenAndGetType(token);
         if (tokenType == 0) return serveErrorPage();
-        if (isWebsocketRequested(session)) return super.serve(session);
-        if (checkConflictWithZombieDetection(tokenType, remoteIp)) return serveErrorPage();
 
+        // 提取 URI 和 Method 提前处理
         String uri = session.getUri();
         Method method = session.getMethod();
 
+        // 【核心修改】如果是文件相关的 API 操作，直接进入处理逻辑，跳过单例冲突检查
+        // 这样即使控制台正在运行，也不会影响文件的下载和上传
         if (Method.GET.equals(method) && "/check_exists".equals(uri)) return handleCheckExists(session);
         if (Method.POST.equals(method) && "/upload".equals(uri)) return handleFileUpload(session);
         if (Method.GET.equals(method) && "/download".equals(uri)) return handleFileDownload(session);
+
+        // 只有在尝试升级 WebSocket 或 加载主页时才触发单例保护检查
+        if (isWebsocketRequested(session)) return super.serve(session);
+        if (checkConflictWithZombieDetection(tokenType, remoteIp)) return serveErrorPage();
 
         String html = loadResourceString("templates/webadmin/index.html");
         if (html == null)
@@ -189,6 +194,20 @@ public class WebAdminServer extends NanoWSD {
             return newFixedLengthResponse(Status.FORBIDDEN, NanoHTTPD.MIME_PLAINTEXT, "Invalid Path");
         File target = new File(new File(NeoProxyServer.CURRENT_DIR_PATH, relPath), filename);
         return newFixedLengthResponse(Status.OK, NanoHTTPD.MIME_PLAINTEXT, String.valueOf(target.exists()));
+    }
+
+    private boolean isBinaryFile(File f) {
+        try (InputStream in = new FileInputStream(f)) {
+            byte[] buf = new byte[1024];
+            int read = in.read(buf);
+            if (read == -1) return false; // 空文件视为文本
+            for (int i = 0; i < read; i++) {
+                if (buf[i] == 0) return true; // 包含空字节，判定为二进制
+            }
+            return false;
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     private Response handleFileUpload(IHTTPSession session) {
@@ -303,12 +322,12 @@ public class WebAdminServer extends NanoWSD {
 
     private String determineMimeType(String name) {
         name = name.toLowerCase();
-        if (name.endsWith(".html")) return "text/html";
-        if (name.endsWith(".css")) return "text/css";
-        if (name.endsWith(".js")) return "text/javascript";
-        if (name.endsWith(".json")) return "application/json";
+        if (name.endsWith(".html")) return "text/html; charset=utf-8";
+        if (name.endsWith(".css")) return "text/css; charset=utf-8";
+        if (name.endsWith(".js")) return "text/javascript; charset=utf-8";
+        if (name.endsWith(".json")) return "application/json; charset=utf-8";
         if (name.endsWith(".txt") || name.endsWith(".log") || name.endsWith(".cfg") || name.endsWith(".properties"))
-            return "text/plain";
+            return "text/plain; charset=utf-8";
         if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
         if (name.endsWith(".png")) return "image/png";
         if (name.endsWith(".gif")) return "image/gif";
@@ -761,11 +780,18 @@ public class WebAdminServer extends NanoWSD {
                     sendJson("error", "Invalid file");
                     return;
                 }
-                if (f.length() > 512 * 1024) {
+                if (f.length() > 1024 * 1024 || isBinaryFile(f)) {
                     sendJsonRaw("{\"type\":\"file_too_large\",\"path\":\"" + escapeJson(relPath) + "\"}");
                     return;
                 }
-                String content = Files.readString(f.toPath(), StandardCharsets.UTF_8);
+                String content;
+                try {
+                    content = Files.readString(f.toPath(), StandardCharsets.UTF_8);
+                } catch (IOException e) {
+                    // 如果 UTF-8 读取失败（例如 GBK 文件），视为不兼容文件，提示下载
+                    sendJsonRaw("{\"type\":\"file_too_large\",\"path\":\"" + escapeJson(relPath) + "\"}");
+                    return;
+                }
                 sendJsonRaw("{\"type\":\"file_content\",\"path\":\"" + escapeJson(relPath) + "\",\"payload\":\"" + escapeJson(content) + "\"}");
             } catch (Exception e) {
                 sendJson("error", "Read failed: " + e.getMessage());

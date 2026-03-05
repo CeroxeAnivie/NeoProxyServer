@@ -293,7 +293,7 @@ public class WebAdminServer extends NanoWSD {
                     try (ZipOutputStream zos = new ZipOutputStream(out)) {
                         zipFile(f, f.getName(), zos);
                     } catch (Exception e) {
-                        ServerLogger.errorWithSource("WebAdmin", "Zip Error", e);
+                        ServerLogger.logRaw("WebAdmin", "Zip Error "+e);
                         Debugger.debugOperation("Zip Error: " + e.getMessage());
                     } finally {
                         try {

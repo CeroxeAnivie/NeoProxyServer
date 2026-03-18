@@ -26,6 +26,29 @@ import static neoproxy.neoproxyserver.core.Debugger.debugOperation;
 import static neoproxy.neoproxyserver.core.ServerLogger.sayHostClientDiscInfo;
 import static neoproxy.neoproxyserver.core.management.SequenceKey.saveToDB;
 
+/**
+ * HostClient - 内网穿透客户端会话管理类
+ *
+ * <p>每个连接到NeoProxyServer的客户端对应一个HostClient实例。
+ * 负责管理客户端的生命周期、心跳检测、流量统计、TCP/UDP连接池等。</p>
+ *
+ * <p>核心功能：</p>
+ * <ul>
+ *   <li>客户端连接管理 - 维护与内网客户端的加密连接</li>
+ *   <li>心跳检测 - 检测客户端是否在线</li>
+ *   <li>密钥验证 - 验证客户端提供的访问密钥</li>
+ *   <li>流量控制 - 统计和限制客户端流量使用</li>
+ *   <li>端口分配 - 为客户端分配公网访问端口</li>
+ *   <li>TCP/UDP连接池 - 管理活跃的传输连接</li>
+ * </ul>
+ *
+ * <p>线程安全：此类是线程安全的，使用ConcurrentHashMap管理TCP连接，
+ * 使用AtomicBoolean管理关闭状态。</p>
+ *
+ * @author Ceroxe
+ * @version 6.1.0
+ * @since 6.1.0
+ */
 public final class HostClient implements Closeable {
     private static final String EXPECTED_HEARTBEAT = "PING";
     public static int SAVE_DELAY = 3000;

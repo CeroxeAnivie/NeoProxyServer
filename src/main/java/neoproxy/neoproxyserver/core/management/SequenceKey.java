@@ -18,6 +18,31 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 
+/**
+ * SequenceKey - 访问密钥实体类
+ *
+ * <p>表示一个内网穿透访问密钥，包含密钥的所有属性：</p>
+ * <ul>
+ *   <li>密钥名称（唯一标识）</li>
+ *   <li>流量余额（MiB）</li>
+ *   <li>过期时间</li>
+ *   <li>端口配置</li>
+ *   <li>速率限制</li>
+ *   <li>启用状态</li>
+ *   <li>Web HTML 访问权限</li>
+ * </ul>
+ *
+ * <p>线程安全：此类使用 ReentrantLock 保护流量扣减操作，
+ * 使用 volatile 保证字段可见性。</p>
+ *
+ * <p>数据持久化：通过 KeyDataProvider 实现数据的加载和保存，
+ * 支持本地文件和远程数据库两种模式。</p>
+ *
+ * @author Ceroxe
+ * @version 6.1.0
+ * @since 6.1.0
+ * @see KeyDataProvider
+ */
 public class SequenceKey {
     public static final int DYNAMIC_PORT = -1;
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy/MM/dd-HH:mm");

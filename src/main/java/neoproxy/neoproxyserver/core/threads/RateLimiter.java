@@ -4,6 +4,32 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import static neoproxy.neoproxyserver.core.Debugger.debugOperation;
 
+/**
+ * RateLimiter - 速率限制器
+ *
+ * <p>基于令牌桶算法实现的数据传输速率限制器。用于控制客户端的
+ * 网络传输速率，防止单个客户端占用过多带宽。</p>
+ *
+ * <p>核心特性：</p>
+ * <ul>
+ *   <li>支持动态调整速率限制</li>
+ *   <li>使用 ReentrantLock 避免虚拟线程 Pinning</li>
+ *   <li>精确的字节级流量控制</li>
+ *   <li>零速率限制时无性能开销</li>
+ * </ul>
+ *
+ * <p>线程安全：此类是线程安全的，所有状态变更都通过锁保护。</p>
+ *
+ * <p>使用示例：</p>
+ * <pre>
+ * RateLimiter limiter = new RateLimiter(10.0); // 10 Mbps
+ * limiter.onBytesTransferred(1024); // 传输 1KB 数据
+ * </pre>
+ *
+ * @author Ceroxe
+ * @version 6.1.0
+ * @since 6.1.0
+ */
 public class RateLimiter {
     // 使用 ReentrantLock 替代 synchronized，避免虚拟线程 Pinning 问题
     private final ReentrantLock lock = new ReentrantLock();
@@ -21,6 +47,30 @@ public class RateLimiter {
     public RateLimiter(double maxMbps) {
         // 初始化时直接设置，不走锁逻辑也可以，但为了统一调用 setMaxMbps
         setMaxMbps(maxMbps);
+    }
+
+    /**
+     * 获取当前速率限制（Mbps）
+     *
+     * @return 当前速率限制，0表示不限速
+     */
+    public double getCurrentRateMbps() {
+        return lastMbps;
+    }
+
+    /**
+     * 重置速率限制器状态
+     *
+     * <p>清除累计流量并重置时间基准。</p>
+     */
+    public void reset() {
+        lock.lock();
+        try {
+            this.startTime = System.nanoTime();
+            this.totalBytes = 0;
+        } finally {
+            lock.unlock();
+        }
     }
 
     public void setMaxMbps(double maxMbps) {

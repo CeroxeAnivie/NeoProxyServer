@@ -81,7 +81,6 @@ TELL_BALANCE_MIB=10                  # 每消耗10MB流量通知剩余量
 HOST_HOOK_PORT=44801                 # 客户端注册端口
 HOST_CONNECT_PORT=44802              # 数据通道端口
 WEB_ADMIN_PORT=44803                 # Web管理界面端口
-BUFFER_LEN=4096                      # 数据缓冲区大小
 SAVE_DELAY=3000                      # 密钥状态保存间隔（毫秒）
 AES_KEY_SIZE=128                     # 加密密钥长度
 HEARTBEAT_TIMEOUT=5000               # 心跳超时时间（毫秒）
@@ -90,6 +89,20 @@ WEB_ADMIN_TOKEN=                     # 永久Web管理Token（留空则不启用
 ```
 
 > 修改后重启生效。Web管理端口变更后会自动重启Web服务。
+
+---
+
+## 🔗 集群同步配置 (`sync.cfg`)
+
+NeoProxyServer 支持通过 `sync.cfg` 配置与 NeoKeyManager 中心服务器连接，实现多节点集群管理：
+
+```ini
+MANAGER_URL=                         # NeoKeyManager 中心服务器地址（留空则仅使用本地模式）
+MANAGER_TOKEN=my_secret_token_123    # 验证 Token
+NODE_ID=Node-1                       # 当前节点唯一 ID（用于区分不同物理机，获取特异化端口）
+```
+
+配置后将启用同步模式，密钥和端口分配可由中心服务器统一管理。
 
 ---
 

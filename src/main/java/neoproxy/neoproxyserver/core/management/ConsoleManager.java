@@ -249,6 +249,14 @@ public class ConsoleManager {
             }
             handleReloadCommand();
         });
+
+        registerWrapper("profile", "Generate a detailed performance diagnostic report", (List<String> params) -> {
+            if (!params.isEmpty()) {
+                myConsole.warn(COMMAND_SOURCE.get(), "Usage: profile");
+                return;
+            }
+            handleProfileCommand();
+        });
     }
 
     private static void handleAlert(boolean b) {
@@ -263,23 +271,28 @@ public class ConsoleManager {
     private static void handleReloadCommand() {
         ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.reloadingConfig");
 
-        // 1. 重载配置文件 (config.cfg, sync.cfg)
         ConfigOperator.readAndSetValue();
 
-        // [新增] 2. 重载数据库连接 (确保 sk 文件变动或锁死恢复)
         Database.reload();
 
-        // 3. 重载鉴权提供者 (切换 Local <-> Remote 模式)
         SequenceKey.reloadProvider();
 
         ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.configReloaded");
 
-        // [提示] 端口变动提醒
-        // 由于热重启端口非常危险且不稳定，建议只提示用户手动重启
         if (ConfigOperator.CONFIG_FILE.lastModified() > System.currentTimeMillis() - 5000) {
-            ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "configOperator.permTokenWarning"); // 借用个警告格式
-            // 这里实际上应该输出: "Note: Port changes require a full restart to take effect."
-            // 如果你有对应的语言包 key 可以换上，没有的话就保持日志简洁
+            ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "configOperator.permTokenWarning");
+        }
+    }
+
+    private static void handleProfileCommand() {
+        ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.profileGenerating");
+        
+        String reportPath = ProfileReporter.generateAndSaveReport();
+        
+        if (reportPath != null) {
+            ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.profileGenerated", reportPath);
+        } else {
+            ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.profileGenerationFailed");
         }
     }
 

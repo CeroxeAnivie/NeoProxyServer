@@ -53,3 +53,6 @@ config.cfg
 hs_err_pid*.log
 replay_pid*.log
 
+### Profile logs ###
+profile*.txt
+

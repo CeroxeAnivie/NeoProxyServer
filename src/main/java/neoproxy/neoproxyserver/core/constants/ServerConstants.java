@@ -16,7 +16,7 @@ public final class ServerConstants {
     }
     
     /** 服务器版本号 */
-    public static final String VERSION = "6.1.0";
+    public static final String VERSION = "6.1.1";
     
     /** 协议版本 */
     public static final String PROTOCOL_VERSION = "1.0";

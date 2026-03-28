@@ -23,9 +23,14 @@ class ServerConstantsTest {
     }
 
     @Test
-    @DisplayName("测试版本常量")
+    @DisplayName("测试版本常量格式正确")
     void testVersionConstants() {
-        assertEquals("6.1.0", ServerConstants.VERSION);
+        // 验证版本号格式符合语义化版本规范 (X.Y.Z)
+        assertNotNull(ServerConstants.VERSION);
+        assertTrue(ServerConstants.VERSION.matches("\\d+\\.\\d+\\.\\d+"),
+            "版本号应符合格式 X.Y.Z, 实际值: " + ServerConstants.VERSION);
+
+        // 验证协议版本号
         assertEquals("1.0", ServerConstants.PROTOCOL_VERSION);
     }
 

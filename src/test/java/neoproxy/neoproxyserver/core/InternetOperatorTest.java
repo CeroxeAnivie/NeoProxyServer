@@ -9,8 +9,8 @@ import java.lang.reflect.Modifier;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@DisplayName("InternetOperator 详细测试")
-class InternetOperatorDetailTest {
+@DisplayName("InternetOperator 测试")
+class InternetOperatorTest {
 
     @Test
     @DisplayName("测试私有构造函数")

@@ -84,6 +84,7 @@ public class TCPTransformer {
             hostClient.unregisterTcpSocket(client);
             close(client, hostReply.host());
             ServerLogger.sayClientTCPConnectDestroyInfo(hostClient, client);
+            threadManager.close();
         });
     }
 

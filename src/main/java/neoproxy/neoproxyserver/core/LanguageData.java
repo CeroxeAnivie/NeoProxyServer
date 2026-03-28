@@ -38,7 +38,7 @@ public class LanguageData implements Serializable {
         languageData.REMOTE_PORT_OCCUPIED = "连接被拒绝：该端口已被其他节点占用，或已达到最大允许连接数。";
         languageData.IF_YOU_SEE_EULA = "如果你已经开始使用的本软件，说明你已经知晓并同意了本软件的eula协议";
         languageData.VERSION = "版本 ： ";
-        languageData.PLEASE_ENTER_ACCESS_CODE = "请输入序列号：";
+        languageData.PLEASE_ENTER_ACCESS_CODE = "请输入密钥：";
         languageData.CONNECT_TO = "连接 ";
         languageData.OMITTED = " ...";
         languageData.A_CONNECTION = "一个 ";
@@ -50,13 +50,13 @@ public class LanguageData implements Serializable {
         languageData.FAIL_TO_BUILD_A_CHANNEL_FROM = "连接以下地址失败：";
         languageData.DESTROY = " 的通道关闭";
         languageData.FAIL_TO_CONNECT_LOCALHOST = "连接以下地址失败：127.0.0.1:";
-        languageData.THE_KEY = "这个序列号 ";
-        languageData.KEY = "序列号 ";
+        languageData.THE_KEY = "这个密钥 ";
+        languageData.KEY = "密钥 ";
         languageData.ARE_OUT_OF_DATE = " 已经过期了。";
-        languageData.THIS_ACCESS_CODE_HAVE = "这个序列号有 ";
+        languageData.THIS_ACCESS_CODE_HAVE = "这个密钥有 ";
         languageData.MB_OF_FLOW_LEFT = " MB 流量可以消耗。";
-        languageData.THIS_KEY_HAVE_NO_NETWORK_FLOW_LEFT = "这个序列号已经没有流量了，强制退出。。。";
-        languageData.ACCESS_DENIED_FORCE_EXITING = "序列号错误，强制退出。。。";
+        languageData.THIS_KEY_HAVE_NO_NETWORK_FLOW_LEFT = "这个密钥已经没有流量了，强制退出。。。";
+        languageData.ACCESS_DENIED_FORCE_EXITING = "密钥错误，强制退出。。。";
         languageData.EXPIRE_AT = "有效期至：";
         languageData.DETECTED_VERSION = "检测到客户端版本：";
         languageData.UNSUPPORTED_VERSION_MSG = "不受支持的版本，应该为:";

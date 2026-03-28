@@ -29,6 +29,7 @@ import java.util.Arrays;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.ReentrantLock;
 
 import static neoproxy.neoproxyserver.core.HostClient.waitForTcpEnabled;
@@ -53,7 +54,7 @@ public class NeoProxyServer {
                                                         \s
                                                          \
             """;
-    public static final java.util.concurrent.atomic.LongAdder TOTAL_BYTES_COUNTER = new java.util.concurrent.atomic.LongAdder();
+    public static final LongAdder TOTAL_BYTES_COUNTER = new LongAdder();
     private static final ReentrantLock UDP_GLOBAL_LOCK = new ReentrantLock();
     public static String VERSION = getFromAppProperties("app.version");
     public static String EXPECTED_CLIENT_VERSION = getFromAppProperties("app.expected.client.version");

@@ -39,8 +39,10 @@ public final class ConfigOperator {
     }
 
     private static void readMainConfig() {
+        boolean isNewlyCreated = false;
         if (!Files.exists(CONFIG_PATH)) {
             copyConfigFromResource("config.cfg", CONFIG_PATH);
+            isNewlyCreated = true;
         }
 
         LineConfigReader reader = new LineConfigReader(CONFIG_FILE);
@@ -50,6 +52,11 @@ public final class ConfigOperator {
             applyMainSettings(reader);
         } catch (IOException e) {
             ServerLogger.error("configOperator.corruptedConfigFile", e);
+            // 如果文件是刚刚创建的，不应该再次复制，直接报错退出
+            if (isNewlyCreated) {
+                ServerLogger.error("configOperator.fatalConfigError", e);
+                System.exit(-1);
+            }
             copyConfigFromResource("config.cfg", CONFIG_PATH);
             try {
                 reader.load();
@@ -62,8 +69,10 @@ public final class ConfigOperator {
     }
 
     private static void readSyncConfig() {
+        boolean isNewlyCreated = false;
         if (!Files.exists(SYNC_CONFIG_PATH)) {
             copyConfigFromResource("sync.cfg", SYNC_CONFIG_PATH);
+            isNewlyCreated = true;
         }
 
         LineConfigReader reader = new LineConfigReader(SYNC_CONFIG_FILE);
@@ -72,6 +81,11 @@ public final class ConfigOperator {
             applySyncSettings(reader);
         } catch (IOException e) {
             ServerLogger.error("configOperator.corruptedConfigFile", e);
+            // 如果文件是刚刚创建的，不应该再次复制
+            if (isNewlyCreated) {
+                ServerLogger.error("configOperator.fatalConfigError", e);
+                return;
+            }
             copyConfigFromResource("sync.cfg", SYNC_CONFIG_PATH);
             try {
                 reader.load();
@@ -88,9 +102,9 @@ public final class ConfigOperator {
                 throw new RuntimeException("Default " + resourceName + " not found in resources!");
             }
             Files.copy(is, targetPath, StandardCopyOption.REPLACE_EXISTING);
-            ServerLogger.info("configOperator.createdDefaultConfig");
+            ServerLogger.info("configOperator.createdDefaultConfig", resourceName);
         } catch (IOException e) {
-            ServerLogger.error("configOperator.failToWriteDefaultConfig", e);
+            ServerLogger.error("configOperator.failToWriteDefaultConfig", e, resourceName);
             System.exit(-1);
         }
     }

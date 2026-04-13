@@ -6,7 +6,7 @@
 
     <groupId>neoproxy</groupId>
     <artifactId>NeoProxyServer</artifactId>
-    <version>6.1.1</version>
+    <version>6.2.0</version>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>
@@ -37,9 +37,25 @@
             <version>2.4.240</version>
         </dependency>
         <dependency>
-            <groupId>org.nanohttpd</groupId>
-            <artifactId>nanohttpd-websocket</artifactId>
-            <version>2.3.1</version>
+            <groupId>io.javalin</groupId>
+            <artifactId>javalin</artifactId>
+            <version>6.6.0</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>1.79</version>
+        </dependency>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk18on</artifactId>
+            <version>1.79</version>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-nop</artifactId>
+            <version>2.0.16</version>
         </dependency>
         <dependency>
             <groupId>org.lionsoul</groupId>
@@ -133,6 +149,16 @@
                                     <mainClass>neoproxy.neoproxyserver.NeoProxyServer</mainClass>
                                 </transformer>
                             </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
                         </configuration>
                     </execution>
                 </executions>

@@ -66,13 +66,71 @@ public class WebAdminManager {
             MANAGER_LOCK.unlock();
         }
 
+        // 如果启用了 SSL，直接使用 Javalin 监听 WEB_ADMIN_PORT，不需要网关
+        if (isSslEnabled()) {
+            startSslServer();
+        } else {
+            startPlainServer();
+        }
+    }
+
+    private static void startSslServer() {
         ThreadManager.runAsync(() -> {
             try {
                 MANAGER_LOCK.lock();
                 try {
                     if (!isStarting) return;
 
-                    // 1. 启动内部 NanoHTTPD 服务器 (绑定到 localhost 随机端口)
+                    // SSL 模式：直接启动 Javalin 监听 WEB_ADMIN_PORT
+                    internalServer = new WebAdminServer(WEB_ADMIN_PORT);
+                    internalServer.setSslConfig(sslCertPath, sslKeyPath, sslPassword);
+                    internalServer.start(5000, false);
+
+                    isRunning = true;
+                    isStarting = false;
+
+                    ServerLogger.infoWithSource("WebAdmin", "webAdmin.sslStarted", WEB_ADMIN_PORT);
+                } finally {
+                    MANAGER_LOCK.unlock();
+                }
+
+                // SSL 模式下不需要网关循环，保持线程存活
+                while (isRunning) {
+                    try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException e) {
+                        break;
+                    }
+                }
+
+            } catch (Exception e) {
+                MANAGER_LOCK.lock();
+                try {
+                    isRunning = false;
+                    isStarting = false;
+                    if (internalServer != null) internalServer.stop();
+                    internalServer = null;
+                } finally {
+                    MANAGER_LOCK.unlock();
+                }
+
+                if (e.getMessage() != null && e.getMessage().contains("bind")) {
+                    ServerLogger.errorWithSource("WebAdmin", "webAdmin.bindFailed", WEB_ADMIN_PORT);
+                } else {
+                    ServerLogger.errorWithSource("WebAdmin", "webAdmin.startFailed", e.getMessage());
+                }
+            }
+        });
+    }
+
+    private static void startPlainServer() {
+        ThreadManager.runAsync(() -> {
+            try {
+                MANAGER_LOCK.lock();
+                try {
+                    if (!isStarting) return;
+
+                    // 1. 启动内部 Javalin 服务器 (绑定到 localhost 随机端口)
                     internalServer = new WebAdminServer(0); // 0 = 随机端口
                     internalServer.start(5000, false);
 
@@ -307,5 +365,20 @@ public class WebAdminManager {
 
     public static boolean isRunning() {
         return isRunning;
+    }
+
+    // SSL 配置字段
+    private static String sslCertPath = "";
+    private static String sslKeyPath = "";
+    private static String sslPassword = "";
+
+    public static void setSslConfig(String certPath, String keyPath, String password) {
+        sslCertPath = certPath != null ? certPath : "";
+        sslKeyPath = keyPath != null ? keyPath : "";
+        sslPassword = password != null ? password : "";
+    }
+
+    public static boolean isSslEnabled() {
+        return !sslCertPath.isEmpty() && !sslKeyPath.isEmpty();
     }
 }

@@ -39,10 +39,8 @@ public final class ConfigOperator {
     }
 
     private static void readMainConfig() {
-        boolean isNewlyCreated = false;
         if (!Files.exists(CONFIG_PATH)) {
             copyConfigFromResource("config.cfg", CONFIG_PATH);
-            isNewlyCreated = true;
         }
 
         LineConfigReader reader = new LineConfigReader(CONFIG_FILE);
@@ -52,11 +50,6 @@ public final class ConfigOperator {
             applyMainSettings(reader);
         } catch (IOException e) {
             ServerLogger.error("configOperator.corruptedConfigFile", e);
-            // 如果文件是刚刚创建的，不应该再次复制，直接报错退出
-            if (isNewlyCreated) {
-                ServerLogger.error("configOperator.fatalConfigError", e);
-                System.exit(-1);
-            }
             copyConfigFromResource("config.cfg", CONFIG_PATH);
             try {
                 reader.load();
@@ -69,10 +62,8 @@ public final class ConfigOperator {
     }
 
     private static void readSyncConfig() {
-        boolean isNewlyCreated = false;
         if (!Files.exists(SYNC_CONFIG_PATH)) {
             copyConfigFromResource("sync.cfg", SYNC_CONFIG_PATH);
-            isNewlyCreated = true;
         }
 
         LineConfigReader reader = new LineConfigReader(SYNC_CONFIG_FILE);
@@ -81,11 +72,6 @@ public final class ConfigOperator {
             applySyncSettings(reader);
         } catch (IOException e) {
             ServerLogger.error("configOperator.corruptedConfigFile", e);
-            // 如果文件是刚刚创建的，不应该再次复制
-            if (isNewlyCreated) {
-                ServerLogger.error("configOperator.fatalConfigError", e);
-                return;
-            }
             copyConfigFromResource("sync.cfg", SYNC_CONFIG_PATH);
             try {
                 reader.load();
@@ -97,14 +83,14 @@ public final class ConfigOperator {
     }
 
     private static void copyConfigFromResource(String resourceName, Path targetPath) {
-        try (InputStream is = NeoProxyServer.class.getResourceAsStream("/" + resourceName)) {
+        try (InputStream is = NeoProxyServer.class.getResourceAsStream("/templates/" + resourceName)) {
             if (is == null) {
                 throw new RuntimeException("Default " + resourceName + " not found in resources!");
             }
             Files.copy(is, targetPath, StandardCopyOption.REPLACE_EXISTING);
-            ServerLogger.info("configOperator.createdDefaultConfig", resourceName);
+            ServerLogger.info("configOperator.createdDefaultConfig");
         } catch (IOException e) {
-            ServerLogger.error("configOperator.failToWriteDefaultConfig", e, resourceName);
+            ServerLogger.error("configOperator.failToWriteDefaultConfig", e);
             System.exit(-1);
         }
     }
@@ -127,6 +113,12 @@ public final class ConfigOperator {
 
         String permToken = reader.getOptional("WEB_ADMIN_TOKEN").orElse("").trim();
         WebAdminManager.setPermanentToken(permToken);
+
+        // 读取 SSL 配置
+        String sslCertPath = reader.getOptional("SSL_CERT_PATH").orElse("").trim();
+        String sslKeyPath = reader.getOptional("SSL_KEY_PATH").orElse("").trim();
+        String sslPassword = reader.getOptional("SSL_KEY_PASSWORD").orElse("").trim();
+        WebAdminManager.setSslConfig(sslCertPath, sslKeyPath, sslPassword);
 
         if (!permToken.isEmpty()) {
             ServerLogger.warnWithSource("Config", "configOperator.permTokenWarning");

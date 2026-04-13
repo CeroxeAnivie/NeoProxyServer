@@ -34,7 +34,7 @@ public class TCPTransformer {
     private static String FORBIDDEN_HTML_TEMPLATE;
 
     static {
-        try (InputStream inputStream = TCPTransformer.class.getResourceAsStream("/templates/forbidden.html")) {
+        try (InputStream inputStream = TCPTransformer.class.getResourceAsStream("/templates/html-forbidden.html")) {
             if (inputStream == null) {
                 FORBIDDEN_HTML_TEMPLATE = "<html><body><h1>403 Forbidden</h1><p>{{CUSTOM_MESSAGE}}</p></body></html>";
             } else {
@@ -84,7 +84,6 @@ public class TCPTransformer {
             hostClient.unregisterTcpSocket(client);
             close(client, hostReply.host());
             ServerLogger.sayClientTCPConnectDestroyInfo(hostClient, client);
-            threadManager.close();
         });
     }
 

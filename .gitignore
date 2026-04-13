@@ -47,7 +47,7 @@ sk.trace.db
 banList.txt.bak
 banList.json
 banList.txt
-config.cfg
+/config.cfg
 
 ### JVM crash logs ###
 hs_err_pid*.log

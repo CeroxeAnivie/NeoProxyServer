@@ -29,7 +29,6 @@ import java.util.Arrays;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.ReentrantLock;
 
 import static neoproxy.neoproxyserver.core.HostClient.waitForTcpEnabled;
@@ -54,7 +53,7 @@ public class NeoProxyServer {
                                                         \s
                                                          \
             """;
-    public static final LongAdder TOTAL_BYTES_COUNTER = new LongAdder();
+    public static final java.util.concurrent.atomic.LongAdder TOTAL_BYTES_COUNTER = new java.util.concurrent.atomic.LongAdder();
     private static final ReentrantLock UDP_GLOBAL_LOCK = new ReentrantLock();
     public static String VERSION = getFromAppProperties("app.version");
     public static String EXPECTED_CLIENT_VERSION = getFromAppProperties("app.expected.client.version");
@@ -88,7 +87,7 @@ public class NeoProxyServer {
     public static void initStructure() {
         Debugger.debugOperation("Entry: initStructure()");
         try {
-            copyResourceToJarDirectory("eula.txt");
+            copyResourceToJarDirectory("templates/eula.txt");
         } catch (IOException e) {
             e.printStackTrace();
             System.exit(-2);

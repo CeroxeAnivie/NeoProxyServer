@@ -9,10 +9,7 @@ import oshi.software.os.InternetProtocolStats;
 import oshi.software.os.OSProcess;
 import oshi.software.os.OperatingSystem;
 
-import com.sun.management.OperatingSystemMXBean;
-
 import java.io.File;
-import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -30,8 +27,8 @@ public class SystemInfoHelper {
         GlobalMemory memory = hal.getMemory();
 
         // 结合 JVM 方法获取实时负载以保证 0.5s 刷新率的性能
-        OperatingSystemMXBean osBean =
-                (OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
+        com.sun.management.OperatingSystemMXBean osBean =
+                (com.sun.management.OperatingSystemMXBean) java.lang.management.ManagementFactory.getOperatingSystemMXBean();
 
         double systemCpu = Math.max(0, osBean.getCpuLoad());
         double processCpu = Math.max(0, osBean.getProcessCpuLoad());

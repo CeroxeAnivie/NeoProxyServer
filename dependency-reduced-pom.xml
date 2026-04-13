@@ -3,7 +3,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>neoproxy</groupId>
   <artifactId>NeoProxyServer</artifactId>
-  <version>6.1.1</version>
+  <version>6.2.0</version>
   <build>
     <resources>
       <resource>
@@ -54,6 +54,16 @@
                   <mainClass>neoproxy.neoproxyserver.NeoProxyServer</mainClass>
                 </transformer>
               </transformers>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
             </configuration>
           </execution>
         </executions>

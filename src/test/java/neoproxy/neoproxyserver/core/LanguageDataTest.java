@@ -130,6 +130,7 @@ class LanguageDataTest {
     void testChineseRemotePortOccupiedDifferent() {
         LanguageData defaultData = new LanguageData();
         LanguageData chineseData = LanguageData.getChineseLanguage();
+
         assertNotEquals(defaultData.REMOTE_PORT_OCCUPIED, chineseData.REMOTE_PORT_OCCUPIED);
     }
 }

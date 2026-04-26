@@ -26,12 +26,12 @@ class TransferSocketAdapterTest {
     @Test
     @DisplayName("测试CONN_TYPE私有构造器")
     void testConnTypePrivateConstructor() throws Exception {
-        Constructor<TransferSocketAdapter.CONN_TYPE> constructor = 
-            TransferSocketAdapter.CONN_TYPE.class.getDeclaredConstructor();
+        Constructor<TransferSocketAdapter.CONN_TYPE> constructor =
+                TransferSocketAdapter.CONN_TYPE.class.getDeclaredConstructor();
         constructor.setAccessible(true);
-        
+
         TransferSocketAdapter.CONN_TYPE instance = constructor.newInstance();
-        
+
         assertNotNull(instance);
     }
 
@@ -40,9 +40,9 @@ class TransferSocketAdapterTest {
     void testConstructor() throws Exception {
         Constructor<TransferSocketAdapter> constructor = TransferSocketAdapter.class.getDeclaredConstructor();
         constructor.setAccessible(true);
-        
+
         TransferSocketAdapter adapter = constructor.newInstance();
-        
+
         assertNotNull(adapter);
     }
 

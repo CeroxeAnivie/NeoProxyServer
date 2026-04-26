@@ -33,7 +33,7 @@ class ProfileReporterTest {
     void testReportFileNameFormat() {
         String reportPath = ProfileReporter.generateAndSaveReport();
         assertNotNull(reportPath, "报告路径不应为空");
-        
+
         File reportFile = new File(reportPath);
         String fileName = reportFile.getName();
 
@@ -41,7 +41,7 @@ class ProfileReporterTest {
         assertTrue(fileName.endsWith(".txt"), "文件名应以'.txt'结尾，实际文件名: " + fileName);
 
         String timestamp = fileName.substring(8, fileName.length() - 4);
-        assertTrue(timestamp.matches("\\d{8}_\\d{6}_\\d{3}"), 
+        assertTrue(timestamp.matches("\\d{8}_\\d{6}_\\d{3}"),
                 "时间戳格式应为yyyyMMdd_HHmmss_SSS，实际时间戳: " + timestamp);
 
         reportFile.delete();

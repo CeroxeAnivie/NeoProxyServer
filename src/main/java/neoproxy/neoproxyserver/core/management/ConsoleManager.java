@@ -279,16 +279,19 @@ public class ConsoleManager {
 
         ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.configReloaded");
 
-        if (ConfigOperator.CONFIG_FILE.lastModified() > System.currentTimeMillis() - 5000) {
+        // 【修复】与启动时 applyMainSettings() 的警告逻辑统一：
+        // 只要 permToken 不为空就发出安全警告，而非基于文件修改时间判断
+        String permToken = neoproxy.neoproxyserver.core.webadmin.WebAdminManager.getPermanentToken();
+        if (permToken != null && !permToken.isEmpty()) {
             ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "configOperator.permTokenWarning");
         }
     }
 
     private static void handleProfileCommand() {
         ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.profileGenerating");
-        
+
         String reportPath = ProfileReporter.generateAndSaveReport();
-        
+
         if (reportPath != null) {
             ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.profileGenerated", reportPath);
         } else {

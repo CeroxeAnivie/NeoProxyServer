@@ -25,8 +25,8 @@ import java.io.IOException;
  *
  * @author Ceroxe
  * @version 6.1.0
- * @since 6.1.0
  * @see IOException
+ * @since 6.1.0
  */
 public class IllegalWebSiteException extends IOException {
 

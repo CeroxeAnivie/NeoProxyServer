@@ -4,9 +4,10 @@ import fun.ceroxe.api.thread.ThreadManager;
 import io.javalin.Javalin;
 import io.javalin.config.JavalinConfig;
 import io.javalin.http.Context;
+import io.javalin.http.staticfiles.Location;
+import io.javalin.websocket.WsCloseContext;
 import io.javalin.websocket.WsContext;
 import io.javalin.websocket.WsMessageContext;
-import io.javalin.websocket.WsCloseContext;
 import neoproxy.neoproxyserver.NeoProxyServer;
 import neoproxy.neoproxyserver.core.Debugger;
 import neoproxy.neoproxyserver.core.HostClient;
@@ -35,7 +36,6 @@ import java.security.cert.X509Certificate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -65,6 +65,68 @@ public class WebAdminServer {
 
     public WebAdminServer(int port) {
         this.port = port;
+    }
+
+    public static void broadcastLog(String message) {
+        if (message.contains("____") || message.contains("/  /")) {
+            saveAndBroadcast(String.format("{\"type\": \"logo\", \"payload\": \"%s\"}", escapeJson(message)));
+            return;
+        }
+        String finalMsg = message;
+        if (!message.startsWith(">") && !message.startsWith("[")) finalMsg = formatLog(message);
+        saveAndBroadcast(String.format("{\"type\": \"log\", \"payload\": \"%s\"}", escapeJson(finalMsg)));
+    }
+
+    private static void broadcastJson(String json) {
+        GLOBAL_LOCK.lock();
+        try {
+            if (activeTempSocket != null && activeTempSocket.isOpen()) {
+                try {
+                    activeTempSocket.send(json);
+                } catch (Exception ignored) {
+                }
+            }
+            if (activePermSocket != null && activePermSocket.isOpen()) {
+                try {
+                    activePermSocket.send(json);
+                } catch (Exception ignored) {
+                }
+            }
+        } finally {
+            GLOBAL_LOCK.unlock();
+        }
+    }
+
+    private static void saveAndBroadcast(String json) {
+        GLOBAL_LOCK.lock();
+        try {
+            if (logHistory.size() >= MAX_HISTORY_SIZE) logHistory.removeFirst();
+            logHistory.add(json);
+            if (activeTempSocket != null && activeTempSocket.isOpen()) {
+                try {
+                    activeTempSocket.send(json);
+                } catch (Exception ignored) {
+                }
+            }
+            if (activePermSocket != null && activePermSocket.isOpen()) {
+                try {
+                    activePermSocket.send(json);
+                } catch (Exception ignored) {
+                }
+            }
+        } finally {
+            GLOBAL_LOCK.unlock();
+        }
+    }
+
+    private static String formatLog(String msg) {
+        return String.format("[%s] [%s]: %s", TIME_FORMATTER.format(LocalDateTime.now()), "WebAdmin", msg);
+    }
+
+    private static String escapeJson(String input) {
+        if (input == null) return "";
+        return input.replace("\\", "\\\\").replace("\"", "\\\"").replace("\b", "\\b")
+                .replace("\f", "\\f").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
     }
 
     public void setSslConfig(String certPath, String keyPath, String password) {
@@ -100,6 +162,13 @@ public class WebAdminServer {
         config.showJavalinBanner = false;
         config.useVirtualThreads = true;
 
+        /*
+         * 静态资源服务：从 classpath 的 static/ 目录提供 CSS/JS 文件。
+         * 由于 index.html 是通过 serveIndexPage() 显式加载的（需要 Token 鉴权），
+         * 静态资源本身不含敏感数据，无需额外鉴权。
+         */
+        config.staticFiles.add("/static", Location.CLASSPATH);
+
         // 配置 SSL（如果启用）
         if (isSslEnabled()) {
             config.jetty.modifyServer(server -> {
@@ -117,7 +186,7 @@ public class WebAdminServer {
                 sslConnector.setPort(port);
 
                 server.setConnectors(new org.eclipse.jetty.server.Connector[]{sslConnector});
-                ServerLogger.infoWithSource("WebAdmin", "webAdmin.sslStarted", port);
+                // SSL 启动成功日志由 WebAdminManager.startSslServer() 统一打印，此处不再重复
             });
         }
     }
@@ -263,14 +332,14 @@ public class WebAdminServer {
 
     private void serveErrorPage(Context ctx) {
         String html = loadResourceString("templates/webadmin/403.html");
-        if (html == null) html = loadResourceString("templates/webadmin/index.html");
         if (html == null) {
+            /* 绝不 fallback 到 index.html —— 那会泄露管理面板 HTML 给未授权用户 */
             ctx.status(403).result("403 Forbidden");
             return;
         }
         ctx.status(403).contentType("text/html; charset=utf-8")
-           .header("Cache-Control", "no-cache, no-store, must-revalidate")
-           .result(html);
+                .header("Cache-Control", "no-cache, no-store, must-revalidate")
+                .result(html);
     }
 
     private void handleCheckExists(Context ctx) {
@@ -321,6 +390,11 @@ public class WebAdminServer {
                 return;
             }
             File targetDir = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
+            // 【安全修复】检查目标目录是否为符号链接
+            if (targetDir.exists() && isUnsafeSymlink(targetDir)) {
+                ctx.status(403).json("{\"status\":\"error\",\"msg\":\"Access Denied\"}");
+                return;
+            }
             if (!targetDir.exists()) targetDir.mkdirs();
             targetFile = new File(targetDir, filename);
             try (InputStream in = ctx.bodyInputStream(); OutputStream out = new FileOutputStream(targetFile)) {
@@ -335,7 +409,10 @@ public class WebAdminServer {
         } catch (Exception e) {
             Debugger.debugOperation("WebAdmin Upload Failed: " + e.getMessage());
             if (!isUploadSuccessful && targetFile != null && targetFile.exists()) {
-                try { if (!targetFile.delete()) targetFile.deleteOnExit(); } catch (Exception ignored) {}
+                try {
+                    if (!targetFile.delete()) targetFile.deleteOnExit();
+                } catch (Exception ignored) {
+                }
             }
             ctx.status(500).json("{\"status\":\"error\",\"msg\":\"" + escapeJson(e.getMessage()) + "\"}");
         }
@@ -354,6 +431,11 @@ public class WebAdminServer {
             return;
         }
         File f = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
+        // 【安全修复】检查符号链接
+        if (isUnsafeSymlink(f)) {
+            ctx.status(403).result("Access Denied");
+            return;
+        }
         if (!f.exists()) {
             ctx.status(404).result("Not Found");
             return;
@@ -362,10 +444,12 @@ public class WebAdminServer {
             String encodedFileName = URLEncoder.encode(f.getName(), StandardCharsets.UTF_8).replaceAll("\\+", "%20");
             if (f.isDirectory()) {
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                try (ZipOutputStream zos = new ZipOutputStream(baos)) { zipFile(f, f.getName(), zos); }
+                try (ZipOutputStream zos = new ZipOutputStream(baos)) {
+                    zipFile(f, f.getName(), zos);
+                }
                 ctx.contentType("application/zip")
-                   .header("Content-Disposition", "attachment; filename=\"" + encodedFileName + ".zip\"")
-                   .result(baos.toByteArray());
+                        .header("Content-Disposition", "attachment; filename=\"" + encodedFileName + ".zip\"")
+                        .result(baos.toByteArray());
             } else {
                 String mime = determineMimeType(f.getName());
                 ctx.contentType(mime);
@@ -430,90 +514,74 @@ public class WebAdminServer {
                 ServerLogger.warnWithSource("WebAdmin", "webAdmin.clientOffline", targetSocket.getRemoteIp());
                 Debugger.debugOperation("WebAdmin: Zombie session detected for " + targetSocket.getRemoteIp());
                 final AdminWebSocket socketToClose = targetSocket;
-                ThreadManager.runAsync(() -> { try { socketToClose.close(); } catch (Exception ignored) {} });
-                if (tokenType == 1) { activeTempSocket = null; activeTempSessionId = null; }
-                else { activePermSocket = null; activePermSessionId = null; }
+                ThreadManager.runAsync(() -> {
+                    try {
+                        socketToClose.close();
+                    } catch (Exception ignored) {
+                    }
+                });
+                if (tokenType == 1) {
+                    activeTempSocket = null;
+                    activeTempSessionId = null;
+                } else {
+                    activePermSocket = null;
+                    activePermSessionId = null;
+                }
                 return false;
             }
+            /*
+             * 单例模式：无论是否同 IP，只要有活跃 session 就视为冲突。
+             * 同 IP 的"自己刷新"场景由 Zombie 检测处理（超时才清掉旧 session），
+             * 未超时说明前一个连接确实活跃，不能放行第二人。
+             * 这与 WebSocket 层的 AdminWebSocket 构造函数逻辑保持一致。
+             */
             if (!targetSocket.getRemoteIp().equals(remoteIp)) {
                 Long lastWarning = lastConflictWarning.get(remoteIp);
                 if (lastWarning == null || (now - lastWarning) > 5000) {
                     ServerLogger.warnWithSource("WebAdmin", "webAdmin.conflict", remoteIp);
                     lastConflictWarning.put(remoteIp, now);
                 }
-                return true;
             }
-            return false;
-        } finally { GLOBAL_LOCK.unlock(); }
+            return true;
+        } finally {
+            GLOBAL_LOCK.unlock();
+        }
     }
 
     private String loadResourceString(String path) {
         try (InputStream is = getClass().getClassLoader().getResourceAsStream(path)) {
             if (is == null) return null;
             return new String(is.readAllBytes(), StandardCharsets.UTF_8);
-        } catch (IOException e) { return null; }
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     public void stop() {
-        if (app != null) { app.stop(); isRunning = false; }
+        if (app != null) {
+            app.stop();
+            isRunning = false;
+        }
     }
 
-    public int getListeningPort() { return port; }
+    public int getListeningPort() {
+        return port;
+    }
 
     public void closeTempConnections() {
         GLOBAL_LOCK.lock();
         try {
             if (activeTempSocket != null) {
-                try { activeTempSocket.close(); } catch (Exception ignored) {}
-                activeTempSocket = null; activeTempSessionId = null;
+                try {
+                    activeTempSocket.close();
+                } catch (Exception ignored) {
+                }
+                activeTempSocket = null;
+                activeTempSessionId = null;
             }
-        } finally { GLOBAL_LOCK.unlock(); }
-    }
-
-    public static void broadcastLog(String message) {
-        if (message.contains("____") || message.contains("/  /")) {
-            saveAndBroadcast(String.format("{\"type\": \"logo\", \"payload\": \"%s\"}", escapeJson(message)));
-            return;
+        } finally {
+            GLOBAL_LOCK.unlock();
         }
-        String finalMsg = message;
-        if (!message.startsWith(">") && !message.startsWith("[")) finalMsg = formatLog(message);
-        saveAndBroadcast(String.format("{\"type\": \"log\", \"payload\": \"%s\"}", escapeJson(finalMsg)));
-    }
-
-    private static void broadcastJson(String json) {
-        GLOBAL_LOCK.lock();
-        try {
-            if (activeTempSocket != null && activeTempSocket.isOpen()) {
-                try { activeTempSocket.send(json); } catch (Exception ignored) {}
-            }
-            if (activePermSocket != null && activePermSocket.isOpen()) {
-                try { activePermSocket.send(json); } catch (Exception ignored) {}
-            }
-        } finally { GLOBAL_LOCK.unlock(); }
-    }
-
-    private static void saveAndBroadcast(String json) {
-        GLOBAL_LOCK.lock();
-        try {
-            if (logHistory.size() >= MAX_HISTORY_SIZE) logHistory.removeFirst();
-            logHistory.add(json);
-            if (activeTempSocket != null && activeTempSocket.isOpen()) {
-                try { activeTempSocket.send(json); } catch (Exception ignored) {}
-            }
-            if (activePermSocket != null && activePermSocket.isOpen()) {
-                try { activePermSocket.send(json); } catch (Exception ignored) {}
-            }
-        } finally { GLOBAL_LOCK.unlock(); }
-    }
-
-    private static String formatLog(String msg) {
-        return String.format("[%s] [%s]: %s", TIME_FORMATTER.format(LocalDateTime.now()), "WebAdmin", msg);
-    }
-
-    private static String escapeJson(String input) {
-        if (input == null) return "";
-        return input.replace("\\", "\\\\").replace("\"", "\\\"").replace("\b", "\\b")
-                   .replace("\f", "\\f").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
     }
 
     private boolean isBinaryFile(File f) {
@@ -523,7 +591,39 @@ public class WebAdminServer {
             if (read == -1) return false;
             for (int i = 0; i < read; i++) if (buf[i] == 0) return true;
             return false;
-        } catch (IOException e) { return false; }
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /**
+     * 【安全修复】检查文件是否为符号链接或是否指向沙箱外
+     * 符号链接可能被利用绕过路径遍历检查，访问系统敏感文件
+     *
+     * @param file 要检查的文件
+     * @return true 如果是符号链接或指向沙箱外，false 如果安全
+     */
+    private boolean isUnsafeSymlink(File file) {
+        try {
+            // 检查是否是符号链接
+            if (Files.isSymbolicLink(file.toPath())) {
+                ServerLogger.warnWithSource("WebAdmin", "webAdmin.symlinkBlocked", file.getAbsolutePath());
+                return true;
+            }
+            // 获取规范路径并检查是否仍在沙箱内
+            File canonicalFile = file.getCanonicalFile();
+            File canonicalSandbox = NeoProxyServer.CURRENT_DIR_PATH.getCanonicalFile();
+            String canonicalPath = canonicalFile.getAbsolutePath();
+            String sandboxPath = canonicalSandbox.getAbsolutePath();
+            if (!canonicalPath.startsWith(sandboxPath)) {
+                ServerLogger.warnWithSource("WebAdmin", "webAdmin.pathOutsideSandbox", file.getAbsolutePath());
+                return true;
+            }
+            return false;
+        } catch (IOException e) {
+            // 解析失败时拒绝访问
+            return true;
+        }
     }
 
     private class AdminWebSocket {
@@ -544,29 +644,47 @@ public class WebAdminServer {
                     if (activeTempSocket != null && activeTempSocket != this) {
                         if (System.currentTimeMillis() - activeTempSocket.getLastActiveTime() > ZOMBIE_TIMEOUT_MS) {
                             AdminWebSocket deadSocket = activeTempSocket;
-                            ThreadManager.runAsync(() -> { try { deadSocket.close(); } catch (Exception ignored) {} });
+                            ThreadManager.runAsync(() -> {
+                                try {
+                                    deadSocket.close();
+                                } catch (Exception ignored) {
+                                }
+                            });
                             activeTempSocket = null;
                         } else {
                             if (!activeTempSocket.getRemoteIp().equals(this.remoteIp))
                                 ServerLogger.warnWithSource("WebAdmin", "webAdmin.conflict", remoteIp);
-                            close(); return;
+                            closeAsConflict();
+                            return;
                         }
                     }
-                    activeTempSocket = this; activeTempSessionId = myId;
+                    activeTempSocket = this;
+                    activeTempSessionId = myId;
                 } else if (sessionType == 2) {
                     if (activePermSocket != null && activePermSocket != this) {
                         if (System.currentTimeMillis() - activePermSocket.getLastActiveTime() > ZOMBIE_TIMEOUT_MS) {
                             AdminWebSocket deadSocket = activePermSocket;
-                            ThreadManager.runAsync(() -> { try { deadSocket.close(); } catch (Exception ignored) {} });
+                            ThreadManager.runAsync(() -> {
+                                try {
+                                    deadSocket.close();
+                                } catch (Exception ignored) {
+                                }
+                            });
                             activePermSocket = null;
                         } else {
                             if (!activePermSocket.getRemoteIp().equals(this.remoteIp))
                                 ServerLogger.warnWithSource("WebAdmin", "webAdmin.conflict", remoteIp);
-                            close(); return;
+                            closeAsConflict();
+                            return;
                         }
                     }
-                    activePermSocket = this; activePermSessionId = myId;
-                } else { close(); return; }
+                    activePermSocket = this;
+                    activePermSessionId = myId;
+                } else {
+                    /* token 验证失败 (sessionType == 0)，用 1008 码关闭，前端 lockDown() 会识别 */
+                    wsContext.closeSession(1008, "Unauthorized");
+                    return;
+                }
                 lastConflictWarning.remove(remoteIp);
                 ServerLogger.infoWithSource("WebAdmin", "webAdmin.session.connected", remoteIp);
                 sendJsonRaw("{\"type\": \"logo\", \"payload\": \"" + escapeJson(NeoProxyServer.ASCII_LOGO) + "\"}");
@@ -574,7 +692,9 @@ public class WebAdminServer {
                 sendJsonRaw("{\"type\": \"log\", \"payload\": \"" + escapeJson(formatLog(msg)) + "\"}");
                 for (String json : logHistory) sendJsonRaw(json);
                 isConnected = true;
-            } finally { GLOBAL_LOCK.unlock(); }
+            } finally {
+                GLOBAL_LOCK.unlock();
+            }
             lastActiveTime = System.currentTimeMillis();
         }
 
@@ -588,7 +708,9 @@ public class WebAdminServer {
             try {
                 if (sessionType == 1 && !myId.equals(activeTempSessionId)) return;
                 if (sessionType == 2 && !myId.equals(activePermSessionId)) return;
-            } finally { GLOBAL_LOCK.unlock(); }
+            } finally {
+                GLOBAL_LOCK.unlock();
+            }
             if (text.isEmpty()) return;
             ThreadManager.runAsync(() -> processCommand(text));
         }
@@ -603,15 +725,27 @@ public class WebAdminServer {
                     sendJsonRaw("{\"type\":\"perf_ports\",\"payload\":" + SystemInfoHelper.getPortUsageJson() + "}");
                     return;
                 }
-                if (text.startsWith("#GET_FILES:")) { handleListFiles(text.substring(11)); return; }
-                if (text.startsWith("#READ_FILE:")) { handleReadFile(text.substring(11)); return; }
+                if (text.startsWith("#GET_FILES:")) {
+                    handleListFiles(text.substring(11));
+                    return;
+                }
+                if (text.startsWith("#READ_FILE:")) {
+                    handleReadFile(text.substring(11));
+                    return;
+                }
                 if (text.startsWith("#SAVE_FILE:")) {
                     int split = text.indexOf('|', 11);
                     if (split > 0) handleSaveFile(text.substring(11, split), text.substring(split + 1));
                     return;
                 }
-                if (text.startsWith("#DELETE_FILE:")) { handleDeleteFile(text.substring(13)); return; }
-                if (text.startsWith("#RENAME_FILE:")) { handleRenameFile(text.substring(13)); return; }
+                if (text.startsWith("#DELETE_FILE:")) {
+                    handleDeleteFile(text.substring(13));
+                    return;
+                }
+                if (text.startsWith("#RENAME_FILE:")) {
+                    handleRenameFile(text.substring(13));
+                    return;
+                }
                 if (text.startsWith("#CREATE_FILE:")) {
                     int split = text.indexOf('|', 13);
                     if (split > 0) handleCreateFile(text.substring(13, split), text.substring(split + 1), false);
@@ -622,13 +756,27 @@ public class WebAdminServer {
                     if (split > 0) handleCreateFile(text.substring(12, split), text.substring(split + 1), true);
                     return;
                 }
-                if (text.startsWith("#MOVE_FILES:")) { handleMoveFiles(text.substring(12)); return; }
-                if (text.startsWith("#GET_DASHBOARD")) { handleGetDashboard(); return; }
-                if (text.startsWith("#REFRESH_LOC:")) { handleRefreshLocation(text.substring(13)); return; }
-                if (text.startsWith("#REFRESH_BAN_LOC:")) { handleRefreshBanLocation(text.substring(17)); return; }
+                if (text.startsWith("#MOVE_FILES:")) {
+                    handleMoveFiles(text.substring(12));
+                    return;
+                }
+                if (text.startsWith("#GET_DASHBOARD")) {
+                    handleGetDashboard();
+                    return;
+                }
+                if (text.startsWith("#REFRESH_LOC:")) {
+                    handleRefreshLocation(text.substring(13));
+                    return;
+                }
+                if (text.startsWith("#REFRESH_BAN_LOC:")) {
+                    handleRefreshBanLocation(text.substring(17));
+                    return;
+                }
                 String result = NeoProxyServer.myConsole.execute(text);
                 if (result != null && !result.isEmpty()) sendJson("cmd_result", result);
-            } catch (Exception e) { Debugger.debugOperation(e); }
+            } catch (Exception e) {
+                Debugger.debugOperation(e);
+            }
         }
 
         private void handleRenameFile(String payload) {
@@ -636,17 +784,34 @@ public class WebAdminServer {
             try {
                 String[] parts = payload.split("\\|");
                 if (parts.length < 3) return;
-                String relPath = parts[0]; String oldName = parts[1]; String newName = parts[2];
-                if (relPath.contains("..") || oldName.contains("..") || newName.contains("..") || newName.contains("/") || newName.contains("\\")) {
-                    sendJson("error", "Invalid filename"); return;
+                String relPath = parts[0];
+                String oldName = parts[1];
+                String newName = parts[2];
+                if (relPath.contains("..") || oldName.contains("..") || newName.contains("..") || newName.contains("/") || newName.contains("\\\\")) {
+                    sendJson("error", "Invalid filename");
+                    return;
                 }
                 File dir = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
-                File src = new File(dir, oldName); File dst = new File(dir, newName);
-                if (!src.exists()) { sendJson("error", "Source file not found"); return; }
-                if (dst.exists()) { sendJson("error", "Destination already exists"); return; }
+                File src = new File(dir, oldName);
+                // 【安全修复】检查符号链接
+                if (isUnsafeSymlink(src)) {
+                    sendJson("error", "Access Denied");
+                    return;
+                }
+                File dst = new File(dir, newName);
+                if (!src.exists()) {
+                    sendJson("error", "Source file not found");
+                    return;
+                }
+                if (dst.exists()) {
+                    sendJson("error", "Destination already exists");
+                    return;
+                }
                 Files.move(src.toPath(), dst.toPath());
                 sendJson("action", "refresh_files");
-            } catch (Exception e) { sendJson("error", "Rename failed: " + e.getMessage()); }
+            } catch (Exception e) {
+                sendJson("error", "Rename failed: " + e.getMessage());
+            }
         }
 
         private void handleMoveFiles(String payload) {
@@ -657,36 +822,72 @@ public class WebAdminServer {
                 Debugger.debugOperation("Move Files to: " + targetRelPath);
                 if (targetRelPath.contains("..")) throw new SecurityException("Invalid target path");
                 File targetDir = new File(NeoProxyServer.CURRENT_DIR_PATH, targetRelPath);
+                // 【安全修复】检查目标目录是否为符号链接
+                if (targetDir.exists() && isUnsafeSymlink(targetDir)) {
+                    sendJson("error", "Access Denied");
+                    return;
+                }
                 if (!targetDir.exists()) targetDir.mkdirs();
                 int success = 0, fail = 0;
                 for (int i = 1; i < parts.length; i++) {
                     String sourceRelPath = parts[i];
-                    if (sourceRelPath.contains("..")) { fail++; continue; }
+                    if (sourceRelPath.contains("..")) {
+                        fail++;
+                        continue;
+                    }
                     File sourceFile = new File(NeoProxyServer.CURRENT_DIR_PATH, sourceRelPath);
-                    if (!sourceFile.exists()) { fail++; continue; }
+                    // 【安全修复】检查源文件是否为符号链接
+                    if (isUnsafeSymlink(sourceFile)) {
+                        fail++;
+                        continue;
+                    }
+                    if (!sourceFile.exists()) {
+                        fail++;
+                        continue;
+                    }
                     File destFile = new File(targetDir, sourceFile.getName());
                     if (destFile.exists()) {
-                        String name = destFile.getName(); int dot = name.lastIndexOf('.');
+                        String name = destFile.getName();
+                        int dot = name.lastIndexOf('.');
                         String newName = (dot > 0) ? name.substring(0, dot) + "_moved_" + System.currentTimeMillis() + name.substring(dot)
-                                                   : name + "_moved_" + System.currentTimeMillis();
+                                : name + "_moved_" + System.currentTimeMillis();
                         destFile = new File(targetDir, newName);
                     }
-                    try { Files.move(sourceFile.toPath(), destFile.toPath(), StandardCopyOption.REPLACE_EXISTING); success++; }
-                    catch (Exception e) { fail++; }
+                    try {
+                        Files.move(sourceFile.toPath(), destFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                        success++;
+                    } catch (Exception e) {
+                        fail++;
+                    }
                 }
                 sendJson("action", "refresh_files");
                 sendJson("toast", "Moved: " + success + ", Failed: " + fail);
-            } catch (Exception e) { sendJson("error", "Move failed: " + e.getMessage()); }
+            } catch (Exception e) {
+                sendJson("error", "Move failed: " + e.getMessage());
+            }
         }
 
         private void handleListFiles(String relPath) {
             try {
                 if (relPath.contains("..")) throw new SecurityException("Access Denied");
                 File dir = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
-                if (!dir.exists()) { sendJson("error", "Directory not found"); return; }
-                File[] files = dir.listFiles(); if (files == null) files = new File[0];
-                StringBuilder sb = new StringBuilder("["); boolean needComma = false;
-                if (!relPath.isEmpty()) { sb.append("{\"name\":\"..\",\"isDir\":true,\"size\":0,\"time\":0}"); needComma = true; }
+                // 【安全修复】检查目录是否为符号链接
+                if (isUnsafeSymlink(dir)) {
+                    sendJson("error", "Access Denied");
+                    return;
+                }
+                if (!dir.exists()) {
+                    sendJson("error", "Directory not found");
+                    return;
+                }
+                File[] files = dir.listFiles();
+                if (files == null) files = new File[0];
+                StringBuilder sb = new StringBuilder("[");
+                boolean needComma = false;
+                if (!relPath.isEmpty()) {
+                    sb.append("{\"name\":\"..\",\"isDir\":true,\"size\":0,\"time\":0}");
+                    needComma = true;
+                }
                 for (File f : files) {
                     if (needComma) sb.append(",");
                     sb.append(String.format("{\"name\":\"%s\",\"isDir\":%b,\"size\":%d,\"time\":%d}",
@@ -695,24 +896,39 @@ public class WebAdminServer {
                 }
                 sb.append("]");
                 sendJsonRaw("{\"type\":\"file_list\",\"path\":\"" + escapeJson(relPath) + "\",\"payload\":" + sb.toString() + "}");
-            } catch (Exception e) { sendJson("error", e.getMessage()); }
+            } catch (Exception e) {
+                sendJson("error", e.getMessage());
+            }
         }
 
         private void handleReadFile(String relPath) {
             try {
                 if (relPath.contains("..")) throw new SecurityException("Access Denied");
                 File f = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
-                if (!f.exists() || f.isDirectory()) { sendJson("error", "Invalid file"); return; }
+                // 【安全修复】检查符号链接
+                if (isUnsafeSymlink(f)) {
+                    sendJson("error", "Access Denied");
+                    return;
+                }
+                if (!f.exists() || f.isDirectory()) {
+                    sendJson("error", "Invalid file");
+                    return;
+                }
                 if (f.length() > 1024 * 1024 || isBinaryFile(f)) {
-                    sendJsonRaw("{\"type\":\"file_too_large\",\"path\":\"" + escapeJson(relPath) + "\"}"); return;
+                    sendJsonRaw("{\"type\":\"file_too_large\",\"path\":\"" + escapeJson(relPath) + "\"}");
+                    return;
                 }
                 String content;
-                try { content = Files.readString(f.toPath(), StandardCharsets.UTF_8); }
-                catch (IOException e) {
-                    sendJsonRaw("{\"type\":\"file_too_large\",\"path\":\"" + escapeJson(relPath) + "\"}"); return;
+                try {
+                    content = Files.readString(f.toPath(), StandardCharsets.UTF_8);
+                } catch (IOException e) {
+                    sendJsonRaw("{\"type\":\"file_too_large\",\"path\":\"" + escapeJson(relPath) + "\"}");
+                    return;
                 }
                 sendJsonRaw("{\"type\":\"file_content\",\"path\":\"" + escapeJson(relPath) + "\",\"payload\":\"" + escapeJson(content) + "\"}");
-            } catch (Exception e) { sendJson("error", "Read failed: " + e.getMessage()); }
+            } catch (Exception e) {
+                sendJson("error", "Read failed: " + e.getMessage());
+            }
         }
 
         private void handleSaveFile(String relPath, String content) {
@@ -720,9 +936,16 @@ public class WebAdminServer {
                 Debugger.debugOperation("Save File: " + relPath);
                 if (relPath.contains("..")) throw new SecurityException("Access Denied");
                 File f = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
+                // 【安全修复】检查符号链接（仅对已存在的文件）
+                if (f.exists() && isUnsafeSymlink(f)) {
+                    sendJson("error", "Access Denied");
+                    return;
+                }
                 Files.writeString(f.toPath(), content, StandardCharsets.UTF_8);
                 sendJson("toast", "File saved successfully.");
-            } catch (Exception e) { sendJson("error", "Save failed: " + e.getMessage()); }
+            } catch (Exception e) {
+                sendJson("error", "Save failed: " + e.getMessage());
+            }
         }
 
         private void handleDeleteFile(String relPath) {
@@ -730,13 +953,25 @@ public class WebAdminServer {
                 Debugger.debugOperation("Delete File: " + relPath);
                 if (relPath.contains("..")) throw new SecurityException("Access Denied");
                 File f = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
-                if (deleteRecursively(f)) { sendJson("action", "refresh_files"); sendJson("toast", "Deleted: " + f.getName()); }
-                else sendJson("error", "Delete failed");
-            } catch (Exception e) { sendJson("error", e.getMessage()); }
+                // 【安全修复】检查符号链接
+                if (isUnsafeSymlink(f)) {
+                    sendJson("error", "Access Denied");
+                    return;
+                }
+                if (deleteRecursively(f)) {
+                    sendJson("action", "refresh_files");
+                    sendJson("toast", "Deleted: " + f.getName());
+                } else sendJson("error", "Delete failed");
+            } catch (Exception e) {
+                sendJson("error", e.getMessage());
+            }
         }
 
         private boolean deleteRecursively(File f) {
-            if (f.isDirectory()) { File[] c = f.listFiles(); if (c != null) for (File child : c) deleteRecursively(child); }
+            if (f.isDirectory()) {
+                File[] c = f.listFiles();
+                if (c != null) for (File child : c) deleteRecursively(child);
+            }
             return f.delete();
         }
 
@@ -746,10 +981,17 @@ public class WebAdminServer {
                 if (relPath.contains("..") || name.contains("..") || name.contains("/") || name.contains("\\"))
                     throw new SecurityException("Invalid name");
                 File f = new File(new File(NeoProxyServer.CURRENT_DIR_PATH, relPath), name);
-                if (f.exists()) { sendJson("error", "Exists already"); return; }
-                if (isDir) f.mkdirs(); else f.createNewFile();
-                sendJson("action", "refresh_files"); sendJson("toast", "Created: " + name);
-            } catch (Exception e) { sendJson("error", e.getMessage()); }
+                if (f.exists()) {
+                    sendJson("error", "Exists already");
+                    return;
+                }
+                if (isDir) f.mkdirs();
+                else f.createNewFile();
+                sendJson("action", "refresh_files");
+                sendJson("toast", "Created: " + name);
+            } catch (Exception e) {
+                sendJson("error", e.getMessage());
+            }
         }
 
         private void handleGetDashboard() {
@@ -781,7 +1023,10 @@ public class WebAdminServer {
             ServerLogger.infoWithSource("WebAdmin", "webAdmin.refreshingLoc", remoteIp);
             HostClient target = null;
             for (HostClient hc : NeoProxyServer.availableHostClient) {
-                if (hc.getHostServerHook().getInetAddress().getHostAddress().equals(ip)) { target = hc; break; }
+                if (hc.getHostServerHook().getInetAddress().getHostAddress().equals(ip)) {
+                    target = hc;
+                    break;
+                }
             }
             if (target != null) {
                 IPGeolocationHelper.LocationInfo info = IPGeolocationHelper.getLocationInfo(ip);
@@ -802,11 +1047,17 @@ public class WebAdminServer {
 
         public void sendJson(String type, String payload) {
             String json = String.format("{\"type\": \"%s\", \"payload\": \"%s\"}", type, escapeJson(payload));
-            try { send(json); } catch (Exception ignored) {}
+            try {
+                send(json);
+            } catch (Exception ignored) {
+            }
         }
 
         public void sendJsonRaw(String json) {
-            try { send(json); } catch (Exception ignored) {}
+            try {
+                send(json);
+            } catch (Exception ignored) {
+            }
         }
 
         public void onClose(WsCloseContext ctx) {
@@ -815,23 +1066,50 @@ public class WebAdminServer {
             GLOBAL_LOCK.lock();
             try {
                 if (sessionType == 1 && myId.equals(activeTempSessionId)) {
-                    activeTempSocket = null; activeTempSessionId = null;
+                    activeTempSocket = null;
+                    activeTempSessionId = null;
                     ServerLogger.infoWithSource("WebAdmin", "webAdmin.session.disconnected");
                 } else if (sessionType == 2 && myId.equals(activePermSessionId)) {
-                    activePermSocket = null; activePermSessionId = null;
+                    activePermSocket = null;
+                    activePermSessionId = null;
                     ServerLogger.infoWithSource("WebAdmin", "webAdmin.session.disconnected");
                 }
-            } finally { GLOBAL_LOCK.unlock(); }
+            } finally {
+                GLOBAL_LOCK.unlock();
+            }
         }
 
         public void onError(WsContext ctx) {
-            if (NeoProxyServer.IS_DEBUG_MODE) ServerLogger.errorWithSource("WebAdmin", "webAdmin.conflict", "WebSocket error occurred");
+            if (NeoProxyServer.IS_DEBUG_MODE)
+                ServerLogger.errorWithSource("WebAdmin", "webAdmin.conflict", "WebSocket error occurred");
         }
 
-        public void send(String message) { wsContext.send(message); }
-        public void close() { wsContext.closeSession(1000, "Closed"); }
-        public boolean isOpen() { return wsContext.session.isOpen(); }
-        public String getRemoteIp() { return remoteIp; }
-        public long getLastActiveTime() { return lastActiveTime; }
+        public void send(String message) {
+            wsContext.send(message);
+        }
+
+        public void close() {
+            wsContext.closeSession(1000, "Closed");
+        }
+
+        /**
+         * 冲突踢人：使用 4403 close code，前端 websocket.js 的 lockDown()
+         * 会在收到 4403 时显示 403 错误遮罩，而非盲目重连。
+         */
+        public void closeAsConflict() {
+            wsContext.closeSession(4403, "Session conflict");
+        }
+
+        public boolean isOpen() {
+            return wsContext.session.isOpen();
+        }
+
+        public String getRemoteIp() {
+            return remoteIp;
+        }
+
+        public long getLastActiveTime() {
+            return lastActiveTime;
+        }
     }
 }

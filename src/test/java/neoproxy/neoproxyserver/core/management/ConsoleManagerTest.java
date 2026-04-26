@@ -38,7 +38,7 @@ class ConsoleManagerTest {
         Field field = ConsoleManager.class.getDeclaredField("TIME_PATTERN");
         field.setAccessible(true);
         Pattern pattern = (Pattern) field.get(null);
-        
+
         assertTrue(pattern.matcher("2024/1/1-12:30").matches());
         assertTrue(pattern.matcher("2024/12/31-23:59").matches());
         assertFalse(pattern.matcher("2024-01-01 12:30").matches());
@@ -51,7 +51,7 @@ class ConsoleManagerTest {
         Field field = ConsoleManager.class.getDeclaredField("PORT_INPUT_REGEX");
         field.setAccessible(true);
         Pattern pattern = (Pattern) field.get(null);
-        
+
         assertTrue(pattern.matcher("8080").matches());
         assertTrue(pattern.matcher("8080-8090").matches());
         assertFalse(pattern.matcher("abc").matches());
@@ -72,9 +72,9 @@ class ConsoleManagerTest {
     void testPrivateConstructor() throws Exception {
         Constructor<ConsoleManager> constructor = ConsoleManager.class.getDeclaredConstructor();
         constructor.setAccessible(true);
-        
+
         ConsoleManager instance = constructor.newInstance();
-        
+
         assertNotNull(instance);
     }
 
@@ -84,7 +84,7 @@ class ConsoleManagerTest {
         Field field = ConsoleManager.class.getDeclaredField("TIME_FORMAT_PATTERN");
         field.setAccessible(true);
         String value = (String) field.get(null);
-        
+
         assertEquals("^(\\d{4})/(\\d{1,2})/(\\d{1,2})-(\\d{1,2}):(\\d{1,2})$", value);
     }
 
@@ -94,15 +94,15 @@ class ConsoleManagerTest {
         Field field = ConsoleManager.class.getDeclaredField("PORT_INPUT_PATTERN");
         field.setAccessible(true);
         String value = (String) field.get(null);
-        
+
         assertEquals("^(\\d+)(?:-(\\d+))?$", value);
     }
 
     @Test
     @DisplayName("测试registerWrapper方法签名")
     void testRegisterWrapperMethod() throws Exception {
-        Method method = ConsoleManager.class.getDeclaredMethod("registerWrapper", 
-            String.class, String.class, java.util.function.Consumer.class);
+        Method method = ConsoleManager.class.getDeclaredMethod("registerWrapper",
+                String.class, String.class, java.util.function.Consumer.class);
         assertNotNull(method);
         assertTrue(java.lang.reflect.Modifier.isStatic(method.getModifiers()));
         assertTrue(java.lang.reflect.Modifier.isPrivate(method.getModifiers()));

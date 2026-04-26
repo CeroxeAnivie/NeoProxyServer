@@ -4,7 +4,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.io.File;
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -100,7 +99,7 @@ class ConfigOperatorTest {
         assertEquals(boolean.class, field.getType());
         assertTrue(Modifier.isStatic(field.getModifiers()));
         assertFalse(Modifier.isFinal(field.getModifiers()));
-        
+
         boolean value = field.getBoolean(null);
         assertFalse(value);
     }
@@ -110,7 +109,7 @@ class ConfigOperatorTest {
     void testPrivateConstructor() throws Exception {
         java.lang.reflect.Constructor<ConfigOperator> constructor = ConfigOperator.class.getDeclaredConstructor();
         assertTrue(Modifier.isPrivate(constructor.getModifiers()));
-        
+
         constructor.setAccessible(true);
         ConfigOperator instance = constructor.newInstance();
         assertNotNull(instance);

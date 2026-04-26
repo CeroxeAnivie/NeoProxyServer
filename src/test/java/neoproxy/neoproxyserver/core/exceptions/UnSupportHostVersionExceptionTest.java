@@ -13,9 +13,9 @@ class UnSupportHostVersionExceptionTest {
     void testThrowException() {
         String ip = "192.168.1.1";
         String version = "5.0.0";
-        
-        assertThrows(UnSupportHostVersionException.class, () -> 
-            UnSupportHostVersionException.throwException(ip, version)
+
+        assertThrows(UnSupportHostVersionException.class, () ->
+                UnSupportHostVersionException.throwException(ip, version)
         );
     }
 
@@ -24,7 +24,7 @@ class UnSupportHostVersionExceptionTest {
     void testExceptionCanBeCaught() {
         String ip = "10.0.0.1";
         String version = "6.0.0";
-        
+
         try {
             UnSupportHostVersionException.throwException(ip, version);
             fail("应该抛出UnSupportHostVersionException");

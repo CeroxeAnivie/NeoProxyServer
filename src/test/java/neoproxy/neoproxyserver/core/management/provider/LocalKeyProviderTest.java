@@ -6,7 +6,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @DisplayName("LocalKeyProvider 测试")
 @ExtendWith(MockitoExtension.class)
@@ -48,7 +49,7 @@ class LocalKeyProviderTest {
     void testSendHeartbeat() {
         Protocol.HeartbeatPayload payload = new Protocol.HeartbeatPayload();
         payload.serial = "test-key";
-        
+
         assertTrue(provider.sendHeartbeat(payload));
     }
 

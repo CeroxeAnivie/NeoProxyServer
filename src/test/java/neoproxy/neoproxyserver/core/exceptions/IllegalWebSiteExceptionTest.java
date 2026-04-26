@@ -14,9 +14,9 @@ class IllegalWebSiteExceptionTest {
     @DisplayName("测试throwException静态方法")
     void testThrowException() {
         String accessCode = "malicious-site.com";
-        
-        assertThrows(IllegalWebSiteException.class, () -> 
-            IllegalWebSiteException.throwException(accessCode)
+
+        assertThrows(IllegalWebSiteException.class, () ->
+                IllegalWebSiteException.throwException(accessCode)
         );
     }
 
@@ -24,7 +24,7 @@ class IllegalWebSiteExceptionTest {
     @DisplayName("测试异常可以被捕获并获取消息")
     void testExceptionCanBeCaught() {
         String accessCode = "blocked-domain.com";
-        
+
         try {
             IllegalWebSiteException.throwException(accessCode);
             fail("应该抛出IllegalWebSiteException");

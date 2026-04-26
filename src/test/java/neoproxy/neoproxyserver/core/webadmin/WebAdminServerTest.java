@@ -3,7 +3,8 @@ package neoproxy.neoproxyserver.core.webadmin;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 @DisplayName("WebAdminServer 测试")
 class WebAdminServerTest {
@@ -12,7 +13,7 @@ class WebAdminServerTest {
     @DisplayName("测试构造器")
     void testConstructor() {
         WebAdminServer server = new WebAdminServer(8080);
-        
+
         assertNotNull(server);
     }
 

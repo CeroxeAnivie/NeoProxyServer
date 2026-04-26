@@ -13,7 +13,7 @@ class BlockingMessageExceptionTest {
     void testConstructorWithMessage() {
         String message = "测试阻塞消息";
         BlockingMessageException exception = new BlockingMessageException(message);
-        
+
         assertEquals(message, exception.getMessage());
         assertEquals(message, exception.getCustomMessage());
     }
@@ -22,7 +22,7 @@ class BlockingMessageExceptionTest {
     @DisplayName("测试构造器 - 空消息")
     void testConstructorWithEmptyMessage() {
         BlockingMessageException exception = new BlockingMessageException("");
-        
+
         assertEquals("", exception.getMessage());
         assertEquals("", exception.getCustomMessage());
     }
@@ -31,7 +31,7 @@ class BlockingMessageExceptionTest {
     @DisplayName("测试构造器 - null消息")
     void testConstructorWithNullMessage() {
         BlockingMessageException exception = new BlockingMessageException(null);
-        
+
         assertNull(exception.getMessage());
         assertNull(exception.getCustomMessage());
     }
@@ -41,7 +41,7 @@ class BlockingMessageExceptionTest {
     void testGetCustomMessage() {
         String expected = "自定义错误提示";
         BlockingMessageException exception = new BlockingMessageException(expected);
-        
+
         assertEquals(expected, exception.getCustomMessage());
     }
 
@@ -49,7 +49,7 @@ class BlockingMessageExceptionTest {
     @DisplayName("测试异常可以被抛出和捕获")
     void testExceptionCanBeThrownAndCaught() {
         String message = "测试异常抛出";
-        
+
         assertThrows(BlockingMessageException.class, () -> {
             throw new BlockingMessageException(message);
         });
@@ -59,7 +59,7 @@ class BlockingMessageExceptionTest {
     @DisplayName("测试异常继承自Exception")
     void testExceptionInheritance() {
         BlockingMessageException exception = new BlockingMessageException("test");
-        
+
         assertTrue(exception instanceof Exception);
     }
 }

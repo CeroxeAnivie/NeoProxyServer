@@ -54,7 +54,7 @@ class ServerLoggerTest {
     @DisplayName("测试error方法 - 带异常")
     void testError_WithException() {
         Exception testException = new RuntimeException("Test exception");
-        
+
         assertDoesNotThrow(() -> ServerLogger.error("neoProxyServer.clientConnectButFail", testException));
     }
 
@@ -62,7 +62,7 @@ class ServerLoggerTest {
     @DisplayName("测试getMessage方法 - 正常键")
     void testGetMessage_ValidKey() {
         String message = ServerLogger.getMessage("neoProxyServer.currentLogFile", "test.log");
-        
+
         assertNotNull(message);
         assertTrue(message.length() > 0);
     }
@@ -71,7 +71,7 @@ class ServerLoggerTest {
     @DisplayName("测试getMessage方法 - 无效键")
     void testGetMessage_InvalidKey() {
         String message = ServerLogger.getMessage("nonexistent.key");
-        
+
         assertNotNull(message);
         assertTrue(message.contains("not found"));
     }

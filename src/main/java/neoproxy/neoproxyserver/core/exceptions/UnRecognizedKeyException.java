@@ -24,9 +24,9 @@ import static neoproxy.neoproxyserver.core.ServerLogger.alert;
  *
  * @author Ceroxe
  * @version 6.1.0
- * @since 6.1.0
  * @see Exception
  * @see SequenceKey
+ * @since 6.1.0
  */
 public class UnRecognizedKeyException extends Exception {
 

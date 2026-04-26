@@ -32,7 +32,7 @@ class TCPTransformerTest {
         java.lang.reflect.Field field = TCPTransformer.class.getDeclaredField("FORBIDDEN_HTML_TEMPLATE");
         field.setAccessible(true);
         String template = (String) field.get(null);
-        
+
         assertNotNull(template);
         assertTrue(template.contains("{{CUSTOM_MESSAGE}}"));
     }

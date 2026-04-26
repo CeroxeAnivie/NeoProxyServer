@@ -154,8 +154,11 @@ public class Database {
             stmt.setString(3, key.getExpireTime());
             stmt.setString(4, key.getPortStr());
             stmt.setDouble(5, key.getRateNoLock());
-            stmt.setBoolean(6, key.isEnable());
-            stmt.setBoolean(7, key.isHTMLEnabled());
+            // 【修复】外层 saveToDB() 已持有 sequenceKey.lock，此处必须使用 NoLock 版本
+            // 避免与 isEnable()/isHTMLEnabled() 的加锁版本产生 ReentrantLock 重入
+            // 虽然重入在语义上是正确的，但统一使用 NoLock 可明确表达“调用方已持锁”的契约
+            stmt.setBoolean(6, key.isEnableNoLock());
+            stmt.setBoolean(7, key.isHTMLEnabledNoLock());
             return stmt.executeUpdate() > 0;
         } catch (Exception e) {
             Debugger.debugOperation(e);

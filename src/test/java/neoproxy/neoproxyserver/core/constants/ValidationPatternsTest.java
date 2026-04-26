@@ -3,8 +3,8 @@ package neoproxy.neoproxyserver.core.constants;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
@@ -19,7 +19,7 @@ class ValidationPatternsTest {
     void testPrivateConstructorThrowsException() throws Exception {
         Constructor<ValidationPatterns> constructor = ValidationPatterns.class.getDeclaredConstructor();
         constructor.setAccessible(true);
-        
+
         InvocationTargetException exception = assertThrows(InvocationTargetException.class, constructor::newInstance);
         assertTrue(exception.getCause() instanceof AssertionError);
         assertTrue(exception.getCause().getMessage().contains("常量类禁止实例化"));

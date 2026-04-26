@@ -5,7 +5,8 @@ import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Constructor;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 @DisplayName("UpdateManager 测试")
 class UpdateManagerTest {
@@ -15,9 +16,9 @@ class UpdateManagerTest {
     void testPrivateConstructor() throws Exception {
         Constructor<UpdateManager> constructor = UpdateManager.class.getDeclaredConstructor();
         constructor.setAccessible(true);
-        
+
         UpdateManager instance = constructor.newInstance();
-        
+
         assertNotNull(instance);
     }
 

@@ -18,9 +18,9 @@ class NoMorePortExceptionTest {
     @DisplayName("测试throwException单参数 - 特定端口被占用")
     void testThrowException_SinglePort() {
         int port = 8080;
-        
-        assertThrows(NoMorePortException.class, () -> 
-            NoMorePortException.throwException(port)
+
+        assertThrows(NoMorePortException.class, () ->
+                NoMorePortException.throwException(port)
         );
     }
 
@@ -29,9 +29,9 @@ class NoMorePortExceptionTest {
     void testThrowException_PortRange() {
         int start = 10000;
         int end = 20000;
-        
-        assertThrows(NoMorePortException.class, () -> 
-            NoMorePortException.throwException(start, end)
+
+        assertThrows(NoMorePortException.class, () ->
+                NoMorePortException.throwException(start, end)
         );
     }
 
@@ -50,7 +50,7 @@ class NoMorePortExceptionTest {
     @DisplayName("测试异常可以被捕获并获取消息 - 单参数")
     void testExceptionCanBeCaught_SinglePort() {
         int port = 443;
-        
+
         try {
             NoMorePortException.throwException(port);
             fail("应该抛出NoMorePortException");
@@ -65,7 +65,7 @@ class NoMorePortExceptionTest {
     void testExceptionCanBeCaught_PortRange() {
         int start = 10000;
         int end = 20000;
-        
+
         try {
             NoMorePortException.throwException(start, end);
             fail("应该抛出NoMorePortException");

@@ -44,9 +44,20 @@ public class WebAdminManager {
     private static String currentTempToken = null;
     private static long tempTokenCreatedAt = 0;
     private static String permanentToken = "";
+    // SSL 配置字段
+    private static String sslCertPath = "";
+    private static String sslKeyPath = "";
+    private static String sslPassword = "";
 
     public static void setPermanentToken(String token) {
         permanentToken = token;
+    }
+
+    /**
+     * 获取当前永久 Token 值 — 供 ConsoleManager reload 时统一判断安全警告
+     */
+    public static String getPermanentToken() {
+        return permanentToken;
     }
 
     public static void init() {
@@ -342,7 +353,8 @@ public class WebAdminManager {
             host = "127.0.0.1";
         }
 
-        return "http://" + host + ":" + WEB_ADMIN_PORT + "/?token=" + currentTempToken;
+        String scheme = isSslEnabled() ? "https" : "http";
+        return scheme + "://" + host + ":" + WEB_ADMIN_PORT + "/?token=" + currentTempToken;
     }
 
     public static int verifyTokenAndGetType(String token) {
@@ -366,11 +378,6 @@ public class WebAdminManager {
     public static boolean isRunning() {
         return isRunning;
     }
-
-    // SSL 配置字段
-    private static String sslCertPath = "";
-    private static String sslKeyPath = "";
-    private static String sslPassword = "";
 
     public static void setSslConfig(String certPath, String keyPath, String password) {
         sslCertPath = certPath != null ? certPath : "";

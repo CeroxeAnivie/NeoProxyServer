@@ -6,7 +6,8 @@ import org.junit.jupiter.api.Test;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @DisplayName("WebConsole 测试")
 class WebConsoleTest {
@@ -17,7 +18,7 @@ class WebConsoleTest {
     @DisplayName("测试时间格式化器")
     void testTimeFormatter() {
         String time = TIME_FORMATTER.format(LocalDateTime.now());
-        
+
         assertNotNull(time);
         assertTrue(time.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}"));
     }
@@ -29,9 +30,9 @@ class WebConsoleTest {
         String level = "INFO";
         String source = "TestSource";
         String message = "Test message";
-        
+
         String formattedMsg = String.format("[%s] [%s] [%s]: %s", time, level, source, message);
-        
+
         assertTrue(formattedMsg.startsWith("["));
         assertTrue(formattedMsg.contains("] ["));
         assertTrue(formattedMsg.contains(level));
@@ -46,9 +47,9 @@ class WebConsoleTest {
         String level = "WARN";
         String source = "TestSource";
         String message = "Warning message";
-        
+
         String formattedMsg = String.format("[%s] [%s] [%s]: %s", time, level, source, message);
-        
+
         assertTrue(formattedMsg.contains("WARN"));
     }
 
@@ -59,9 +60,9 @@ class WebConsoleTest {
         String level = "ERROR";
         String source = "TestSource";
         String message = "Error message";
-        
+
         String formattedMsg = String.format("[%s] [%s] [%s]: %s", time, level, source, message);
-        
+
         assertTrue(formattedMsg.contains("ERROR"));
     }
 
@@ -74,9 +75,9 @@ class WebConsoleTest {
         String message = "Error message";
         Exception e = new RuntimeException("Test exception");
         String fullMessage = message + " (" + e.toString() + ")";
-        
+
         String formattedMsg = String.format("[%s] [%s] [%s]: %s", time, level, source, fullMessage);
-        
+
         assertTrue(formattedMsg.contains("RuntimeException"));
         assertTrue(formattedMsg.contains("Test exception"));
     }

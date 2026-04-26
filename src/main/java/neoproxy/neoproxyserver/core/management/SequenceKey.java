@@ -40,12 +40,15 @@ import java.util.regex.Pattern;
  *
  * @author Ceroxe
  * @version 6.1.0
- * @since 6.1.0
  * @see KeyDataProvider
+ * @since 6.1.0
  */
 public class SequenceKey {
     public static final int DYNAMIC_PORT = -1;
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy/MM/dd-HH:mm");
+
+    // 【优化】预编译正则，避免每次调用 getPort() 都重新编译
+    private static final Pattern DIGIT_ONLY_PATTERN = Pattern.compile("^\\d+$");
 
     private static final Map<String, SequenceKey> keyCache = new ConcurrentHashMap<>();
 
@@ -390,6 +393,13 @@ public class SequenceKey {
         }
     }
 
+    /**
+     * 不加锁版本 — 仅允许在已持有 sequenceKey.lock 的上下文中调用（如 saveToDB）
+     */
+    public boolean isEnableNoLock() {
+        return isEnable;
+    }
+
     public void setEnable(boolean enable) {
         lock.lock();
         try {
@@ -406,6 +416,13 @@ public class SequenceKey {
         } finally {
             lock.unlock();
         }
+    }
+
+    /**
+     * 不加锁版本 — 仅允许在已持有 sequenceKey.lock 的上下文中调用（如 saveToDB）
+     */
+    public boolean isHTMLEnabledNoLock() {
+        return enableWebHTML;
     }
 
     public void setHTMLEnabled(boolean enable) {
@@ -428,16 +445,21 @@ public class SequenceKey {
     }
 
     public int getPort() {
-        String p = this.port;
-        if (p == null) return DYNAMIC_PORT;
-        if (Pattern.compile("^\\d+$").matcher(p).matches()) {
-            try {
-                return Integer.parseInt(p);
-            } catch (Exception e) {
-                return DYNAMIC_PORT;
+        lock.lock();
+        try {
+            String p = this.port;
+            if (p == null) return DYNAMIC_PORT;
+            if (DIGIT_ONLY_PATTERN.matcher(p).matches()) {
+                try {
+                    return Integer.parseInt(p);
+                } catch (Exception e) {
+                    return DYNAMIC_PORT;
+                }
             }
+            return DYNAMIC_PORT;
+        } finally {
+            lock.unlock();
         }
-        return DYNAMIC_PORT;
     }
 
     public void setPort(String port) {

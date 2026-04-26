@@ -22,9 +22,9 @@ import neoproxy.neoproxyserver.core.management.SequenceKey;
  *
  * @author Ceroxe
  * @version 6.1.0
- * @since 6.1.0
  * @see Exception
  * @see SequenceKey#isOutOfDate()
+ * @since 6.1.0
  */
 public class OutDatedKeyException extends Exception {
 

@@ -66,7 +66,8 @@ class HostClientTest {
         Field field = HostClient.class.getDeclaredField("HEARTBEAT_TIMEOUT");
         field.setAccessible(true);
         int value = (int) field.get(null);
-        assertEquals(30000, value);
+        // 【修复】与 config.cfg HEARTBEAT_TIMEOUT 默认值对齐：5000ms
+        assertEquals(5000, value);
         assertTrue(HostClient.HEARTBEAT_TIMEOUT > 0);
     }
 

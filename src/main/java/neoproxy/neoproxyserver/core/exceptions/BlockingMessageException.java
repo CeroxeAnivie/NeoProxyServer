@@ -22,12 +22,14 @@ package neoproxy.neoproxyserver.core.exceptions;
  *
  * @author Ceroxe
  * @version 6.1.0
- * @since 6.1.0
  * @see Exception
+ * @since 6.1.0
  */
 public class BlockingMessageException extends Exception {
 
-    /** 自定义消息内容 */
+    /**
+     * 自定义消息内容
+     */
     private final String customMessage;
 
     /**

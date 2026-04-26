@@ -3,8 +3,6 @@ package neoproxy.neoproxyserver.core.exceptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import java.io.IOException;
-
 import static org.junit.jupiter.api.Assertions.*;
 
 @DisplayName("SilentException 测试")

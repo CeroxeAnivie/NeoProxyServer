@@ -12,9 +12,9 @@ class UnRecognizedKeyExceptionTest {
     @DisplayName("测试throwException静态方法")
     void testThrowException() {
         String key = "invalid-key-123";
-        
-        assertThrows(UnRecognizedKeyException.class, () -> 
-            UnRecognizedKeyException.throwException(key)
+
+        assertThrows(UnRecognizedKeyException.class, () ->
+                UnRecognizedKeyException.throwException(key)
         );
     }
 
@@ -22,7 +22,7 @@ class UnRecognizedKeyExceptionTest {
     @DisplayName("测试异常可以被捕获并获取消息")
     void testExceptionCanBeCaught() {
         String key = "unknown-key";
-        
+
         try {
             UnRecognizedKeyException.throwException(key);
             fail("应该抛出UnRecognizedKeyException");

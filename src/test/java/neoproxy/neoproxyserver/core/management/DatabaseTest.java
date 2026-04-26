@@ -19,9 +19,9 @@ class DatabaseTest {
     void testPrivateConstructor() throws Exception {
         Constructor<Database> constructor = Database.class.getDeclaredConstructor();
         constructor.setAccessible(true);
-        
+
         Database instance = constructor.newInstance();
-        
+
         assertNotNull(instance);
     }
 
@@ -66,7 +66,7 @@ class DatabaseTest {
         Field field = Database.class.getDeclaredField("keepAliveConn");
         field.setAccessible(true);
         Connection value = (Connection) field.get(null);
-        
+
         assertNull(value);
     }
 

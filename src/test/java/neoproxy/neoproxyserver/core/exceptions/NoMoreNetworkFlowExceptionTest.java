@@ -20,9 +20,9 @@ class NoMoreNetworkFlowExceptionTest {
         String source = "TestSource";
         String messageKey = "exception.insufficientBalance";
         String keyName = "test-key";
-        
-        assertThrows(NoMoreNetworkFlowException.class, () -> 
-            NoMoreNetworkFlowException.throwException(source, messageKey, keyName)
+
+        assertThrows(NoMoreNetworkFlowException.class, () ->
+                NoMoreNetworkFlowException.throwException(source, messageKey, keyName)
         );
     }
 

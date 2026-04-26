@@ -54,7 +54,7 @@ public final class HostClient implements Closeable {
     public static int SAVE_DELAY = 3000;
     public static int DETECTION_DELAY = 1000;
     public static int AES_KEY_SIZE = 128;
-    public static int HEARTBEAT_TIMEOUT = 30000;
+    public static int HEARTBEAT_TIMEOUT = 5000;
 
     private final SecureSocket hostServerHook;
     // 【优化】使用 Set 替代 List，消除数组复制开销，保持线程安全
@@ -62,7 +62,9 @@ public final class HostClient implements Closeable {
 
     private final RateLimiter globalRateLimiter = new RateLimiter(0);
     private final AtomicBoolean isClosed = new AtomicBoolean(false);
-    private boolean isStopped = false;
+    // 【修复】isStopped 被多个线程读取（AutoSave、KeyDetection、AliveCheck），
+    // 必须 volatile 保证跨线程可见性，与 isClosed（AtomicBoolean）的语义对齐
+    private volatile boolean isStopped = false;
     private SequenceKey sequenceKey = null;
     private ServerSocket clientServerSocket = null;
     private DatagramSocket clientDatagramSocket = null;

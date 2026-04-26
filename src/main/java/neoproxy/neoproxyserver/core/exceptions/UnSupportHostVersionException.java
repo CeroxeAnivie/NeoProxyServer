@@ -23,8 +23,8 @@ import static neoproxy.neoproxyserver.core.ServerLogger.alert;
  *
  * @author Ceroxe
  * @version 6.1.0
- * @since 6.1.0
  * @see Exception
+ * @since 6.1.0
  */
 public class UnSupportHostVersionException extends Exception {
 

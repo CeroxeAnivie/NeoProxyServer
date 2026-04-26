@@ -1,30 +1,23 @@
 package neoproxy.neoproxyserver.core.management;
 
+import neoproxy.neoproxyserver.core.exceptions.NoMoreNetworkFlowException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
-import neoproxy.neoproxyserver.core.ConfigOperator;
-import neoproxy.neoproxyserver.core.exceptions.NoMoreNetworkFlowException;
-import neoproxy.neoproxyserver.core.management.provider.KeyDataProvider;
-import neoproxy.neoproxyserver.core.management.provider.LocalKeyProvider;
-import neoproxy.neoproxyserver.core.management.provider.RemoteKeyProvider;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
 
 @DisplayName("SequenceKey 测试")
 @ExtendWith(MockitoExtension.class)
 class SequenceKeyTest {
 
-    private SequenceKey sequenceKey;
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy/MM/dd-HH:mm");
+    private SequenceKey sequenceKey;
 
     @BeforeEach
     void setUp() {
@@ -53,7 +46,7 @@ class SequenceKeyTest {
     @DisplayName("测试getPort - 动态端口范围")
     void testGetPort_DynamicRange() {
         SequenceKey key = new SequenceKey("key", 100, "PERMANENT", "10000-20000", 50, true, false);
-        
+
         assertEquals(10000, key.getDyStart());
         assertEquals(20000, key.getDyEnd());
         assertEquals(SequenceKey.DYNAMIC_PORT, key.getPort());
@@ -63,7 +56,7 @@ class SequenceKeyTest {
     @DisplayName("测试getPort - null端口")
     void testGetPort_NullPort() {
         SequenceKey key = new SequenceKey("key", 100, "PERMANENT", null, 50, true, false);
-        
+
         assertEquals(SequenceKey.DYNAMIC_PORT, key.getPort());
     }
 
@@ -71,7 +64,7 @@ class SequenceKeyTest {
     @DisplayName("测试getPort - 无效端口")
     void testGetPort_InvalidPort() {
         SequenceKey key = new SequenceKey("key", 100, "PERMANENT", "invalid", 50, true, false);
-        
+
         assertEquals(SequenceKey.DYNAMIC_PORT, key.getPort());
     }
 
@@ -86,7 +79,7 @@ class SequenceKeyTest {
     void testIsOutOfDate_Expired() {
         String pastTime = LocalDateTime.now().minusDays(1).format(FORMATTER);
         SequenceKey key = new SequenceKey("key", 100, pastTime, "8080", 50, true, false);
-        
+
         assertTrue(key.isOutOfDate());
     }
 
@@ -94,7 +87,7 @@ class SequenceKeyTest {
     @DisplayName("测试isOutOfDate - 永久有效")
     void testIsOutOfDate_Permanent() {
         SequenceKey key = new SequenceKey("key", 100, "PERMANENT", "8080", 50, true, false);
-        
+
         assertFalse(key.isOutOfDate());
     }
 
@@ -182,9 +175,9 @@ class SequenceKeyTest {
     void testRefreshFrom_Normal() {
         String futureExpireTime = LocalDateTime.now().plusDays(60).format(FORMATTER);
         SequenceKey freshKey = new SequenceKey("test-key", 2000.0, futureExpireTime, "9090", 200.0, false, false);
-        
+
         sequenceKey.refreshFrom(freshKey);
-        
+
         assertEquals(2000.0, sequenceKey.getBalance());
         assertEquals(200.0, sequenceKey.getRate());
         assertFalse(sequenceKey.isEnable());
@@ -220,7 +213,7 @@ class SequenceKeyTest {
     void testMineMib_Expired() {
         String pastTime = LocalDateTime.now().minusDays(1).format(FORMATTER);
         SequenceKey expiredKey = new SequenceKey("expired-key", 100, pastTime, "8080", 50, true, false);
-        
+
         assertThrows(NoMoreNetworkFlowException.class, () -> expiredKey.mineMib("test", 10.0));
     }
 
@@ -228,7 +221,7 @@ class SequenceKeyTest {
     @DisplayName("测试mineMib方法 - 禁用密钥抛出异常")
     void testMineMib_Disabled() {
         SequenceKey disabledKey = new SequenceKey("disabled-key", 100, "PERMANENT", "8080", 50, false, false);
-        
+
         assertThrows(NoMoreNetworkFlowException.class, () -> disabledKey.mineMib("test", 10.0));
     }
 
@@ -248,7 +241,7 @@ class SequenceKeyTest {
     @DisplayName("测试parseRange - 无效范围格式")
     void testParseRange_InvalidFormat() {
         SequenceKey key = new SequenceKey("key", 100, "PERMANENT", "invalid-range", 50, true, false);
-        
+
         assertEquals(SequenceKey.DYNAMIC_PORT, key.getDyStart());
         assertEquals(SequenceKey.DYNAMIC_PORT, key.getDyEnd());
     }
@@ -257,7 +250,7 @@ class SequenceKeyTest {
     @DisplayName("测试parseRange - 范围超出有效值")
     void testParseRange_OutOfRange() {
         SequenceKey key = new SequenceKey("key", 100, "PERMANENT", "70000-80000", 50, true, false);
-        
+
         assertEquals(SequenceKey.DYNAMIC_PORT, key.getDyStart());
         assertEquals(SequenceKey.DYNAMIC_PORT, key.getDyEnd());
     }

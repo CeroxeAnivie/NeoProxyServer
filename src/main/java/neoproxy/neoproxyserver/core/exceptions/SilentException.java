@@ -23,8 +23,8 @@ package neoproxy.neoproxyserver.core.exceptions;
  *
  * @author Ceroxe
  * @version 6.1.0
- * @since 6.1.0
  * @see Exception
+ * @since 6.1.0
  */
 public class SilentException extends Exception {
 

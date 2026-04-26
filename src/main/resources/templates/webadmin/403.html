@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta content="width=device-width, initial-scale=1.0" name="viewport">
+    <title data-i18n="err_denied_title">403 Access Denied</title>
+    <link href="https://npm.elemecdn.com/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #7C3AED;
+            --accent: #06B6D4;
+            --danger: #EF4444;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            text-align: center;
+            color: #ffffff;
+        }
+
+        .error-bg-effects {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            opacity: 0.5;
+        }
+
+        .error-grid-bg {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-image:
+                linear-gradient(rgba(124, 58, 237, 0.1) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(124, 58, 237, 0.1) 1px, transparent 1px);
+            background-size: 50px 50px;
+        }
+
+        .error-icon {
+            font-size: 6em;
+            margin-bottom: 2rem;
+            animation: pulse 2s infinite;
+            color: var(--danger);
+            filter: drop-shadow(0 0 20px rgba(239, 68, 68, 0.4));
+        }
+
+        .error-title {
+            font-size: 2.5rem;
+            font-weight: 800;
+            margin-bottom: 1rem;
+            letter-spacing: 1px;
+            color: #ffffff;
+        }
+
+        .error-desc {
+            color: #d1d5db;
+            text-align: center;
+            line-height: 1.8;
+            font-size: 1.1rem;
+            max-width: 500px;
+            padding: 0 20px;
+        }
+
+        .error-desc code {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            color: var(--accent);
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+                opacity: 1;
+            }
+            50% {
+                transform: scale(1.05);
+                opacity: 0.8;
+            }
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="error-bg-effects">
+    <div class="error-grid-bg"></div>
+</div>
+<div class="error-icon"><i class="fas fa-shield-alt"></i></div>
+<div class="error-title" data-i18n="err_denied_title">403 Access Denied</div>
+<div class="error-desc" data-i18n="err_denied_desc">Link expired or session conflict.<br>Please execute <code>webadmin</code> in the server console to get a new link.</div>
+<script>
+    /*
+     * 最小化 i18n：仅包含 403 页面所需的翻译键，
+     * 自动根据浏览器语言判断中文/英文。
+     */
+    const I18N = {
+        en: {
+            err_denied_title: "403 Access Denied",
+            err_denied_desc: "Link expired or session conflict.<br>Please execute <code>webadmin</code> in the server console to get a new link."
+        },
+        zh: {
+            err_denied_title: "403 访问被拒绝",
+            err_denied_desc: "链接已过期或会话冲突。<br>请在服务端控制台输入 <code>webadmin</code> 获取新的安全链接。"
+        }
+    };
+    const lang = navigator.language.startsWith('zh') ? 'zh' : 'en';
+    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+    for (const k in I18N[lang]) {
+        document.querySelectorAll(`[data-i18n="${k}"]`).forEach(el => el.innerHTML = I18N[lang][k]);
+    }
+</script>
+</body>
+</html>

@@ -12,7 +12,7 @@ class RemoteKeyProviderTest {
     @DisplayName("测试构造器")
     void testConstructor() {
         RemoteKeyProvider provider = new RemoteKeyProvider("http://localhost:8080", "test-token", "test-node");
-        
+
         assertNotNull(provider);
     }
 
@@ -20,7 +20,7 @@ class RemoteKeyProviderTest {
     @DisplayName("测试构造器 - 空token")
     void testConstructor_EmptyToken() {
         RemoteKeyProvider provider = new RemoteKeyProvider("http://localhost:8080", "", "test-node");
-        
+
         assertNotNull(provider);
     }
 
@@ -28,7 +28,7 @@ class RemoteKeyProviderTest {
     @DisplayName("测试构造器 - null token")
     void testConstructor_NullToken() {
         RemoteKeyProvider provider = new RemoteKeyProvider("http://localhost:8080", null, "test-node");
-        
+
         assertNotNull(provider);
     }
 
@@ -36,7 +36,7 @@ class RemoteKeyProviderTest {
     @DisplayName("测试init方法")
     void testInit() {
         RemoteKeyProvider provider = new RemoteKeyProvider("http://localhost:8080", "test-token", "test-node");
-        
+
         assertDoesNotThrow(() -> provider.init());
     }
 
@@ -45,7 +45,7 @@ class RemoteKeyProviderTest {
     void testShutdown() {
         RemoteKeyProvider provider = new RemoteKeyProvider("http://localhost:8080", "test-token", "test-node");
         provider.init();
-        
+
         assertDoesNotThrow(() -> provider.shutdown());
     }
 
@@ -54,7 +54,7 @@ class RemoteKeyProviderTest {
     void testReleaseKey() {
         RemoteKeyProvider provider = new RemoteKeyProvider("http://localhost:8080", "test-token", "test-node");
         provider.init();
-        
+
         assertDoesNotThrow(() -> provider.releaseKey("test-key"));
     }
 
@@ -63,7 +63,7 @@ class RemoteKeyProviderTest {
     void testConsumeFlow() {
         RemoteKeyProvider provider = new RemoteKeyProvider("http://localhost:8080", "test-token", "test-node");
         provider.init();
-        
+
         assertDoesNotThrow(() -> provider.consumeFlow("test-key", 10.0));
     }
 
@@ -72,13 +72,13 @@ class RemoteKeyProviderTest {
     void testSendHeartbeat() {
         RemoteKeyProvider provider = new RemoteKeyProvider("http://localhost:8080", "test-token", "test-node");
         provider.init();
-        
+
         Protocol.HeartbeatPayload payload = new Protocol.HeartbeatPayload();
         payload.serial = "test-serial";
         payload.nodeId = "test-node";
-        
+
         boolean result = provider.sendHeartbeat(payload);
-        
+
         assertTrue(result);
     }
 
@@ -87,9 +87,9 @@ class RemoteKeyProviderTest {
     void testGetClientUpdateUrl() {
         RemoteKeyProvider provider = new RemoteKeyProvider("http://localhost:8080", "test-token", "test-node");
         provider.init();
-        
+
         String url = provider.getClientUpdateUrl("jar", "test-serial");
-        
+
         assertNull(url);
     }
 }

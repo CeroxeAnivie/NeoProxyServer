@@ -18,9 +18,9 @@ class UDPTransformerTest {
         InetAddress address = InetAddress.getByName("192.168.1.1");
         int port = 8080;
         DatagramPacket packet = new DatagramPacket(data, data.length, address, port);
-        
+
         byte[] serialized = UDPTransformer.serializeDatagramPacket(packet);
-        
+
         assertNotNull(serialized);
         assertTrue(serialized.length > 0);
     }
@@ -32,9 +32,9 @@ class UDPTransformerTest {
         InetAddress address = InetAddress.getByName("::1");
         int port = 9090;
         DatagramPacket packet = new DatagramPacket(data, data.length, address, port);
-        
+
         byte[] serialized = UDPTransformer.serializeDatagramPacket(packet);
-        
+
         assertNotNull(serialized);
         assertTrue(serialized.length > 0);
     }
@@ -46,9 +46,9 @@ class UDPTransformerTest {
         InetAddress address = InetAddress.getByName("127.0.0.1");
         int port = 12345;
         DatagramPacket packet = new DatagramPacket(data, 0, address, port);
-        
+
         byte[] serialized = UDPTransformer.serializeDatagramPacket(packet);
-        
+
         assertNotNull(serialized);
     }
 
@@ -59,10 +59,10 @@ class UDPTransformerTest {
         InetAddress originalAddress = InetAddress.getByName("10.0.0.1");
         int originalPort = 5000;
         DatagramPacket originalPacket = new DatagramPacket(originalData, originalData.length, originalAddress, originalPort);
-        
+
         byte[] serialized = UDPTransformer.serializeDatagramPacket(originalPacket);
         DatagramPacket deserialized = UDPTransformer.deserializeToDatagramPacket(serialized);
-        
+
         assertNotNull(deserialized);
         assertArrayEquals(originalData, deserialized.getData());
         assertEquals(originalAddress, deserialized.getAddress());
@@ -79,7 +79,7 @@ class UDPTransformerTest {
     @DisplayName("测试deserializeToDatagramPacket - 过短数据")
     void testDeserializeToDatagramPacket_TooShort() {
         byte[] shortData = new byte[10];
-        
+
         assertNull(UDPTransformer.deserializeToDatagramPacket(shortData));
     }
 
@@ -91,7 +91,7 @@ class UDPTransformerTest {
         invalidData[1] = 0x00;
         invalidData[2] = 0x00;
         invalidData[3] = 0x00;
-        
+
         assertNull(UDPTransformer.deserializeToDatagramPacket(invalidData));
     }
 
@@ -101,10 +101,10 @@ class UDPTransformerTest {
         byte[] data = "Test".getBytes();
         InetAddress address = InetAddress.getByName("192.168.1.100");
         DatagramPacket packet = new DatagramPacket(data, data.length, address, 8080);
-        
+
         byte[] serialized = UDPTransformer.serializeDatagramPacket(packet);
         DatagramPacket result = UDPTransformer.deserializeToDatagramPacket(serialized);
-        
+
         assertNotNull(result);
         assertEquals(0xDEADBEEF, java.nio.ByteBuffer.wrap(serialized).getInt());
     }
@@ -118,9 +118,9 @@ class UDPTransformerTest {
         InetAddress address = InetAddress.getByName("172.16.0.1");
         int port = 3000;
         DatagramPacket packet = new DatagramPacket(buffer, 10, data.length, address, port);
-        
+
         byte[] serialized = UDPTransformer.serializeDatagramPacket(packet);
-        
+
         assertNotNull(serialized);
         DatagramPacket deserialized = UDPTransformer.deserializeToDatagramPacket(serialized);
         assertNotNull(deserialized);
@@ -137,10 +137,10 @@ class UDPTransformerTest {
         InetAddress address = InetAddress.getByName("8.8.8.8");
         int port = 53;
         DatagramPacket packet = new DatagramPacket(largeData, largeData.length, address, port);
-        
+
         byte[] serialized = UDPTransformer.serializeDatagramPacket(packet);
         DatagramPacket deserialized = UDPTransformer.deserializeToDatagramPacket(serialized);
-        
+
         assertNotNull(deserialized);
         assertEquals(largeData.length, deserialized.getLength());
     }

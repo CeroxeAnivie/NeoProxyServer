@@ -16,7 +16,7 @@ class ProtocolConstantsTest {
     void testPrivateConstructorThrowsException() throws Exception {
         Constructor<ProtocolConstants> constructor = ProtocolConstants.class.getDeclaredConstructor();
         constructor.setAccessible(true);
-        
+
         InvocationTargetException exception = assertThrows(InvocationTargetException.class, constructor::newInstance);
         assertTrue(exception.getCause() instanceof AssertionError);
         assertTrue(exception.getCause().getMessage().contains("常量类禁止实例化"));

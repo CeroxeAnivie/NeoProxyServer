@@ -109,7 +109,6 @@ public class NeoProxyServer {
             System.exit(-1);
         }
         loadBannedIPs();
-        WebAdminManager.init();
         Debugger.debugOperation("Exit: initStructure() completed");
     }
 

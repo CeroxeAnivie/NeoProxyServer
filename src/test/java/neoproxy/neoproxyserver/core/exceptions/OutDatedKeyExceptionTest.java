@@ -12,9 +12,9 @@ class OutDatedKeyExceptionTest {
     @DisplayName("测试throwException静态方法")
     void testThrowException() {
         String keyName = "expired-key-123";
-        
-        assertThrows(OutDatedKeyException.class, () -> 
-            OutDatedKeyException.throwException(keyName)
+
+        assertThrows(OutDatedKeyException.class, () ->
+                OutDatedKeyException.throwException(keyName)
         );
     }
 
@@ -22,7 +22,7 @@ class OutDatedKeyExceptionTest {
     @DisplayName("测试异常可以被捕获并获取消息")
     void testExceptionCanBeCaught() {
         String keyName = "test-key";
-        
+
         try {
             OutDatedKeyException.throwException(keyName);
             fail("应该抛出OutDatedKeyException");

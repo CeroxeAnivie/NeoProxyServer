@@ -15,9 +15,9 @@ class WebAdminManagerTest {
     void testPrivateConstructor() throws Exception {
         Constructor<WebAdminManager> constructor = WebAdminManager.class.getDeclaredConstructor();
         constructor.setAccessible(true);
-        
+
         WebAdminManager instance = constructor.newInstance();
-        
+
         assertNotNull(instance);
     }
 
@@ -74,17 +74,17 @@ class WebAdminManagerTest {
     void testSetPermanentToken() throws InterruptedException {
         // 先初始化WebAdminManager
         WebAdminManager.init();
-        
+
         // 等待服务器启动
         int retries = 50;
         while (!WebAdminManager.isRunning() && retries-- > 0) {
             Thread.sleep(100);
         }
-        
+
         WebAdminManager.setPermanentToken("test-token");
         assertTrue(WebAdminManager.verifyToken("test-token"));
         assertEquals(2, WebAdminManager.verifyTokenAndGetType("test-token"));
-        
+
         // 清理
         WebAdminManager.setPermanentToken("");
         WebAdminManager.shutdown();
@@ -95,7 +95,7 @@ class WebAdminManagerTest {
     void testSetSslConfig() {
         WebAdminManager.setSslConfig("/path/to/cert.pem", "/path/to/key.pem", "password");
         assertTrue(WebAdminManager.isSslEnabled());
-        
+
         // 清理
         WebAdminManager.setSslConfig("", "", "");
     }
@@ -111,10 +111,10 @@ class WebAdminManagerTest {
     void testIsSslEnabled_PartialConfig() {
         WebAdminManager.setSslConfig("/path/to/cert.pem", "", "");
         assertFalse(WebAdminManager.isSslEnabled());
-        
+
         WebAdminManager.setSslConfig("", "/path/to/key.pem", "");
         assertFalse(WebAdminManager.isSslEnabled());
-        
+
         // 清理
         WebAdminManager.setSslConfig("", "", "");
     }

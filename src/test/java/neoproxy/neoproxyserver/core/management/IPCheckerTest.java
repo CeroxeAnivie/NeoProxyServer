@@ -15,9 +15,9 @@ class IPCheckerTest {
     void testPrivateConstructor() throws Exception {
         Constructor<IPChecker> constructor = IPChecker.class.getDeclaredConstructor();
         constructor.setAccessible(true);
-        
+
         IPChecker instance = constructor.newInstance();
-        
+
         assertNotNull(instance);
     }
 
@@ -93,7 +93,7 @@ class IPCheckerTest {
     @DisplayName("测试BanInfo类")
     void testBanInfo() {
         IPChecker.BanInfo info = new IPChecker.BanInfo("192.168.1.1", "Beijing", "China Telecom");
-        
+
         assertEquals("192.168.1.1", info.ip);
         assertEquals("Beijing", info.location);
         assertEquals("China Telecom", info.isp);

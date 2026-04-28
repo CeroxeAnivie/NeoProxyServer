@@ -155,8 +155,8 @@ function parseAsciiTable(t) {
         if (c.length === headers.length) {
             if (c.every(s => s === '')) continue;
             if (c[0] === '' && last) {
-                // 续行 — 合并到上一行
-                for (let j = 0; j < c.length; j++) if (c[j]) last[j] += '<br>' + c[j];
+                // 续行属于解析后的纯文本数据；HTML 换行应由具体渲染层在转义后决定。
+                for (let j = 0; j < c.length; j++) if (c[j]) last[j] += '\n' + c[j];
             } else {
                 last = c;
                 rows.push(last);

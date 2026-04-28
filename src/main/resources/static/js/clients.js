@@ -12,6 +12,13 @@ function refreshClients() {
     ws.send('list');
 }
 
+function renderMultilineClientText(text) {
+    // 先完整转义动态数据，再只恢复换行语义，避免把后端文本整体提升为可信 HTML。
+    return escapeHtml(text || '0')
+        .replace(/\r\n|\r|\n/g, '<br>')
+        .replace(/&lt;br&gt;/g, '<br>');
+}
+
 function renderClientTable(data) {
     lastClientData = data;
     var div = document.getElementById('client-table-wrapper');
@@ -39,7 +46,7 @@ function renderClientTable(data) {
             var escLoc = escapeHtml(loc);
             var escIsp = escapeHtml(row[3]);
             var escPort = escapeHtml(row[4] || '-');
-            var escExt = escapeHtml(row[5] || '0');
+            var escExt = renderMultilineClientText(row[5]);
             var locHtml = '<div style="display:flex; align-items:center; gap:8px;">' +
                 '<span>' + escLoc + '</span>' +
                 '<button class="btn btn-action btn-sm" onclick="ws.send(\'#REFRESH_LOC:' + escIp + '\">' +

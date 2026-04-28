@@ -159,12 +159,36 @@ public class TransferSocketAdapter implements Runnable {
             final SecureSocket accepted = host;
             acceptHandlerPool.submit(() -> {
                 try {
-                    String[] flags = accepted.receiveStr(SO_TIMEOUT).split(";");
-                    Debugger.debugOperation("TransferSocket received flags: " + String.join(";", flags));
+                    String handshake = accepted.receiveStr(SO_TIMEOUT);
+                    if (handshake == null || handshake.isBlank()) {
+                        Debugger.debugOperation("TransferSocket rejected empty handshake.");
+                        close(accepted);
+                        return;
+                    }
+
+                    String[] flags = handshake.split(";", -1);
+                    Debugger.debugOperation("TransferSocket received flags: " + handshake);
+                    if (flags.length != 2 || flags[0].isBlank() || flags[1].isBlank()) {
+                        Debugger.debugOperation("TransferSocket rejected malformed handshake: " + handshake);
+                        close(accepted);
+                        return;
+                    }
 
                     accepted.setSoTimeout(0);//保险起见再调回去
-                    String connectionType = flags[0];
-                    long socketID = Long.parseLong(flags[1]);
+                    String connectionType = flags[0].trim();
+                    long socketID;
+                    try {
+                        socketID = Long.parseLong(flags[1].trim());
+                    } catch (NumberFormatException e) {
+                        Debugger.debugOperation("TransferSocket rejected non-numeric socket id: " + flags[1]);
+                        close(accepted);
+                        return;
+                    }
+                    if (socketID <= 0) {
+                        Debugger.debugOperation("TransferSocket rejected non-positive socket id: " + socketID);
+                        close(accepted);
+                        return;
+                    }
 
                     HostReply newReply = new HostReply(socketID, accepted);
 

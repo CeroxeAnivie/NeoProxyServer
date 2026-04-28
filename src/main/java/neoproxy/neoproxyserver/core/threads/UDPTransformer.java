@@ -23,13 +23,15 @@ import static neoproxy.neoproxyserver.core.InternetOperator.close;
 import static neoproxy.neoproxyserver.core.threads.TCPTransformer.TELL_BALANCE_MIB;
 
 public class UDPTransformer implements Runnable {
+    private static final int SEND_QUEUE_CAPACITY = 100;
+    private static final int IDLE_TIMEOUT_SECONDS = 30;
     public static final CopyOnWriteArrayList<UDPTransformer> udpClientConnections = new CopyOnWriteArrayList<>();
     private final HostClient hostClient;
     private final HostReply hostReply;
     private final DatagramSocket sharedDatagramSocket;
     private final String clientIP;
     private final int clientOutPort;
-    private final ArrayBlockingQueue<byte[]> sendQueue = new ArrayBlockingQueue<>(100);
+    private final ArrayBlockingQueue<byte[]> sendQueue = new ArrayBlockingQueue<>(SEND_QUEUE_CAPACITY);
     private volatile boolean isRunning = true;
 
     public UDPTransformer(HostClient hostClient, HostReply hostReply, DatagramSocket sharedDatagramSocket, String clientIP, int clientOutPort) {
@@ -88,8 +90,8 @@ public class UDPTransformer implements Runnable {
         }
 
         int expectedLength = 4 + 4 + 4 + ipLen + 2 + dataLen;
-        if (serializedData.length < expectedLength) {
-            debugOperation(new IllegalArgumentException("Incomplete serialized data"));
+        if (serializedData.length != expectedLength) {
+            debugOperation(new IllegalArgumentException("Serialized data length mismatch"));
             return null;
         }
 
@@ -150,6 +152,9 @@ public class UDPTransformer implements Runnable {
     }
 
     public boolean addPacketToSend(byte[] serializedPacket) {
+        if (serializedPacket == null) {
+            return false;
+        }
         if (isRunning) {
             return sendQueue.offer(serializedPacket);
         }
@@ -161,9 +166,19 @@ public class UDPTransformer implements Runnable {
             // 【核心修改】获取全局限速器
             RateLimiter limiter = hostClient.getGlobalRateLimiter();
 
-            byte[] data;
-            while (isRunning && (data = sendQueue.poll(1, TimeUnit.SECONDS)) != null) {
-                int enLength = hostReply.host().sendByte(data);
+            long idleDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(IDLE_TIMEOUT_SECONDS);
+            while (isRunning) {
+                byte[] data = sendQueue.poll(1, TimeUnit.SECONDS);
+                if (data == null) {
+                    if (System.nanoTime() >= idleDeadline) {
+                        debugOperation("UDP session idle timeout: " + clientIP + ":" + clientOutPort);
+                        break;
+                    }
+                    continue;
+                }
+                idleDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(IDLE_TIMEOUT_SECONDS);
+
+                int enLength = hostReply.host().sendBytes(data);
 
                 if (enLength > 0) {
                     NeoProxyServer.TOTAL_BYTES_COUNTER.add(enLength);
@@ -188,7 +203,7 @@ public class UDPTransformer implements Runnable {
             RateLimiter limiter = hostClient.getGlobalRateLimiter();
 
             byte[] data;
-            while (isRunning && (data = hostReply.host().receiveByte()) != null) {
+            while (isRunning && (data = hostReply.host().receiveBytes()) != null) {
                 if (data.length <= 0) continue;
 
                 DatagramPacket packetToClient = deserializeToDatagramPacket(data);

@@ -2,6 +2,7 @@ package neoproxy.neoproxyserver.core.management;
 
 import neoproxy.neoproxyserver.core.HostClient;
 import neoproxy.neoproxyserver.core.ServerLogger;
+import neoproxy.neoproxyserver.NeoProxyServer;
 
 import java.io.*;
 import java.net.InetAddress;
@@ -30,8 +31,8 @@ public class IPChecker {
     public static final int UNBAN = 1;
     public static final int CHECK_IS_BAN = 2;
 
-    private static final File BAN_LIST_JSON = new File(System.getProperty("user.dir"), "banList.json");
-    private static final File BAN_LIST_TXT_OLD = new File(System.getProperty("user.dir"), "banList.txt");
+    private static final File BAN_LIST_JSON = new File(NeoProxyServer.CURRENT_DIR_PATH, "banList.json");
+    private static final File BAN_LIST_TXT_OLD = new File(NeoProxyServer.CURRENT_DIR_PATH, "banList.txt");
 
     private static final Map<String, BanInfo> bannedIPMap = new ConcurrentHashMap<>();
 
@@ -63,9 +64,10 @@ public class IPChecker {
             String line;
             while ((line = reader.readLine()) != null) {
                 String ip = line.trim();
-                if (!ip.isEmpty() && isValidIP(ip)) {
-                    IPGeolocationHelper.LocationInfo info = IPGeolocationHelper.getLocationInfo(ip);
-                    tempList.add(new BanInfo(ip, info.location(), info.isp()));
+                String normalizedIp = normalizeIP(ip);
+                if (normalizedIp != null) {
+                    IPGeolocationHelper.LocationInfo info = IPGeolocationHelper.getLocationInfo(normalizedIp);
+                    tempList.add(new BanInfo(normalizedIp, info.location(), info.isp()));
                 }
             }
         } catch (IOException e) {
@@ -81,7 +83,7 @@ public class IPChecker {
 
         try {
             Files.move(BAN_LIST_TXT_OLD.toPath(),
-                    new File(System.getProperty("user.dir"), "banList.txt.bak").toPath(),
+                    new File(NeoProxyServer.CURRENT_DIR_PATH, "banList.txt.bak").toPath(),
                     StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
             ServerLogger.warnWithSource("IPChecker", "ipChecker.failedToRenameOldTxt");
@@ -111,7 +113,10 @@ public class IPChecker {
                 String ip = matcher.group(1);
                 String loc = matcher.group(2);
                 String isp = matcher.group(3);
-                newMap.put(ip, new BanInfo(ip, loc, isp));
+                String normalizedIp = normalizeIP(ip);
+                if (normalizedIp != null) {
+                    newMap.put(normalizedIp, new BanInfo(normalizedIp, loc, isp));
+                }
             }
 
             bannedIPMap.clear();
@@ -180,7 +185,9 @@ public class IPChecker {
     }
 
     public static boolean exec(String ip, int execMode) {
-        if (ip == null || ip.isEmpty()) return false;
+        String normalizedIp = normalizeIP(ip);
+        if (normalizedIp == null) return false;
+        ip = normalizedIp;
 
         LOCK.lock();
         try {
@@ -239,13 +246,26 @@ public class IPChecker {
     }
 
     public static boolean isValidIP(String ip) {
-        if (ip == null || ip.isEmpty()) return false;
-        if (!IPV4_PATTERN.matcher(ip).matches()) return false;
+        return normalizeIP(ip) != null;
+    }
+
+    private static String normalizeIP(String ip) {
+        if (ip == null || ip.isBlank()) return null;
+        String normalized = ip.trim();
+        if (IPV4_PATTERN.matcher(normalized).matches()) {
+            return normalized;
+        }
+        if (!normalized.contains(":")) {
+            return null;
+        }
         try {
-            InetAddress.getByName(ip);
-            return true;
+            InetAddress address = InetAddress.getByName(normalized);
+            if (address.getAddress().length != 16) {
+                return null;
+            }
+            return address.getHostAddress();
         } catch (UnknownHostException e) {
-            return false;
+            return null;
         }
     }
 

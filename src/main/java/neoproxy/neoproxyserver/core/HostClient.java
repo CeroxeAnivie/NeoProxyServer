@@ -288,47 +288,83 @@ public final class HostClient implements Closeable {
 
     private void handleHostClientCommand(String message) {
         Debugger.debugOperation("Handling client command: " + message);
-        if (message.startsWith("T")) {
-            if (clientServerSocket == null) {
-                try {
-                    clientServerSocket = new ServerSocket(getOutPort());
-                    Debugger.debugOperation("Client-Side TCP Socket opened on port " + getOutPort());
-                } catch (IOException e) {
-                    debugOperation(e);
-                }
-            }
-            setTCPEnabled(true);
-        } else {
-            setTCPEnabled(false);
-            if (clientServerSocket != null) {
-                try {
-                    Debugger.debugOperation("Client-Side TCP Socket closing.");
-                    cleanActiveTcpSockets();
-                    clientServerSocket.close();
-                    clientServerSocket = null;
-                } catch (IOException e) {
-                    debugOperation(e);
-                }
-            }
+        String flags = message == null ? "" : message.trim();
+        if (!flags.isEmpty() && !"T".equals(flags) && !"U".equals(flags) && !"TU".equals(flags)) {
+            Debugger.debugOperation("Ignoring invalid protocol flags from client: " + message);
+            return;
         }
-        if (message.endsWith("U")) {
-            if (clientDatagramSocket == null) {
-                try {
-                    clientDatagramSocket = new DatagramSocket(getOutPort());
-                    Debugger.debugOperation("Client-Side UDP Socket opened on port " + getOutPort());
-                } catch (IOException e) {
-                    debugOperation(e);
-                }
+
+        boolean enableTcp = flags.contains("T");
+        boolean enableUdp = flags.contains("U");
+        if (!canSwitchProtocolState(enableTcp, enableUdp)) {
+            Debugger.debugOperation("Protocol switch rejected because port " + getOutPort() + " is not available for both TCP and UDP.");
+            try {
+                InternetOperator.sendStr(this, languageData.THE_PORT_HAS_ALREADY_BIND);
+            } catch (IOException e) {
+                debugOperation(e);
             }
-            setUDPEnabled(true);
-        } else {
-            setUDPEnabled(false);
-            if (clientDatagramSocket != null) {
+            return;
+        }
+
+        ServerSocket openedTcpSocket = null;
+        DatagramSocket openedUdpSocket = null;
+        try {
+            if (enableTcp && clientServerSocket == null) {
+                openedTcpSocket = new ServerSocket(getOutPort());
+            }
+            if (enableUdp && clientDatagramSocket == null) {
+                openedUdpSocket = new DatagramSocket(getOutPort());
+            }
+
+            if (!enableTcp && clientServerSocket != null) {
+                Debugger.debugOperation("Client-Side TCP Socket closing.");
+                cleanActiveTcpSockets();
+                clientServerSocket.close();
+                clientServerSocket = null;
+            }
+            if (!enableUdp && clientDatagramSocket != null) {
                 Debugger.debugOperation("Client-Side UDP Socket closing.");
                 clientDatagramSocket.close();
                 clientDatagramSocket = null;
             }
+
+            if (openedTcpSocket != null) {
+                clientServerSocket = openedTcpSocket;
+                openedTcpSocket = null;
+                Debugger.debugOperation("Client-Side TCP Socket opened on port " + getOutPort());
+            }
+            if (openedUdpSocket != null) {
+                clientDatagramSocket = openedUdpSocket;
+                openedUdpSocket = null;
+                Debugger.debugOperation("Client-Side UDP Socket opened on port " + getOutPort());
+            }
+
+            setTCPEnabled(enableTcp);
+            setUDPEnabled(enableUdp);
+        } catch (IOException e) {
+            debugOperation(e);
+        } finally {
+            InternetOperator.close(openedTcpSocket, openedUdpSocket);
         }
+    }
+
+    private boolean canSwitchProtocolState(boolean enableTcp, boolean enableUdp) {
+        if (!enableTcp && !enableUdp) {
+            return true;
+        }
+        int port = getOutPort();
+        boolean tcpOwned = clientServerSocket != null && !clientServerSocket.isClosed();
+        boolean udpOwned = clientDatagramSocket != null && !clientDatagramSocket.isClosed();
+        if (tcpOwned && udpOwned) {
+            return true;
+        }
+        if (tcpOwned) {
+            return InternetOperator.isUDPAvailable(port);
+        }
+        if (udpOwned) {
+            return InternetOperator.isTCPAvailable(port);
+        }
+        return InternetOperator.isTCPAndUDPAvailable(port);
     }
 
     public void registerTcpSocket(Socket socket) {

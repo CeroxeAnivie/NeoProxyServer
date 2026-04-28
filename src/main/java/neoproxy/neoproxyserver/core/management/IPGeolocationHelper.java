@@ -32,8 +32,7 @@ public class IPGeolocationHelper {
         byte[] v4Data = loadFileToBytes(FILE_V4);
         if (v4Data != null) {
             try {
-                // v3.1.1 API: Version.IPv4 + LongByteArray
-                searcherV4 = Searcher.newWithBuffer(Version.IPv4, new LongByteArray(v4Data));
+                searcherV4 = Searcher.newWithBuffer(Version.IPv4, toLongByteArray(v4Data));
                 v4Loaded = true;
                 // [Key Used]: ipGeolocationHelper.init.v4.success
                 ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.v4.success", String.valueOf(v4Data.length));
@@ -43,7 +42,7 @@ public class IPGeolocationHelper {
             }
         } else {
             // [Key Used]: ipGeolocationHelper.init.v4.notFound
-            ServerLogger.warnWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.v4.notFound", null);
+            ServerLogger.warnWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.v4.notFound");
         }
 
         // -------------------------------------------------
@@ -52,8 +51,7 @@ public class IPGeolocationHelper {
         byte[] v6Data = loadFileToBytes(FILE_V6);
         if (v6Data != null) {
             try {
-                // v3.1.1 API: Version.IPv6 + LongByteArray
-                searcherV6 = Searcher.newWithBuffer(Version.IPv6, new LongByteArray(v6Data));
+                searcherV6 = Searcher.newWithBuffer(Version.IPv6, toLongByteArray(v6Data));
                 v6Loaded = true;
                 // [Key Used]: ipGeolocationHelper.init.v6.success
                 ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.v6.success", String.valueOf(v6Data.length));
@@ -63,7 +61,7 @@ public class IPGeolocationHelper {
             }
         } else {
             // [Key Used]: ipGeolocationHelper.init.v6.notFound
-            ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.v6.notFound", null);
+            ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.v6.notFound");
         }
     }
 
@@ -89,6 +87,12 @@ public class IPGeolocationHelper {
             ServerLogger.errorWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.ioError", fileName + ", " + e.getMessage());
             return null;
         }
+    }
+
+    private static LongByteArray toLongByteArray(byte[] data) throws IOException {
+        LongByteArray buffer = new LongByteArray(data.length);
+        buffer.append(data);
+        return buffer;
     }
 
     public static LocationInfo getLocationInfo(String ip) {

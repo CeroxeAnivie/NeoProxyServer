@@ -121,4 +121,17 @@ public final class InternetOperator {
         }
     }
 
+    public static boolean isTCPAndUDPAvailable(int port) {
+        try (ServerSocket tcpSocket = new ServerSocket();
+             DatagramSocket udpSocket = new DatagramSocket(null)) {
+            tcpSocket.setReuseAddress(false);
+            tcpSocket.bind(new InetSocketAddress(port), 0);
+            udpSocket.setReuseAddress(false);
+            udpSocket.bind(new InetSocketAddress(port));
+            return true;
+        } catch (IOException | IllegalArgumentException e) {
+            return false;
+        }
+    }
+
 }

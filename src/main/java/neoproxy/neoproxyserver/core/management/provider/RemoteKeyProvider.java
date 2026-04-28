@@ -10,13 +10,21 @@ import neoproxy.neoproxyserver.core.ServerLogger;
 import neoproxy.neoproxyserver.core.exceptions.*;
 import neoproxy.neoproxyserver.core.management.SequenceKey;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.Base64;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -42,6 +50,7 @@ public class RemoteKeyProvider implements KeyDataProvider {
     private final String nodeId;
     private final HttpClient httpClient;
     private final Gson gson;
+    private final ExecutorService httpExecutor;
     private final ConcurrentHashMap<String, DoubleAdder> trafficBuffer = new ConcurrentHashMap<>();
     private final AtomicBoolean isFlushing = new AtomicBoolean(false);
 
@@ -57,9 +66,14 @@ public class RemoteKeyProvider implements KeyDataProvider {
         this.token = token;
         this.nodeId = nodeId;
         this.gson = new Gson();
+        this.httpExecutor = Executors.newCachedThreadPool(r -> {
+            Thread t = new Thread(r, "NKM-Http-Thread");
+            t.setDaemon(true);
+            return t;
+        });
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(REQUEST_TIMEOUT_MS))
-                .executor(Executors.newCachedThreadPool())
+                .executor(httpExecutor)
                 .build();
     }
 
@@ -76,7 +90,7 @@ public class RemoteKeyProvider implements KeyDataProvider {
     /**
      * 向 NKM 请求特定 OS 和 Key 的客户端下载 URL
      *
-     * @param os           "7z" 或 "jar"
+     * @param os           "exe" 或 "jar"
      * @param clientSerial 客户端使用的密钥 Serial
      * @return URL 字符串，如果获取失败或不可用则返回 null
      */
@@ -85,9 +99,13 @@ public class RemoteKeyProvider implements KeyDataProvider {
         try {
             // 构建请求 URL: /api/node/client/update-url?os=xxx&serial=xxx&nodeId=xxx
             String endpoint = String.format("%s%s?os=%s&serial=%s&nodeId=%s",
-                    managerUrl, Protocol.API_CLIENT_UPDATE_URL, os, clientSerial, nodeId);
+                    managerUrl,
+                    Protocol.API_CLIENT_UPDATE_URL,
+                    encodeQueryValue(os),
+                    encodeQueryValue(clientSerial),
+                    encodeQueryValue(nodeId));
 
-            HttpRequest req = buildRequest(endpoint).GET().build();
+            HttpRequest req = buildRequest(endpoint, "GET", "").GET().build();
             HttpResponse<String> response = sendWithRetry(req);
 
             if (response.statusCode() == 200) {
@@ -115,12 +133,16 @@ public class RemoteKeyProvider implements KeyDataProvider {
         try {
             Protocol.NodeStatusPayload payload = new Protocol.NodeStatusPayload();
             payload.nodeId = this.nodeId;
+            payload.address = NeoProxyServer.LOCAL_DOMAIN_NAME;
+            payload.hookPort = NeoProxyServer.HOST_HOOK_PORT;
+            payload.connectPort = NeoProxyServer.HOST_CONNECT_PORT;
             payload.version = NeoProxyServer.VERSION;
             payload.timestamp = System.currentTimeMillis();
             payload.activeTunnels = NeoProxyServer.availableHostClient.size();
 
-            HttpRequest req = buildRequest(managerUrl + Protocol.API_NODE_STATUS)
-                    .POST(HttpRequest.BodyPublishers.ofString(gson.toJson(payload)))
+            String body = gson.toJson(payload);
+            HttpRequest req = buildRequest(managerUrl + Protocol.API_NODE_STATUS, "POST", body)
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
 
             HttpResponse<String> response = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
@@ -139,8 +161,11 @@ public class RemoteKeyProvider implements KeyDataProvider {
         // ... (保持原有代码不变)
         Debugger.debugOperation("Remote getKey request: " + name);
         try {
-            String endpoint = String.format("%s/api/key?name=%s&nodeId=%s", managerUrl, name, nodeId);
-            HttpRequest req = buildRequest(endpoint).GET().build();
+            String endpoint = String.format("%s/api/key?name=%s&nodeId=%s",
+                    managerUrl,
+                    encodeQueryValue(name),
+                    encodeQueryValue(nodeId));
+            HttpRequest req = buildRequest(endpoint, "GET", "").GET().build();
 
             HttpResponse<String> response = sendWithRetry(req);
             String body = response.body();
@@ -251,8 +276,9 @@ public class RemoteKeyProvider implements KeyDataProvider {
             snapshot.forEach(trafficObj::addProperty);
             jsonRoot.add("traffic", trafficObj);
 
-            HttpRequest req = buildRequest(managerUrl + Protocol.API_SYNC)
-                    .POST(HttpRequest.BodyPublishers.ofString(gson.toJson(jsonRoot)))
+            String body = gson.toJson(jsonRoot);
+            HttpRequest req = buildRequest(managerUrl + Protocol.API_SYNC, "POST", body)
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
 
             HttpResponse<String> response = sendWithRetry(req);
@@ -311,8 +337,9 @@ public class RemoteKeyProvider implements KeyDataProvider {
                 JsonObject json = new JsonObject();
                 json.addProperty("serial", name);
                 json.addProperty("nodeId", nodeId);
-                HttpRequest req = buildRequest(managerUrl + "/api/release")
-                        .POST(HttpRequest.BodyPublishers.ofString(gson.toJson(json)))
+                String body = gson.toJson(json);
+                HttpRequest req = buildRequest(managerUrl + "/api/release", "POST", body)
+                        .POST(HttpRequest.BodyPublishers.ofString(body))
                         .build();
                 httpClient.send(req, HttpResponse.BodyHandlers.discarding());
             } catch (Exception ignored) {
@@ -324,8 +351,9 @@ public class RemoteKeyProvider implements KeyDataProvider {
     public boolean sendHeartbeat(Protocol.HeartbeatPayload payload) {
         // ... (保持原有代码不变)
         try {
-            HttpRequest req = buildRequest(managerUrl + Protocol.API_HEARTBEAT)
-                    .POST(HttpRequest.BodyPublishers.ofString(gson.toJson(payload)))
+            String body = gson.toJson(payload);
+            HttpRequest req = buildRequest(managerUrl + Protocol.API_HEARTBEAT, "POST", body)
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
             HttpResponse<String> response = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() == 200) {
@@ -343,18 +371,40 @@ public class RemoteKeyProvider implements KeyDataProvider {
         Debugger.debugOperation("Shutting down RemoteKeyProvider...");
         scheduler.shutdownNow();
         flushTraffic();
+        httpExecutor.shutdownNow();
         Debugger.debugOperation("RemoteKeyProvider shutdown complete.");
     }
 
-    private HttpRequest.Builder buildRequest(String uri) {
+    private static String encodeQueryValue(String value) {
+        return URLEncoder.encode(value == null ? "" : value, StandardCharsets.UTF_8);
+    }
+
+    private HttpRequest.Builder buildRequest(String uri, String method, String body) {
+        URI parsedUri = URI.create(uri);
         HttpRequest.Builder builder = HttpRequest.newBuilder()
-                .uri(URI.create(uri))
+                .uri(parsedUri)
                 .header("Content-Type", "application/json")
                 .timeout(Duration.ofMillis(REQUEST_TIMEOUT_MS));
         if (token != null && !token.isEmpty()) {
+            String timestamp = String.valueOf(Instant.now().getEpochSecond());
+            String nonce = UUID.randomUUID().toString().replace("-", "");
             builder.header("Authorization", "Bearer " + token);
+            builder.header("X-Timestamp", timestamp);
+            builder.header("X-Nonce", nonce);
+            builder.header("X-Signature", buildSignature(method, parsedUri.getPath(), timestamp, nonce, body));
         }
         return builder;
+    }
+
+    private String buildSignature(String method, String path, String timestamp, String nonce, String body) {
+        try {
+            String data = method + "|" + path + "|" + timestamp + "|" + nonce + "|" + (body == null ? "" : body);
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(token.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            return Base64.getEncoder().encodeToString(mac.doFinal(data.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to sign NKM node request", e);
+        }
     }
 
     private HttpResponse<String> sendWithRetry(HttpRequest request) throws Exception {

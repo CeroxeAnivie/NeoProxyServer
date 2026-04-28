@@ -24,6 +24,9 @@ public class Protocol {
 
     public static class NodeStatusPayload implements Serializable {
         public String nodeId;
+        public String address;
+        public int hookPort;
+        public int connectPort;
         public String version;
         public long timestamp;
         public int activeTunnels;

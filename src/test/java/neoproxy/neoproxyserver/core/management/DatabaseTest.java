@@ -1,8 +1,10 @@
 package neoproxy.neoproxyserver.core.management;
 
+import neoproxy.neoproxyserver.NeoProxyServer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.io.File;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -43,7 +45,7 @@ class DatabaseTest {
         Field field = Database.class.getDeclaredField("DB_URL");
         field.setAccessible(true);
         String value = (String) field.get(null);
-        assertEquals("jdbc:sqlite:./sk", value);
+        assertEquals("jdbc:sqlite:" + new File(NeoProxyServer.CURRENT_DIR_PATH, "sk").getAbsolutePath(), value);
         assertTrue(Modifier.isStatic(field.getModifiers()));
         assertTrue(Modifier.isFinal(field.getModifiers()));
         assertTrue(Modifier.isPrivate(field.getModifiers()));

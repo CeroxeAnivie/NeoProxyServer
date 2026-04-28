@@ -28,6 +28,7 @@ import java.io.*;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.KeyStore;
 import java.security.Security;
@@ -59,6 +60,7 @@ public class WebAdminServer {
     private final int port;
     private Javalin app;
     private volatile boolean isRunning = false;
+    private volatile int actualListeningPort = -1;
     private String sslCertPath = "";
     private String sslKeyPath = "";
     private String sslPassword = "";
@@ -142,14 +144,13 @@ public class WebAdminServer {
     public void start() {
         if (isRunning) return;
         app = Javalin.create(this::configureJavalin);
-        setupRoutes();
-        setupWebSocket();
         // SSL 模式下使用 modifyServer 配置了端口，不需要传入 port
         if (isSslEnabled()) {
             app.start();
         } else {
             app.start(port);
         }
+        actualListeningPort = app.port();
         isRunning = true;
     }
 
@@ -159,8 +160,8 @@ public class WebAdminServer {
     }
 
     private void configureJavalin(JavalinConfig config) {
-        config.showJavalinBanner = false;
-        config.useVirtualThreads = true;
+        config.startup.showJavalinBanner = false;
+        config.concurrency.useVirtualThreads = true;
 
         /*
          * 静态资源服务：从 classpath 的 static/ 目录提供 CSS/JS 文件。
@@ -189,6 +190,9 @@ public class WebAdminServer {
                 // SSL 启动成功日志由 WebAdminManager.startSslServer() 统一打印，此处不再重复
             });
         }
+
+        setupRoutes(config);
+        setupWebSocket(config);
     }
 
     /**
@@ -246,16 +250,16 @@ public class WebAdminServer {
         }
     }
 
-    private void setupRoutes() {
-        app.before(this::handleBefore);
-        app.get("/", this::serveIndexPage);
-        app.get("/check_exists", this::handleCheckExists);
-        app.post("/upload", this::handleFileUpload);
-        app.get("/download", this::handleFileDownload);
+    private void setupRoutes(JavalinConfig config) {
+        config.routes.before(this::handleBefore);
+        config.routes.get("/", this::serveIndexPage);
+        config.routes.get("/check_exists", this::handleCheckExists);
+        config.routes.post("/upload", this::handleFileUpload);
+        config.routes.get("/download", this::handleFileDownload);
     }
 
-    private void setupWebSocket() {
-        app.ws("/ws", wsConfig -> {
+    private void setupWebSocket(JavalinConfig config) {
+        config.routes.ws("/ws", wsConfig -> {
             wsConfig.onConnect(this::onWebSocketConnect);
             wsConfig.onMessage(this::onWebSocketMessage);
             wsConfig.onClose(this::onWebSocketClose);
@@ -299,7 +303,7 @@ public class WebAdminServer {
     }
 
     private String getRealRemoteIp(WsContext ctx) {
-        String remoteIp = ctx.session.getRemoteAddress().toString();
+        String remoteIp = ctx.session.getRemoteSocketAddress().toString();
         if (remoteIp.startsWith("/")) remoteIp = remoteIp.substring(1);
         int portIndex = remoteIp.indexOf(":");
         if (portIndex > 0) remoteIp = remoteIp.substring(0, portIndex);
@@ -350,17 +354,20 @@ public class WebAdminServer {
         }
         String relPath = ctx.queryParam("path");
         String filename = ctx.queryParam("filename");
-        if (relPath == null) relPath = "";
-        if (filename == null || filename.trim().isEmpty()) {
+        if (isInvalidFileName(filename)) {
             ctx.status(400).result("No filename");
             return;
         }
-        if (relPath.contains("..") || filename.contains("..") || filename.contains("/") || filename.contains("\\")) {
+        try {
+            File target = new File(resolveSandboxFile(relPath), filename).getCanonicalFile();
+            if (isUnsafeSymlink(target)) {
+                ctx.status(403).result("Invalid Path");
+                return;
+            }
+            ctx.result(String.valueOf(target.exists()));
+        } catch (Exception e) {
             ctx.status(403).result("Invalid Path");
-            return;
         }
-        File target = new File(new File(NeoProxyServer.CURRENT_DIR_PATH, relPath), filename);
-        ctx.result(String.valueOf(target.exists()));
     }
 
     private void handleFileUpload(Context ctx) {
@@ -379,24 +386,23 @@ public class WebAdminServer {
                 ctx.status(400).json("{\"status\":\"error\",\"msg\":\"Missing filename\"}");
                 return;
             }
-            if (relPath == null) relPath = "";
-            if (relPath.contains("..") || filenameEncoded.contains("..") || filenameEncoded.contains("/") || filenameEncoded.contains("\\")) {
+            if (isInvalidFileName(filenameEncoded)) {
                 ctx.status(403).json("{\"status\":\"error\",\"msg\":\"Invalid Path\"}");
                 return;
             }
-            String filename = new File(filenameEncoded).getName();
-            if (filename.trim().isEmpty()) {
-                ctx.status(400).json("{\"status\":\"error\",\"msg\":\"Empty filename\"}");
-                return;
-            }
-            File targetDir = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
+            String filename = filenameEncoded.trim();
+            File targetDir = resolveSandboxFile(relPath);
             // 【安全修复】检查目标目录是否为符号链接
             if (targetDir.exists() && isUnsafeSymlink(targetDir)) {
                 ctx.status(403).json("{\"status\":\"error\",\"msg\":\"Access Denied\"}");
                 return;
             }
             if (!targetDir.exists()) targetDir.mkdirs();
-            targetFile = new File(targetDir, filename);
+            targetFile = new File(targetDir, filename).getCanonicalFile();
+            if (isUnsafeSymlink(targetFile)) {
+                ctx.status(403).json("{\"status\":\"error\",\"msg\":\"Access Denied\"}");
+                return;
+            }
             try (InputStream in = ctx.bodyInputStream(); OutputStream out = new FileOutputStream(targetFile)) {
                 byte[] buf = new byte[8192];
                 int read;
@@ -426,11 +432,17 @@ public class WebAdminServer {
         }
         String relPath = ctx.queryParam("file");
         Debugger.debugOperation("WebAdmin Download Request: " + relPath);
-        if (relPath == null || relPath.contains("..")) {
+        if (relPath == null) {
             ctx.status(403).result("Invalid File");
             return;
         }
-        File f = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
+        File f;
+        try {
+            f = resolveSandboxFile(relPath);
+        } catch (Exception e) {
+            ctx.status(403).result("Invalid File");
+            return;
+        }
         // 【安全修复】检查符号链接
         if (isUnsafeSymlink(f)) {
             ctx.status(403).result("Access Denied");
@@ -443,22 +455,14 @@ public class WebAdminServer {
         try {
             String encodedFileName = URLEncoder.encode(f.getName(), StandardCharsets.UTF_8).replaceAll("\\+", "%20");
             if (f.isDirectory()) {
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                try (ZipOutputStream zos = new ZipOutputStream(baos)) {
-                    zipFile(f, f.getName(), zos);
-                }
                 ctx.contentType("application/zip")
                         .header("Content-Disposition", "attachment; filename=\"" + encodedFileName + ".zip\"")
-                        .result(baos.toByteArray());
+                        .result(createZipStream(f));
             } else {
                 String mime = determineMimeType(f.getName());
-                ctx.contentType(mime);
-                if (mime.equals("application/octet-stream")) {
-                    ctx.header("Content-Disposition", "attachment; filename=\"" + encodedFileName + "\"");
-                } else {
-                    ctx.header("Content-Disposition", "inline; filename=\"" + encodedFileName + "\"");
-                }
-                ctx.result(Files.readAllBytes(f.toPath()));
+                ctx.contentType(mime)
+                        .header("Content-Disposition", "attachment; filename=\"" + encodedFileName + "\"");
+                ctx.result(new FileInputStream(f));
             }
         } catch (Exception e) {
             Debugger.debugOperation("Download Error: " + e.getMessage());
@@ -483,7 +487,25 @@ public class WebAdminServer {
         return "application/octet-stream";
     }
 
+    private InputStream createZipStream(File root) throws IOException {
+        PipedInputStream inputStream = new PipedInputStream(64 * 1024);
+        PipedOutputStream outputStream = new PipedOutputStream(inputStream);
+        ThreadManager.runAsync(() -> {
+            try (ZipOutputStream zos = new ZipOutputStream(outputStream)) {
+                zipFile(root, root.getName(), zos);
+            } catch (IOException e) {
+                Debugger.debugOperation("Zip stream failed: " + e.getMessage());
+                try {
+                    outputStream.close();
+                } catch (IOException ignored) {
+                }
+            }
+        });
+        return inputStream;
+    }
+
     private void zipFile(File fileToZip, String fileName, ZipOutputStream zipOut) throws IOException {
+        if (isUnsafeSymlink(fileToZip)) return;
         if (fileToZip.isHidden()) return;
         if (fileToZip.isDirectory()) {
             if (fileName.endsWith("/")) zipOut.putNextEntry(new ZipEntry(fileName));
@@ -561,11 +583,12 @@ public class WebAdminServer {
         if (app != null) {
             app.stop();
             isRunning = false;
+            actualListeningPort = -1;
         }
     }
 
     public int getListeningPort() {
-        return port;
+        return actualListeningPort > 0 ? actualListeningPort : port;
     }
 
     public void closeTempConnections() {
@@ -612,16 +635,50 @@ public class WebAdminServer {
             }
             // 获取规范路径并检查是否仍在沙箱内
             File canonicalFile = file.getCanonicalFile();
-            File canonicalSandbox = NeoProxyServer.CURRENT_DIR_PATH.getCanonicalFile();
+            File canonicalSandbox = new File(NeoProxyServer.CURRENT_DIR_PATH).getCanonicalFile();
             String canonicalPath = canonicalFile.getAbsolutePath();
             String sandboxPath = canonicalSandbox.getAbsolutePath();
-            if (!canonicalPath.startsWith(sandboxPath)) {
+            if (!isSameOrChildPath(canonicalPath, sandboxPath)) {
                 ServerLogger.warnWithSource("WebAdmin", "webAdmin.pathOutsideSandbox", file.getAbsolutePath());
                 return true;
             }
             return false;
         } catch (IOException e) {
             // 解析失败时拒绝访问
+            return true;
+        }
+    }
+
+    private boolean isSameOrChildPath(String canonicalPath, String sandboxPath) {
+        if (canonicalPath.equals(sandboxPath)) {
+            return true;
+        }
+        String normalizedSandboxPath = sandboxPath.endsWith(File.separator) ? sandboxPath : sandboxPath + File.separator;
+        return canonicalPath.startsWith(normalizedSandboxPath);
+    }
+
+    private boolean isSandboxRoot(File file) throws IOException {
+        File sandbox = new File(NeoProxyServer.CURRENT_DIR_PATH).getCanonicalFile();
+        return file.getCanonicalFile().equals(sandbox);
+    }
+
+    private File resolveSandboxFile(String relPath) throws IOException {
+        String safeRelPath = relPath == null ? "" : relPath;
+        File sandbox = new File(NeoProxyServer.CURRENT_DIR_PATH).getCanonicalFile();
+        File resolved = safeRelPath.isBlank() ? sandbox : new File(sandbox, safeRelPath).getCanonicalFile();
+        if (!isSameOrChildPath(resolved.getAbsolutePath(), sandbox.getAbsolutePath())) {
+            throw new SecurityException("Access Denied");
+        }
+        return resolved;
+    }
+
+    private boolean isInvalidFileName(String name) {
+        if (name == null || name.trim().isEmpty() || name.contains("..") || name.contains("/") || name.contains("\\")) {
+            return true;
+        }
+        try {
+            return Path.of(name).isAbsolute();
+        } catch (Exception e) {
             return true;
         }
     }
@@ -782,23 +839,27 @@ public class WebAdminServer {
         private void handleRenameFile(String payload) {
             Debugger.debugOperation("Rename File: " + payload);
             try {
-                String[] parts = payload.split("\\|");
+                String[] parts = payload.split("\\|", -1);
                 if (parts.length < 3) return;
                 String relPath = parts[0];
                 String oldName = parts[1];
                 String newName = parts[2];
-                if (relPath.contains("..") || oldName.contains("..") || newName.contains("..") || newName.contains("/") || newName.contains("\\\\")) {
+                if (isInvalidFileName(oldName) || isInvalidFileName(newName)) {
                     sendJson("error", "Invalid filename");
                     return;
                 }
-                File dir = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
-                File src = new File(dir, oldName);
+                File dir = resolveSandboxFile(relPath);
+                File src = new File(dir, oldName).getCanonicalFile();
                 // 【安全修复】检查符号链接
                 if (isUnsafeSymlink(src)) {
                     sendJson("error", "Access Denied");
                     return;
                 }
-                File dst = new File(dir, newName);
+                File dst = new File(dir, newName).getCanonicalFile();
+                if (isUnsafeSymlink(dst)) {
+                    sendJson("error", "Access Denied");
+                    return;
+                }
                 if (!src.exists()) {
                     sendJson("error", "Source file not found");
                     return;
@@ -816,12 +877,11 @@ public class WebAdminServer {
 
         private void handleMoveFiles(String payload) {
             try {
-                String[] parts = payload.split("\\|");
+                String[] parts = payload.split("\\|", -1);
                 if (parts.length < 2) return;
                 String targetRelPath = parts[0];
                 Debugger.debugOperation("Move Files to: " + targetRelPath);
-                if (targetRelPath.contains("..")) throw new SecurityException("Invalid target path");
-                File targetDir = new File(NeoProxyServer.CURRENT_DIR_PATH, targetRelPath);
+                File targetDir = resolveSandboxFile(targetRelPath);
                 // 【安全修复】检查目标目录是否为符号链接
                 if (targetDir.exists() && isUnsafeSymlink(targetDir)) {
                     sendJson("error", "Access Denied");
@@ -831,13 +891,19 @@ public class WebAdminServer {
                 int success = 0, fail = 0;
                 for (int i = 1; i < parts.length; i++) {
                     String sourceRelPath = parts[i];
-                    if (sourceRelPath.contains("..")) {
+                    File sourceFile;
+                    try {
+                        sourceFile = resolveSandboxFile(sourceRelPath);
+                    } catch (Exception e) {
                         fail++;
                         continue;
                     }
-                    File sourceFile = new File(NeoProxyServer.CURRENT_DIR_PATH, sourceRelPath);
                     // 【安全修复】检查源文件是否为符号链接
                     if (isUnsafeSymlink(sourceFile)) {
+                        fail++;
+                        continue;
+                    }
+                    if (isSandboxRoot(sourceFile)) {
                         fail++;
                         continue;
                     }
@@ -845,13 +911,17 @@ public class WebAdminServer {
                         fail++;
                         continue;
                     }
-                    File destFile = new File(targetDir, sourceFile.getName());
+                    File destFile = new File(targetDir, sourceFile.getName()).getCanonicalFile();
+                    if (isUnsafeSymlink(destFile)) {
+                        fail++;
+                        continue;
+                    }
                     if (destFile.exists()) {
                         String name = destFile.getName();
                         int dot = name.lastIndexOf('.');
                         String newName = (dot > 0) ? name.substring(0, dot) + "_moved_" + System.currentTimeMillis() + name.substring(dot)
                                 : name + "_moved_" + System.currentTimeMillis();
-                        destFile = new File(targetDir, newName);
+                        destFile = new File(targetDir, newName).getCanonicalFile();
                     }
                     try {
                         Files.move(sourceFile.toPath(), destFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
@@ -869,8 +939,7 @@ public class WebAdminServer {
 
         private void handleListFiles(String relPath) {
             try {
-                if (relPath.contains("..")) throw new SecurityException("Access Denied");
-                File dir = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
+                File dir = resolveSandboxFile(relPath);
                 // 【安全修复】检查目录是否为符号链接
                 if (isUnsafeSymlink(dir)) {
                     sendJson("error", "Access Denied");
@@ -903,8 +972,7 @@ public class WebAdminServer {
 
         private void handleReadFile(String relPath) {
             try {
-                if (relPath.contains("..")) throw new SecurityException("Access Denied");
-                File f = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
+                File f = resolveSandboxFile(relPath);
                 // 【安全修复】检查符号链接
                 if (isUnsafeSymlink(f)) {
                     sendJson("error", "Access Denied");
@@ -934,8 +1002,7 @@ public class WebAdminServer {
         private void handleSaveFile(String relPath, String content) {
             try {
                 Debugger.debugOperation("Save File: " + relPath);
-                if (relPath.contains("..")) throw new SecurityException("Access Denied");
-                File f = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
+                File f = resolveSandboxFile(relPath);
                 // 【安全修复】检查符号链接（仅对已存在的文件）
                 if (f.exists() && isUnsafeSymlink(f)) {
                     sendJson("error", "Access Denied");
@@ -951,11 +1018,14 @@ public class WebAdminServer {
         private void handleDeleteFile(String relPath) {
             try {
                 Debugger.debugOperation("Delete File: " + relPath);
-                if (relPath.contains("..")) throw new SecurityException("Access Denied");
-                File f = new File(NeoProxyServer.CURRENT_DIR_PATH, relPath);
+                File f = resolveSandboxFile(relPath);
                 // 【安全修复】检查符号链接
                 if (isUnsafeSymlink(f)) {
                     sendJson("error", "Access Denied");
+                    return;
+                }
+                if (isSandboxRoot(f)) {
+                    sendJson("error", "Refusing to delete workspace root");
                     return;
                 }
                 if (deleteRecursively(f)) {
@@ -968,9 +1038,15 @@ public class WebAdminServer {
         }
 
         private boolean deleteRecursively(File f) {
+            if (Files.isSymbolicLink(f.toPath())) {
+                return f.delete();
+            }
             if (f.isDirectory()) {
                 File[] c = f.listFiles();
-                if (c != null) for (File child : c) deleteRecursively(child);
+                if (c != null) for (File child : c) {
+                    if (isUnsafeSymlink(child)) return false;
+                    if (!deleteRecursively(child)) return false;
+                }
             }
             return f.delete();
         }
@@ -978,9 +1054,13 @@ public class WebAdminServer {
         private void handleCreateFile(String relPath, String name, boolean isDir) {
             try {
                 Debugger.debugOperation("Create " + (isDir ? "Dir" : "File") + ": " + name + " in " + relPath);
-                if (relPath.contains("..") || name.contains("..") || name.contains("/") || name.contains("\\"))
+                if (isInvalidFileName(name))
                     throw new SecurityException("Invalid name");
-                File f = new File(new File(NeoProxyServer.CURRENT_DIR_PATH, relPath), name);
+                File f = new File(resolveSandboxFile(relPath), name).getCanonicalFile();
+                if (isUnsafeSymlink(f)) {
+                    sendJson("error", "Access Denied");
+                    return;
+                }
                 if (f.exists()) {
                     sendJson("error", "Exists already");
                     return;

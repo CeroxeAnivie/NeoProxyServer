@@ -339,12 +339,16 @@ public class NeoProxyServer {
                             break;
                         }
                     }
-                    if (existingReply != null) {
-                        byte[] serializedData = UDPTransformer.serializeDatagramPacket(datagramPacket);
-                        existingReply.addPacketToSend(serializedData);
-                    }
                 } finally {
                     UDP_GLOBAL_LOCK.unlock();
+                }
+
+                if (existingReply != null) {
+                    byte[] serializedData = UDPTransformer.serializeDatagramPacket(datagramPacket);
+                    if (!existingReply.addPacketToSend(serializedData)) {
+                        Debugger.debugOperation("UDP: Dropped packet because send queue is full or session stopped: " + clientIP + ":" + clientOutPort);
+                    }
+                    continue;
                 }
 
                 if (existingReply == null) {
@@ -373,9 +377,14 @@ public class NeoProxyServer {
                             } finally {
                                 UDP_GLOBAL_LOCK.unlock();
                             }
-                            ThreadManager.runAsync(newUdpTransformer);
                             byte[] firstData = UDPTransformer.serializeDatagramPacket(datagramPacket);
-                            newUdpTransformer.addPacketToSend(firstData);
+                            if (!newUdpTransformer.addPacketToSend(firstData)) {
+                                UDPTransformer.udpClientConnections.remove(newUdpTransformer);
+                                close(hostReply.host());
+                                Debugger.debugOperation("UDP: Failed to enqueue first packet for " + clientIP + ":" + clientOutPort);
+                                return;
+                            }
+                            ThreadManager.runAsync(newUdpTransformer);
                             ServerLogger.sayClientUDPConnectBuildUpInfo(hostClient, datagramPacket);
                         } catch (Exception e) {
                             Debugger.debugOperation(e);
@@ -390,19 +399,10 @@ public class NeoProxyServer {
     private static int getCurrentAvailableOutPort(SequenceKey sequenceKey) {
         Debugger.debugOperation("Searching for available port in range " + sequenceKey.getDyStart() + "-" + sequenceKey.getDyEnd());
         for (int i = sequenceKey.getDyStart(); i <= sequenceKey.getDyEnd(); i++) {
-            try (ServerSocket serverSocket = new ServerSocket()) {
-                serverSocket.bind(new InetSocketAddress(i), 0);
-            } catch (IOException ignore) {
-                continue;
+            if (isTCPAndUDPAvailable(i)) {
+                Debugger.debugOperation("Found available port: " + i);
+                return i;
             }
-            try {
-                DatagramSocket testU = new DatagramSocket(i);
-                testU.close();
-            } catch (IOException ignore) {
-                continue;
-            }
-            Debugger.debugOperation("Found available port: " + i);
-            return i;
         }
         Debugger.debugOperation("No available ports found in range.");
         return -1;
@@ -448,8 +448,8 @@ public class NeoProxyServer {
         if (hostClientInfo == null || hostClientInfo.isEmpty())
             UnSupportHostVersionException.throwException(hostClient.getIP(), "_NULL_");
 
-        String[] info = hostClientInfo.split(";");
-        if (info.length < 3 || info.length > 4)
+        String[] info = hostClientInfo.split(";", -1);
+        if (info.length < 3 || info.length > 4 || info[0].isBlank() || info[1].isBlank() || info[2].isBlank())
             UnSupportHostVersionException.throwException(hostClient.getIP(), "_NULL_");
 
         // 提取语言信息
@@ -494,8 +494,8 @@ public class NeoProxyServer {
         // [修改点] 密钥通过后，如果版本不匹配，触发更新逻辑
         if (!isVersionSupported) {
             Debugger.debugOperation("Version unsupported (including wildcard check), but key is valid. Triggering update.");
-            // 告知客户端当前服务器支持的版本范围（取列表最后一个作为推荐版本）
-            InternetOperator.sendStr(hostClient, languageData.UNSUPPORTED_VERSION_MSG + availableVersions.getLast());
+            // 告知客户端当前服务器支持的版本范围。
+            InternetOperator.sendStr(hostClient, languageData.UNSUPPORTED_VERSION_MSG + getClientVersionUpdateHint());
             UnSupportHostVersionException.throwException(hostClient.getIP(), clientVersion);
         }
 
@@ -503,13 +503,12 @@ public class NeoProxyServer {
 
         // 处理 TCP/UDP 开启状态 (T/U 标志位)
         if (info.length == 4) {
-            hostClient.setTCPEnabled(info[3].startsWith("T"));
-            hostClient.setUDPEnabled(info[3].endsWith("U"));
+            applyProtocolFlags(hostClient, info[3]);
         }
 
         // 检查端口可用性 (如果是固定端口)
         if (currentSequenceKey.getPort() != DYNAMIC_PORT) {
-            if (!isTCPAvailable(currentSequenceKey.getPort()) || !isUDPAvailable(currentSequenceKey.getPort())) {
+            if (!isTCPAndUDPAvailable(currentSequenceKey.getPort())) {
                 InternetOperator.sendStr(hostClient, languageData.THE_PORT_HAS_ALREADY_BIND);
                 NoMorePortException.throwException(currentSequenceKey.getPort());
             }
@@ -519,6 +518,26 @@ public class NeoProxyServer {
         availableHostClient.add(hostClient);
         InternetOperator.sendStr(hostClient, languageData.CONNECTION_BUILD_UP_SUCCESSFULLY);
         Debugger.debugOperation("Handshake completed successfully with version: " + clientVersion);
+    }
+
+    private static void applyProtocolFlags(HostClient hostClient, String flags) throws UnSupportHostVersionException {
+        /*
+         * 客户端允许发送空协议标志，表示当前不监听 TCP/UDP，但保留后续通过控制命令开启的能力。
+         * 这里必须保留 split(..., -1) 得到的尾部空字段，否则 Java 会吞掉最后一个空段并回落到默认双开。
+         */
+        String normalizedFlags = flags == null ? "" : flags.trim();
+        if (!normalizedFlags.isEmpty()
+                && !"T".equals(normalizedFlags)
+                && !"U".equals(normalizedFlags)
+                && !"TU".equals(normalizedFlags)) {
+            UnSupportHostVersionException.throwException(hostClient.getIP(), normalizedFlags);
+        }
+        hostClient.setTCPEnabled(normalizedFlags.contains("T"));
+        hostClient.setUDPEnabled(normalizedFlags.contains("U"));
+    }
+
+    private static String getClientVersionUpdateHint() {
+        return String.join("|", availableVersions);
     }
 
     private static void shutdown() {

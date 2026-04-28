@@ -38,11 +38,15 @@ build/
 .DS_Store
 
 logs
+dependency-reduced-pom.xml
 
 clients
 
 sk.mv.db
 sk.trace.db
+/sk
+/sk-wal
+/sk-shm
 
 banList.txt.bak
 banList.json
@@ -55,4 +59,3 @@ replay_pid*.log
 
 ### Profile logs ###
 profile*.txt
-

@@ -2,6 +2,7 @@ package neoproxy.neoproxyserver.core;
 
 import fun.ceroxe.api.utils.config.LineConfigReader;
 import neoproxy.neoproxyserver.NeoProxyServer;
+import neoproxy.neoproxyserver.core.constants.ServerConstants;
 import neoproxy.neoproxyserver.core.management.IPChecker;
 import neoproxy.neoproxyserver.core.management.TransferSocketAdapter;
 import neoproxy.neoproxyserver.core.threads.TCPTransformer;
@@ -83,7 +84,7 @@ public final class ConfigOperator {
     }
 
     private static void copyConfigFromResource(String resourceName, Path targetPath) {
-        try (InputStream is = NeoProxyServer.class.getResourceAsStream("/templates/" + resourceName)) {
+        try (InputStream is = openDefaultConfigResource(resourceName)) {
             if (is == null) {
                 throw new RuntimeException("Default " + resourceName + " not found in resources!");
             }
@@ -95,21 +96,29 @@ public final class ConfigOperator {
         }
     }
 
+    private static InputStream openDefaultConfigResource(String resourceName) {
+        InputStream fromTemplates = NeoProxyServer.class.getResourceAsStream("/templates/" + resourceName);
+        return fromTemplates != null ? fromTemplates : NeoProxyServer.class.getResourceAsStream("/" + resourceName);
+    }
+
     private static void applyMainSettings(LineConfigReader reader) {
         int oldWebPort = WebAdminManager.WEB_ADMIN_PORT;
 
-        NeoProxyServer.LOCAL_DOMAIN_NAME = reader.getOptional("LOCAL_DOMAIN_NAME").orElse("localhost");
-        NeoProxyServer.HOST_HOOK_PORT = reader.getOptional("HOST_HOOK_PORT").map(Integer::parseInt).orElse(44801);
-        NeoProxyServer.HOST_CONNECT_PORT = reader.getOptional("HOST_CONNECT_PORT").map(Integer::parseInt).orElse(44802);
-        WebAdminManager.WEB_ADMIN_PORT = reader.getOptional("WEB_ADMIN_PORT").map(Integer::parseInt).orElse(44803);
-        IPChecker.ENABLE_BAN = reader.getOptional("ENABLE_BAN").map(Boolean::parseBoolean).orElse(true);
-        ServerLogger.alert = reader.getOptional("ALERT").map(Boolean::parseBoolean).orElse(true);
-        HostClient.SAVE_DELAY = reader.getOptional("SAVE_DELAY").map(Integer::parseInt).orElse(3000);
-        HostClient.AES_KEY_SIZE = reader.getOptional("AES_KEY_SIZE").map(Integer::parseInt).orElse(128);
-        HostClient.HEARTBEAT_TIMEOUT = reader.getOptional("HEARTBEAT_TIMEOUT").map(Integer::parseInt).orElse(5000);
+        NeoProxyServer.LOCAL_DOMAIN_NAME = reader.getOptional("LOCAL_DOMAIN_NAME")
+                .map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .orElse(ServerConstants.DEFAULT_LOCAL_DOMAIN_NAME);
+        NeoProxyServer.HOST_HOOK_PORT = readPort(reader, "HOST_HOOK_PORT", ServerConstants.DEFAULT_HOST_HOOK_PORT);
+        NeoProxyServer.HOST_CONNECT_PORT = readPort(reader, "HOST_CONNECT_PORT", ServerConstants.DEFAULT_HOST_CONNECT_PORT);
+        WebAdminManager.WEB_ADMIN_PORT = readPort(reader, "WEB_ADMIN_PORT", ServerConstants.DEFAULT_WEB_ADMIN_PORT);
+        IPChecker.ENABLE_BAN = readBoolean(reader, "ENABLE_BAN", true);
+        ServerLogger.alert = readBoolean(reader, "ALERT", true);
+        HostClient.SAVE_DELAY = readInt(reader, "SAVE_DELAY", ServerConstants.DEFAULT_SAVE_DELAY, 0, Integer.MAX_VALUE);
+        HostClient.AES_KEY_SIZE = readAesKeySize(reader, "AES_KEY_SIZE", ServerConstants.AES_KEY_SIZE);
+        HostClient.HEARTBEAT_TIMEOUT = readInt(reader, "HEARTBEAT_TIMEOUT", ServerConstants.DEFAULT_HEARTBEAT_TIMEOUT, 0, Integer.MAX_VALUE);
         TCPTransformer.CUSTOM_BLOCKING_MESSAGE = reader.getOptional("CUSTOM_BLOCKING_MESSAGE").orElse("您没有访问网页的权限<br>请联系管理员以获取进一步支持");
-        TCPTransformer.TELL_BALANCE_MIB = reader.getOptional("TELL_BALANCE_MIB").map(Integer::parseInt).orElse(10);
-        TransferSocketAdapter.SO_TIMEOUT = reader.getOptional("SO_TIMEOUT").map(Integer::parseInt).orElse(5000);
+        TCPTransformer.TELL_BALANCE_MIB = readInt(reader, "TELL_BALANCE_MIB", 10, 1, Integer.MAX_VALUE);
+        TransferSocketAdapter.SO_TIMEOUT = readInt(reader, "SO_TIMEOUT", 5000, 1, Integer.MAX_VALUE);
 
         String permToken = reader.getOptional("WEB_ADMIN_TOKEN").orElse("").trim();
         WebAdminManager.setPermanentToken(permToken);
@@ -152,5 +161,52 @@ public final class ConfigOperator {
         if (MANAGER_URL != null && !MANAGER_URL.isBlank()) {
             ServerLogger.info("configOperator.syncModeEnabled", MANAGER_URL, NODE_ID);
         }
+    }
+
+    private static int readPort(LineConfigReader reader, String key, int defaultValue) {
+        return readInt(reader, key, defaultValue, 1, 65535);
+    }
+
+    private static int readAesKeySize(LineConfigReader reader, String key, int defaultValue) {
+        int value = readInt(reader, key, defaultValue, 1, Integer.MAX_VALUE);
+        if (value == 128 || value == 192 || value == 256) {
+            return value;
+        }
+        Debugger.debugOperation("Invalid AES key size for " + key + ": " + value + ", fallback to " + defaultValue);
+        return defaultValue;
+    }
+
+    private static int readInt(LineConfigReader reader, String key, int defaultValue, int min, int max) {
+        String rawValue = reader.getOptional(key).orElse(null);
+        if (rawValue == null || rawValue.isBlank()) {
+            return defaultValue;
+        }
+        try {
+            int value = Integer.parseInt(rawValue.trim());
+            if (value < min || value > max) {
+                Debugger.debugOperation("Config value out of range for " + key + ": " + rawValue + ", fallback to " + defaultValue);
+                return defaultValue;
+            }
+            return value;
+        } catch (NumberFormatException e) {
+            Debugger.debugOperation("Invalid integer config for " + key + ": " + rawValue + ", fallback to " + defaultValue);
+            return defaultValue;
+        }
+    }
+
+    private static boolean readBoolean(LineConfigReader reader, String key, boolean defaultValue) {
+        String rawValue = reader.getOptional(key).orElse(null);
+        if (rawValue == null || rawValue.isBlank()) {
+            return defaultValue;
+        }
+        String normalized = rawValue.trim();
+        if ("true".equalsIgnoreCase(normalized)) {
+            return true;
+        }
+        if ("false".equalsIgnoreCase(normalized)) {
+            return false;
+        }
+        Debugger.debugOperation("Invalid boolean config for " + key + ": " + rawValue + ", fallback to " + defaultValue);
+        return defaultValue;
     }
 }

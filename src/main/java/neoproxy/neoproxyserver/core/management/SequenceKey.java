@@ -139,11 +139,12 @@ public class SequenceKey {
 
         if (name == null) return null;
         if (PROVIDER instanceof LocalKeyProvider) {
-            // 本地模式：获取对象后，由上层调用者调用 isOutOfDate() 检查
-            // 注意：LocalKeyProvider 内部通常会调用 loadKeyFromDatabase
+            // 本地模式必须复用同一个内存对象，否则扣费线程和落盘线程会读写两份余额快照。
             SequenceKey cached = keyCache.get(name);
             if (cached != null) return cached;
-            return loadKeyFromDatabase(name, false);
+            SequenceKey key = loadKeyFromDatabase(name, false);
+            if (key != null) keyCache.put(name, key);
+            return key;
         }
 
         // 远程模式：getKey 内部直接抛出异常
@@ -157,9 +158,17 @@ public class SequenceKey {
 
     public static SequenceKey getEnabledKeyFromDB(String name) throws PortOccupiedException, NoMorePortException, UnRecognizedKeyException, OutDatedKeyException {
         SequenceKey key = getKeyFromDB(name);
-        if (key != null && key.isEnable()) return key;
-        if (key != null) Debugger.debugOperation("Key exists but disabled: " + name);
-        return null;
+        if (key == null) {
+            return null;
+        }
+        if (!key.isEnable()) {
+            Debugger.debugOperation("Key exists but disabled: " + name);
+            return null;
+        }
+        if (key.isOutOfDate()) {
+            OutDatedKeyException.throwException(name);
+        }
+        return key;
     }
 
     public static void releaseKey(String name) {

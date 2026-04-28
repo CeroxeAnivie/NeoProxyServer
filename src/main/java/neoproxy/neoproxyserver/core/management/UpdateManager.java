@@ -40,7 +40,7 @@ public class UpdateManager {
         }
 
         try {
-            // 2. 读取客户端需要的 OS 类型 ("7z" 或 "jar")
+            // 2. 读取客户端需要的 OS 类型 ("exe" 或 "jar")
             String osType = hostClient.getHostServerHook().receiveStr();
             Debugger.debugOperation("Client requested OS type: " + osType);
 

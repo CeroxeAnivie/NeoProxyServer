@@ -2,7 +2,9 @@ package neoproxy.neoproxyserver.core.management;
 
 import neoproxy.neoproxyserver.core.Debugger;
 import neoproxy.neoproxyserver.core.ServerLogger;
+import neoproxy.neoproxyserver.NeoProxyServer;
 
+import java.io.File;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -14,7 +16,7 @@ import java.util.List;
  */
 public class Database {
     private static final String DB_DRIVER = "org.sqlite.JDBC";
-    private static final String DB_URL = "jdbc:sqlite:./sk";
+    private static final String DB_URL = "jdbc:sqlite:" + new File(NeoProxyServer.CURRENT_DIR_PATH, "sk").getAbsolutePath();
 
     // 保持一个连接以锁定 WAL 共享内存，减少 IO 开销
     private static Connection keepAliveConn;
@@ -61,16 +63,9 @@ public class Database {
     private static void connectAndConfigure() throws SQLException {
         // 1. 建立连接
         keepAliveConn = DriverManager.getConnection(DB_URL);
+        configureConnection(keepAliveConn);
 
-        // 2. 配置核心性能参数
-        try (Statement stmt = keepAliveConn.createStatement()) {
-            stmt.execute("PRAGMA journal_mode = WAL;");   // 开启 WAL，读写并发
-            stmt.execute("PRAGMA synchronous = NORMAL;");  // 优化磁盘同步
-            stmt.execute("PRAGMA busy_timeout = 5000;");   // 防止锁超时
-            stmt.execute("PRAGMA temp_store = MEMORY;");   // 临时文件存内存
-        }
-
-        // 3. 确保表结构存在 (防止用户误删文件后 reload 报错)
+        // 2. 确保表结构存在 (防止用户误删文件后 reload 报错)
         try (Connection conn = getConnection(); Statement stmt = conn.createStatement()) {
             // SQLite 兼容性建表 (0/1 代替 Boolean)
             stmt.execute("""
@@ -91,9 +86,19 @@ public class Database {
         }
     }
 
+    private static void configureConnection(Connection connection) throws SQLException {
+        try (Statement stmt = connection.createStatement()) {
+            stmt.execute("PRAGMA journal_mode = WAL;");   // 开启 WAL，读写并发
+            stmt.execute("PRAGMA synchronous = NORMAL;");  // 优化磁盘同步
+            stmt.execute("PRAGMA busy_timeout = 5000;");   // 防止锁超时
+            stmt.execute("PRAGMA temp_store = MEMORY;");   // 临时文件存内存
+        }
+    }
+
     private static Connection getConnection() throws SQLException {
-        // SQLite 连接创建极快
-        return DriverManager.getConnection(DB_URL);
+        Connection connection = DriverManager.getConnection(DB_URL);
+        configureConnection(connection);
+        return connection;
     }
 
     private static void safeAddColumn(Statement stmt, String table, String col, String def) {

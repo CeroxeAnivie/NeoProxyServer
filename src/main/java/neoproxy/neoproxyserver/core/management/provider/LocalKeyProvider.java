@@ -71,8 +71,10 @@ public class LocalKeyProvider implements KeyDataProvider {
                 try {
                     SequenceKey key = SequenceKey.getKeyFromDB(name);
                     if (key != null) {
-                        SequenceKey.saveToDB(key);
-                        // Debugger.debugOperation("Saved key to local DB: " + name);
+                        if (!SequenceKey.saveToDB(key)) {
+                            ServerLogger.error("localProvider.flushError", name);
+                            continue;
+                        }
                     }
                     it.remove();
                 } catch (Exception e) {

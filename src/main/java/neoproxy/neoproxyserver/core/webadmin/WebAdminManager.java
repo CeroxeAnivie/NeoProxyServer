@@ -137,6 +137,7 @@ public class WebAdminManager {
     private static void startPlainServer() {
         ThreadManager.runAsync(() -> {
             try {
+                int internalPort;
                 MANAGER_LOCK.lock();
                 try {
                     if (!isStarting) return;
@@ -146,7 +147,10 @@ public class WebAdminManager {
                     internalServer.start(5000, false);
 
                     // 获取内部服务器实际绑定的端口
-                    int internalPort = internalServer.getListeningPort();
+                    internalPort = internalServer.getListeningPort();
+                    if (internalPort <= 0) {
+                        throw new IOException("Internal WebAdmin server did not expose a valid listening port: " + internalPort);
+                    }
 
                     // 2. 启动对外网关 (绑定到 WEB_ADMIN_PORT 44803)
                     gatewaySocket = new ServerSocket(WEB_ADMIN_PORT);
@@ -168,7 +172,7 @@ public class WebAdminManager {
                         // 这里的 Socket accept 不需要锁
                         Socket client = gatewaySocket.accept();
                         // 为每个连接启动一个 Shield 处理器
-                        ThreadManager.runAsync(() -> handleShieldConnection(client, internalServer.getListeningPort()));
+                        ThreadManager.runAsync(() -> handleShieldConnection(client, internalPort));
                     } catch (IOException e) {
                         if (isRunning) ServerLogger.errorWithSource("WebAdmin", "Accept Error", e);
                     } catch (NullPointerException e) {

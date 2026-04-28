@@ -11,9 +11,11 @@ import neoproxy.neoproxyserver.core.ServerLogger;
 import neoproxy.neoproxyserver.core.exceptions.IllegalWebSiteException;
 import neoproxy.neoproxyserver.core.exceptions.NoMoreNetworkFlowException;
 
+import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -30,6 +32,8 @@ public class TCPTransformer {
     public static int TELL_BALANCE_MIB = 10;
     public static int BUFFER_LEN = 65535;
     public static String CUSTOM_BLOCKING_MESSAGE = "如有疑问，请联系您的系统管理员。";
+    private static final int HTML_RESPONSE_HEADER_MAX_BYTES = 16 * 1024;
+    private static final byte[] EMPTY_BYTES = new byte[0];
 
     private static String FORBIDDEN_HTML_TEMPLATE;
 
@@ -111,71 +115,140 @@ public class TCPTransformer {
         close(hostClient);
     }
 
-    private static boolean checkAndBlockHtmlResponse(byte[] data, Socket clientSocket, String remoteSocketAddress, HostClient hostClient) throws IOException {
+    private static boolean checkAndBlockHtmlResponse(byte[] data, OutputStream outputStream, Socket clientSocket, HostClient hostClient) throws IOException {
         if (data == null || data.length == 0) return false;
 
-        int limit = Math.min(data.length, 8192);
-        String headerRaw = new String(data, 0, limit, StandardCharsets.ISO_8859_1);
-
-        int headerEndIndex = headerRaw.indexOf("\r\n\r\n");
+        int headerEndIndex = findHeaderEnd(data, data.length);
         if (headerEndIndex == -1) return false;
 
-        String headersSection = headerRaw.substring(0, headerEndIndex).toLowerCase();
+        if (!shouldBlockHtmlResponse(data, headerEndIndex)) return false;
+
+        String template = (FORBIDDEN_HTML_TEMPLATE != null) ? FORBIDDEN_HTML_TEMPLATE : "<h1>403 Forbidden</h1><p>{{CUSTOM_MESSAGE}}</p>";
+        String message = CUSTOM_BLOCKING_MESSAGE != null ? CUSTOM_BLOCKING_MESSAGE : "";
+        String finalHtml = template.replaceAll("\\{\\{\\s*CUSTOM_MESSAGE\\s*\\}\\}", Matcher.quoteReplacement(message));
+        byte[] errorHtmlBytes = finalHtml.getBytes(StandardCharsets.UTF_8);
+
+        String httpResponseHeader = "HTTP/1.1 403 Forbidden\r\n" +
+                "Content-Type: text/html; charset=utf-8\r\n" +
+                "Content-Length: " + errorHtmlBytes.length + "\r\n" +
+                "Connection: close\r\n" +
+                "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+                "Pragma: no-cache\r\n" +
+                "Expires: 0\r\n" +
+                "\r\n";
+
+        try {
+            outputStream.write(httpResponseHeader.getBytes(StandardCharsets.UTF_8));
+            outputStream.write(errorHtmlBytes);
+            outputStream.flush();
+            clientSocket.shutdownOutput();
+            Thread.sleep(800);
+        } catch (Exception e) {
+            // ignore
+        }
+
+        try {
+            IllegalWebSiteException.throwException(hostClient.getKey().getName());
+        } catch (IllegalWebSiteException e) {
+            // ignore
+        }
+        return true;
+    }
+
+    private static boolean shouldBlockHtmlResponse(byte[] data, int headerEndIndex) {
+        String headersSection = new String(data, 0, headerEndIndex, StandardCharsets.ISO_8859_1).toLowerCase();
         if (!headersSection.startsWith("http/")) return false;
 
         boolean isHtml = false;
         boolean isAttachment = false;
-
         String[] lines = headersSection.split("\r\n");
         for (String line : lines) {
             String cleanLine = line.trim();
-            if (cleanLine.startsWith("content-type:")) {
-                if (cleanLine.contains("text/html")) {
-                    isHtml = true;
-                }
-            } else if (cleanLine.startsWith("content-disposition:")) {
-                if (cleanLine.contains("attachment")) {
-                    isAttachment = true;
-                }
+            if (cleanLine.startsWith("content-type:") && cleanLine.contains("text/html")) {
+                isHtml = true;
+            } else if (cleanLine.startsWith("content-disposition:") && cleanLine.contains("attachment")) {
+                isAttachment = true;
             }
         }
+        return isHtml && !isAttachment;
+    }
 
-        if (isHtml && !isAttachment) {
-            // 【优化】移除 BufferedOutputStream
-            try (var out = clientSocket.getOutputStream()) {
-                String template = (FORBIDDEN_HTML_TEMPLATE != null) ? FORBIDDEN_HTML_TEMPLATE : "<h1>403 Forbidden</h1><p>{{CUSTOM_MESSAGE}}</p>";
-                String message = CUSTOM_BLOCKING_MESSAGE != null ? CUSTOM_BLOCKING_MESSAGE : "";
-                String finalHtml = template.replaceAll("\\{\\{\\s*CUSTOM_MESSAGE\\s*\\}\\}", Matcher.quoteReplacement(message));
-                byte[] errorHtmlBytes = finalHtml.getBytes(StandardCharsets.UTF_8);
+    private static int findHeaderEnd(byte[] data, int maxLength) {
+        int limit = Math.min(data.length, maxLength);
+        for (int i = 3; i < limit; i++) {
+            if (data[i - 3] == '\r' && data[i - 2] == '\n' && data[i - 1] == '\r' && data[i] == '\n') {
+                return i - 3;
+            }
+        }
+        return -1;
+    }
 
-                String httpResponseHeader = "HTTP/1.1 403 Forbidden\r\n" +
-                        "Content-Type: text/html; charset=utf-8\r\n" +
-                        "Content-Length: " + errorHtmlBytes.length + "\r\n" +
-                        "Connection: close\r\n" +
-                        "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
-                        "Pragma: no-cache\r\n" +
-                        "Expires: 0\r\n" +
-                        "\r\n";
+    private static boolean isPotentialHttpResponsePrefix(byte[] data) {
+        byte[] prefix = {'H', 'T', 'T', 'P', '/'};
+        int limit = Math.min(data.length, prefix.length);
+        for (int i = 0; i < limit; i++) {
+            byte actual = data[i];
+            if (actual >= 'a' && actual <= 'z') {
+                actual = (byte) (actual - 32);
+            }
+            if (actual != prefix[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
 
-                out.write(httpResponseHeader.getBytes(StandardCharsets.UTF_8));
-                out.write(errorHtmlBytes);
-                out.flush(); // 这里是最后一次发送，可以 flush 一下确保发出
+    private static byte[] combine(ByteArrayOutputStream buffer, byte[] data) {
+        if (buffer.size() == 0) {
+            return data;
+        }
+        byte[] existing = buffer.toByteArray();
+        byte[] combined = new byte[existing.length + data.length];
+        System.arraycopy(existing, 0, combined, 0, existing.length);
+        System.arraycopy(data, 0, combined, existing.length, data.length);
+        return combined;
+    }
 
-                clientSocket.shutdownOutput();
-                Thread.sleep(800);
-            } catch (Exception e) {
-                // ignore
+    private static final class HtmlResponseInspector {
+        private final ByteArrayOutputStream buffer = new ByteArrayOutputStream(HTML_RESPONSE_HEADER_MAX_BYTES);
+        private boolean completed;
+
+        byte[] inspect(byte[] data, OutputStream outputStream, Socket clientSocket, HostClient hostClient) throws IOException {
+            if (completed || data == null || data.length == 0) {
+                return data;
             }
 
-            try {
-                IllegalWebSiteException.throwException(hostClient.getKey().getName());
-            } catch (IllegalWebSiteException e) {
-                // ignore
+            byte[] combined = combine(buffer, data);
+            if (!isPotentialHttpResponsePrefix(combined)) {
+                completed = true;
+                return combined;
             }
-            return true;
+
+            int headerEnd = findHeaderEnd(combined, Math.min(combined.length, HTML_RESPONSE_HEADER_MAX_BYTES));
+            if (headerEnd >= 0) {
+                completed = true;
+                return checkAndBlockHtmlResponse(combined, outputStream, clientSocket, hostClient) ? null : combined;
+            }
+
+            if (combined.length >= HTML_RESPONSE_HEADER_MAX_BYTES) {
+                completed = true;
+                return combined;
+            }
+
+            buffer.reset();
+            buffer.write(combined, 0, combined.length);
+            return EMPTY_BYTES;
         }
 
-        return false;
+        byte[] finish() {
+            if (completed || buffer.size() == 0) {
+                return EMPTY_BYTES;
+            }
+            completed = true;
+            byte[] pending = buffer.toByteArray();
+            buffer.reset();
+            return pending;
+        }
     }
 
     private static byte[] createProxyProtocolV2Header(Socket clientSocket) {
@@ -228,7 +301,7 @@ public class TCPTransformer {
         try {
             byte[] ppHeader = createProxyProtocolV2Header(this.client);
             if (ppHeader != null) {
-                hostReply.host().sendByte(ppHeader, 0, ppHeader.length);
+                hostReply.host().sendBytes(ppHeader, 0, ppHeader.length);
             }
         } catch (Exception e) {
             debugOperation(e);
@@ -244,7 +317,7 @@ public class TCPTransformer {
             while ((len = input.read(buffer)) != -1) {
                 if (len <= 0) continue;
 
-                int enLength = hostReply.host().sendByte(buffer, 0, len);
+                int enLength = hostReply.host().sendBytes(buffer, 0, len);
 
                 if (enLength > 0) {
                     NeoProxyServer.TOTAL_BYTES_COUNTER.add(enLength);
@@ -254,7 +327,7 @@ public class TCPTransformer {
                     limiter.onBytesTransferred(enLength);
                 }
             }
-            hostReply.host().sendByte(null);
+            hostReply.host().sendBytes(null);
             shutdownOutput(hostReply.host());
             shutdownInput(client);
         } catch (IOException e) {
@@ -270,27 +343,26 @@ public class TCPTransformer {
             RateLimiter limiter = hostClient.getGlobalRateLimiter();
 
             byte[] data;
-            boolean isHtmlResponseChecked = false;
+            HtmlResponseInspector htmlInspector = hostClient.getKey().isHTMLEnabled() ? null : new HtmlResponseInspector();
 
-            while ((data = hostReply.host().receiveByte()) != null) {
+            while ((data = hostReply.host().receiveBytes()) != null) {
                 if (data.length == 0) continue;
 
-                if (!isHtmlResponseChecked && !hostClient.getKey().isHTMLEnabled()) {
-                    isHtmlResponseChecked = true;
-                    // 注意：这里的 checkAndBlockHtmlResponse 逻辑保持不变
-                    if (checkAndBlockHtmlResponse(data, client, hostReply.host().getRemoteSocketAddress().toString(), hostClient)) {
+                byte[] outputData = data;
+                if (htmlInspector != null) {
+                    outputData = htmlInspector.inspect(data, outputStream, client, hostClient);
+                    if (outputData == null) {
                         return;
+                    }
+                    if (outputData.length == 0) {
+                        continue;
                     }
                 }
 
-                // 【优化】直接写入 Socket，减少用户态内存拷贝
-                outputStream.write(data);
-                // outputStream.flush(); // SocketOutputStream 自动处理，不需要频繁显式 flush
-                NeoProxyServer.TOTAL_BYTES_COUNTER.add(data.length);
-                hostClient.getKey().mineMib("TCP-Transformer:H->C", SizeCalculator.byteToMib(data.length));
-                tellRestBalance(hostClient, aTenMibSize, data.length, hostClient.getLangData());
-                limiter.setMaxMbps(hostClient.getKey().getRate());
-                limiter.onBytesTransferred(data.length);
+                writeToClient(outputStream, outputData, limiter, aTenMibSize);
+            }
+            if (htmlInspector != null) {
+                writeToClient(outputStream, htmlInspector.finish(), limiter, aTenMibSize);
             }
             shutdownInput(hostReply.host());
             shutdownOutput(client);
@@ -299,5 +371,19 @@ public class TCPTransformer {
             shutdownInput(hostReply.host());
             shutdownOutput(client);
         }
+    }
+
+    private void writeToClient(OutputStream outputStream, byte[] outputData, RateLimiter limiter, double[] aTenMibSize) throws IOException {
+        if (outputData == null || outputData.length == 0) {
+            return;
+        }
+        // 【优化】直接写入 Socket，减少用户态内存拷贝
+        outputStream.write(outputData);
+        // SocketOutputStream 自动处理，不需要频繁显式 flush
+        NeoProxyServer.TOTAL_BYTES_COUNTER.add(outputData.length);
+        hostClient.getKey().mineMib("TCP-Transformer:H->C", SizeCalculator.byteToMib(outputData.length));
+        tellRestBalance(hostClient, aTenMibSize, outputData.length, hostClient.getLangData());
+        limiter.setMaxMbps(hostClient.getKey().getRate());
+        limiter.onBytesTransferred(outputData.length);
     }
 }

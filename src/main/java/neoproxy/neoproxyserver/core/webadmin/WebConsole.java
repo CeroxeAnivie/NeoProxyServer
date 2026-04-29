@@ -1,6 +1,6 @@
 package neoproxy.neoproxyserver.core.webadmin;
 
-import fun.ceroxe.api.utils.MyConsole;
+import top.ceroxe.api.utils.MyConsole;
 
 import java.io.IOException;
 import java.time.LocalDateTime;

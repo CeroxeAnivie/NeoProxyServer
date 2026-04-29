@@ -1,7 +1,7 @@
 package neoproxy.neoproxyserver.core;
 
-import fun.ceroxe.api.management.bufferedFile.SizeCalculator;
-import fun.ceroxe.api.net.SecureSocket;
+import top.ceroxe.api.management.bufferedFile.SizeCalculator;
+import top.ceroxe.api.net.SecureSocket;
 import neoproxy.neoproxyserver.core.exceptions.NoMoreNetworkFlowException;
 
 import java.io.Closeable;

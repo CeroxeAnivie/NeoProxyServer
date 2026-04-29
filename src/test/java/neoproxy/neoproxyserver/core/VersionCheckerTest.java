@@ -101,6 +101,20 @@ class VersionCheckerTest {
     }
 
     @Test
+    @DisplayName("测试当前发布策略 - 仅兼容6.X.X和7.X.X客户端")
+    void testCurrentReleaseCompatibilityPolicy() {
+        List<String> allowedVersions = Arrays.asList("6.X.X", "7.X.X");
+
+        assertTrue(VersionChecker.isVersionSupported("6.0.0", allowedVersions));
+        assertTrue(VersionChecker.isVersionSupported("6.99.42", allowedVersions));
+        assertTrue(VersionChecker.isVersionSupported("7.0.2", allowedVersions));
+        assertTrue(VersionChecker.isVersionSupported("7.10.0", allowedVersions));
+        assertFalse(VersionChecker.isVersionSupported("5.99.99", allowedVersions));
+        assertFalse(VersionChecker.isVersionSupported("8.0.0", allowedVersions));
+        assertFalse(VersionChecker.isVersionSupported("7.0.2-beta", allowedVersions));
+    }
+
+    @Test
     @DisplayName("测试通配符匹配主版本号")
     void testWildcardMatchMajorVersion() {
         String clientVersion = "5.5.5";

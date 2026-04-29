@@ -89,7 +89,7 @@ class HostReplyTest {
     void testHostComponent() {
         RecordComponent[] components = HostReply.class.getRecordComponents();
         assertEquals("host", components[1].getName());
-        assertEquals(fun.ceroxe.api.net.SecureSocket.class, components[1].getType());
+        assertEquals(top.ceroxe.api.net.SecureSocket.class, components[1].getType());
     }
 
     @Test
@@ -105,7 +105,7 @@ class HostReplyTest {
     void testHostMethodExists() throws Exception {
         java.lang.reflect.Method method = HostReply.class.getDeclaredMethod("host");
         assertNotNull(method);
-        assertEquals(fun.ceroxe.api.net.SecureSocket.class, method.getReturnType());
+        assertEquals(top.ceroxe.api.net.SecureSocket.class, method.getReturnType());
     }
 
     @Test

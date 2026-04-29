@@ -2,7 +2,7 @@ package neoproxy.neoproxyserver.core.management.provider;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
-import fun.ceroxe.api.thread.ThreadManager;
+import top.ceroxe.api.thread.ThreadManager;
 import neoproxy.neoproxyserver.NeoProxyServer;
 import neoproxy.neoproxyserver.core.Debugger;
 import neoproxy.neoproxyserver.core.HostClient;

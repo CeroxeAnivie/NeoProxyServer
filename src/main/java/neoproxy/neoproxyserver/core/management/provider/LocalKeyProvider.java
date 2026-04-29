@@ -1,6 +1,6 @@
 package neoproxy.neoproxyserver.core.management.provider;
 
-import fun.ceroxe.api.thread.ThreadManager;
+import top.ceroxe.api.thread.ThreadManager;
 import neoproxy.neoproxyserver.core.Debugger;
 import neoproxy.neoproxyserver.core.ServerLogger;
 import neoproxy.neoproxyserver.core.management.SequenceKey;

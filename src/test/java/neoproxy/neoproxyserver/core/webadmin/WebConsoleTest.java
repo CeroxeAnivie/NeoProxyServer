@@ -85,6 +85,6 @@ class WebConsoleTest {
     @Test
     @DisplayName("测试WebConsole继承自MyConsole")
     void testInheritance() {
-        assertTrue(fun.ceroxe.api.utils.MyConsole.class.isAssignableFrom(WebConsole.class));
+        assertTrue(top.ceroxe.api.utils.MyConsole.class.isAssignableFrom(WebConsole.class));
     }
 }

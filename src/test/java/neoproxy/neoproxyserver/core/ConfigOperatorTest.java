@@ -164,7 +164,7 @@ class ConfigOperatorTest {
     @Test
     @DisplayName("测试私有方法 applyMainSettings 存在")
     void testApplyMainSettingsMethodExists() throws Exception {
-        Method method = ConfigOperator.class.getDeclaredMethod("applyMainSettings", fun.ceroxe.api.utils.config.LineConfigReader.class);
+        Method method = ConfigOperator.class.getDeclaredMethod("applyMainSettings", top.ceroxe.api.utils.config.LineConfigReader.class);
         assertNotNull(method);
         assertTrue(Modifier.isStatic(method.getModifiers()));
         assertTrue(Modifier.isPrivate(method.getModifiers()));
@@ -174,7 +174,7 @@ class ConfigOperatorTest {
     @Test
     @DisplayName("测试私有方法 applySyncSettings 存在")
     void testApplySyncSettingsMethodExists() throws Exception {
-        Method method = ConfigOperator.class.getDeclaredMethod("applySyncSettings", fun.ceroxe.api.utils.config.LineConfigReader.class);
+        Method method = ConfigOperator.class.getDeclaredMethod("applySyncSettings", top.ceroxe.api.utils.config.LineConfigReader.class);
         assertNotNull(method);
         assertTrue(Modifier.isStatic(method.getModifiers()));
         assertTrue(Modifier.isPrivate(method.getModifiers()));

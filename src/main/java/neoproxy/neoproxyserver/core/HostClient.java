@@ -1,8 +1,8 @@
 package neoproxy.neoproxyserver.core;
 
-import fun.ceroxe.api.net.SecureSocket;
-import fun.ceroxe.api.thread.ThreadManager;
-import fun.ceroxe.api.utils.Sleeper;
+import top.ceroxe.api.net.SecureSocket;
+import top.ceroxe.api.thread.ThreadManager;
+import top.ceroxe.api.utils.Sleeper;
 import neoproxy.neoproxyserver.core.management.SequenceKey;
 import neoproxy.neoproxyserver.core.management.provider.Protocol;
 import neoproxy.neoproxyserver.core.threads.RateLimiter;

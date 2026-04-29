@@ -1,6 +1,6 @@
 package neoproxy.neoproxyserver.core.webadmin;
 
-import fun.ceroxe.api.thread.ThreadManager;
+import top.ceroxe.api.thread.ThreadManager;
 import neoproxy.neoproxyserver.core.ServerLogger;
 
 import java.io.IOException;

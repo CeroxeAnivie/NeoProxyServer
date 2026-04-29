@@ -79,7 +79,7 @@ class InternetOperatorTest {
     @Test
     @DisplayName("测试静态方法 getInternetAddressAndPort 存在 - SecureSocket参数")
     void testGetInternetAddressAndPortSecureSocketMethodExists() throws Exception {
-        Method method = InternetOperator.class.getDeclaredMethod("getInternetAddressAndPort", fun.ceroxe.api.net.SecureSocket.class);
+        Method method = InternetOperator.class.getDeclaredMethod("getInternetAddressAndPort", top.ceroxe.api.net.SecureSocket.class);
         assertNotNull(method);
         assertTrue(Modifier.isStatic(method.getModifiers()));
         assertTrue(Modifier.isPublic(method.getModifiers()));
@@ -99,7 +99,7 @@ class InternetOperatorTest {
     @Test
     @DisplayName("测试静态方法 getIP 存在")
     void testGetIpMethodExists() throws Exception {
-        Method method = InternetOperator.class.getDeclaredMethod("getIP", fun.ceroxe.api.net.SecureSocket.class);
+        Method method = InternetOperator.class.getDeclaredMethod("getIP", top.ceroxe.api.net.SecureSocket.class);
         assertNotNull(method);
         assertTrue(Modifier.isStatic(method.getModifiers()));
         assertTrue(Modifier.isPublic(method.getModifiers()));
@@ -129,7 +129,7 @@ class InternetOperatorTest {
     @Test
     @DisplayName("测试静态方法 shutdownOutput 存在")
     void testShutdownOutputMethodExists() throws Exception {
-        Method method = InternetOperator.class.getDeclaredMethod("shutdownOutput", fun.ceroxe.api.net.SecureSocket.class);
+        Method method = InternetOperator.class.getDeclaredMethod("shutdownOutput", top.ceroxe.api.net.SecureSocket.class);
         assertNotNull(method);
         assertTrue(Modifier.isStatic(method.getModifiers()));
         assertTrue(Modifier.isPublic(method.getModifiers()));

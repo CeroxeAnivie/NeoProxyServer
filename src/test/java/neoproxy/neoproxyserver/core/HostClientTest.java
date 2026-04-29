@@ -1,6 +1,6 @@
 package neoproxy.neoproxyserver.core;
 
-import fun.ceroxe.api.net.SecureSocket;
+import top.ceroxe.api.net.SecureSocket;
 import neoproxy.neoproxyserver.core.management.SequenceKey;
 import neoproxy.neoproxyserver.core.threads.RateLimiter;
 import org.junit.jupiter.api.DisplayName;

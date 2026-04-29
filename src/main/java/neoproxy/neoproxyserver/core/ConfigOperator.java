@@ -1,6 +1,6 @@
 package neoproxy.neoproxyserver.core;
 
-import fun.ceroxe.api.utils.config.LineConfigReader;
+import top.ceroxe.api.utils.config.LineConfigReader;
 import neoproxy.neoproxyserver.NeoProxyServer;
 import neoproxy.neoproxyserver.core.constants.ServerConstants;
 import neoproxy.neoproxyserver.core.management.IPChecker;

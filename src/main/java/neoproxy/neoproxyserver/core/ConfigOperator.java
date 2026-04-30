@@ -118,6 +118,8 @@ public final class ConfigOperator {
         HostClient.HEARTBEAT_TIMEOUT = readInt(reader, "HEARTBEAT_TIMEOUT", ServerConstants.DEFAULT_HEARTBEAT_TIMEOUT, 0, Integer.MAX_VALUE);
         TCPTransformer.CUSTOM_BLOCKING_MESSAGE = reader.getOptional("CUSTOM_BLOCKING_MESSAGE").orElse("您没有访问网页的权限<br>请联系管理员以获取进一步支持");
         TCPTransformer.TELL_BALANCE_MIB = readInt(reader, "TELL_BALANCE_MIB", 10, 1, Integer.MAX_VALUE);
+        TCPTransformer.BUFFER_LEN = readInt(reader, "BUFFER_LEN", ServerConstants.TCP_BUFFER_SIZE,
+                ServerConstants.MIN_TCP_BUFFER_SIZE, ServerConstants.TCP_BUFFER_SIZE);
         TransferSocketAdapter.SO_TIMEOUT = readInt(reader, "SO_TIMEOUT", 5000, 1, Integer.MAX_VALUE);
 
         String permToken = reader.getOptional("WEB_ADMIN_TOKEN").orElse("").trim();

@@ -38,10 +38,22 @@ public class ConsoleManager {
         try {
             myConsole = new WebConsole("NeoProxyServer");
             initCommand();
-            myConsole.start();
+            if (shouldStartInteractiveConsole()) {
+                myConsole.start();
+            }
         } catch (Exception e) {
             Debugger.debugOperation(e);
         }
+    }
+
+    private static boolean shouldStartInteractiveConsole() {
+        /*
+         * Low-RAM mode must still be usable from an attached terminal; operators need the
+         * same command surface for emergency maintenance. The only case we skip is a
+         * service-style launch without stdin console, where JLine's reader thread can
+         * close the terminal and make later logging fail.
+         */
+        return !LOW_RAM_MODE || System.console() != null;
     }
 
     private static void registerWrapper(String name, String desc, Consumer<List<String>> executor) {
@@ -78,6 +90,10 @@ public class ConsoleManager {
         });
 
         registerWrapper("webadmin", "Generate a temporary web admin link", (List<String> params) -> {
+            if (LOW_RAM_MODE) {
+                ServerLogger.logRaw(COMMAND_SOURCE.get(), "WebAdmin is disabled while --low-ram is active.");
+                return;
+            }
             String url = neoproxy.neoproxyserver.core.webadmin.WebAdminManager.generateNewSessionUrl();
             ServerLogger.logRaw(COMMAND_SOURCE.get(), "==============================================");
             ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.webAdminGenTitle");

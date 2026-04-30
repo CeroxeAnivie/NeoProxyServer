@@ -54,7 +54,7 @@ public class RemoteKeyProvider implements KeyDataProvider {
     private final ConcurrentHashMap<String, DoubleAdder> trafficBuffer = new ConcurrentHashMap<>();
     private final AtomicBoolean isFlushing = new AtomicBoolean(false);
 
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2, r -> {
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(NeoProxyServer.LOW_RAM_MODE ? 1 : 2, r -> {
         Thread t = new Thread(r, "NKM-Worker-Thread");
         t.setDaemon(true);
         return t;
@@ -66,11 +66,9 @@ public class RemoteKeyProvider implements KeyDataProvider {
         this.token = token;
         this.nodeId = nodeId;
         this.gson = new Gson();
-        this.httpExecutor = Executors.newCachedThreadPool(r -> {
-            Thread t = new Thread(r, "NKM-Http-Thread");
-            t.setDaemon(true);
-            return t;
-        });
+        this.httpExecutor = Executors.newThreadPerTaskExecutor(
+                Thread.ofVirtual().name("NKM-Http-Thread-", 0).factory()
+        );
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(REQUEST_TIMEOUT_MS))
                 .executor(httpExecutor)

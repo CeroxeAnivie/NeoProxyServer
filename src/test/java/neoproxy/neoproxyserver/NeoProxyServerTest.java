@@ -2,6 +2,10 @@ package neoproxy.neoproxyserver;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import top.ceroxe.api.net.SecureSocket;
+import neoproxy.neoproxyserver.core.constants.ServerConstants;
+import neoproxy.neoproxyserver.core.threads.TCPTransformer;
+import neoproxy.neoproxyserver.core.threads.UDPTransformer;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -46,6 +50,41 @@ class NeoProxyServerTest {
     @DisplayName("测试IS_DEBUG_MODE初始值")
     void testIsDebugModeInitialValue() {
         assertFalse(NeoProxyServer.IS_DEBUG_MODE);
+    }
+
+    @Test
+    @DisplayName("测试--low-ram参数会启用低内存运行策略")
+    void testLowRamArgumentAppliesMemoryProfile() throws Exception {
+        int originalTcpBuffer = TCPTransformer.BUFFER_LEN;
+        int originalPacketLimit = SecureSocket.getMaxAllowedPacketSize();
+        boolean originalLowRamMode = NeoProxyServer.LOW_RAM_MODE;
+
+        Field udpQueueCapacity = UDPTransformer.class.getDeclaredField("sendQueueCapacity");
+        udpQueueCapacity.setAccessible(true);
+        int originalUdpQueueCapacity = udpQueueCapacity.getInt(null);
+
+        Method checkArgs = NeoProxyServer.class.getDeclaredMethod("checkARGS", String[].class);
+        Method applyProfile = NeoProxyServer.class.getDeclaredMethod("applyRuntimeMemoryProfile");
+        checkArgs.setAccessible(true);
+        applyProfile.setAccessible(true);
+
+        try {
+            TCPTransformer.BUFFER_LEN = ServerConstants.TCP_BUFFER_SIZE;
+            NeoProxyServer.LOW_RAM_MODE = false;
+
+            checkArgs.invoke(null, (Object) new String[]{"--low-ram"});
+            applyProfile.invoke(null);
+
+            assertTrue(NeoProxyServer.LOW_RAM_MODE);
+            assertEquals(ServerConstants.LOW_RAM_TCP_BUFFER_SIZE, TCPTransformer.BUFFER_LEN);
+            assertEquals(ServerConstants.LOW_RAM_SECURE_PACKET_SIZE, SecureSocket.getMaxAllowedPacketSize());
+            assertEquals(ServerConstants.LOW_RAM_UDP_SEND_QUEUE_CAPACITY, udpQueueCapacity.getInt(null));
+        } finally {
+            TCPTransformer.BUFFER_LEN = originalTcpBuffer;
+            SecureSocket.setMaxAllowedPacketSize(originalPacketLimit);
+            UDPTransformer.setSendQueueCapacity(originalUdpQueueCapacity);
+            NeoProxyServer.LOW_RAM_MODE = originalLowRamMode;
+        }
     }
 
     @Test

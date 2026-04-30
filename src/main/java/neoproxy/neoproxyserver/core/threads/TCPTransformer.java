@@ -79,15 +79,19 @@ public class TCPTransformer {
 
         ThreadManager threadManager = new ThreadManager(clientToHostTask, hostToClientTask);
         threadManager.startAsyncWithCallback(result -> {
-            for (Throwable t : result.exceptions()) {
-                if (t instanceof NoMoreNetworkFlowException) {
-                    kickAllWithMsg(hostClient, hostReply.host(), client);
-                    return;
+            try {
+                for (Throwable t : result.exceptions()) {
+                    if (t instanceof NoMoreNetworkFlowException) {
+                        kickAllWithMsg(hostClient, hostReply.host(), client);
+                        return;
+                    }
                 }
+                hostClient.unregisterTcpSocket(client);
+                close(client, hostReply.host());
+                ServerLogger.sayClientTCPConnectDestroyInfo(hostClient, client);
+            } finally {
+                threadManager.close();
             }
-            hostClient.unregisterTcpSocket(client);
-            close(client, hostReply.host());
-            ServerLogger.sayClientTCPConnectDestroyInfo(hostClient, client);
         });
     }
 

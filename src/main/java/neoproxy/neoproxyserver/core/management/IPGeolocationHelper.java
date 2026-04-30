@@ -1,98 +1,123 @@
 package neoproxy.neoproxyserver.core.management;
 
+import neoproxy.neoproxyserver.NeoProxyServer;
 import neoproxy.neoproxyserver.core.ServerLogger;
 import org.lionsoul.ip2region.xdb.LongByteArray;
 import org.lionsoul.ip2region.xdb.Searcher;
 import org.lionsoul.ip2region.xdb.Version;
 
-import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.stream.Collectors;
 
 public class IPGeolocationHelper {
 
-    // 定义文件名常量
     private static final String FILE_V4 = "ip2region_v4.xdb";
     private static final String FILE_V6 = "ip2region_v6.xdb";
+    private static final int XDB_LOAD_SLICE_BYTES = 1024 * 1024;
+    private static final List<Path> TEMP_XDB_FILES = new ArrayList<>();
+
     private static Searcher searcherV4;
     private static Searcher searcherV6;
     private static boolean v4Loaded = false;
     private static boolean v6Loaded = false;
+    private static Path tempXdbDirectory;
+    private static boolean lowRamMode = false;
 
     static {
         initialize();
+        Runtime.getRuntime().addShutdownHook(new Thread(IPGeolocationHelper::shutdown));
     }
 
     private static void initialize() {
-        // -------------------------------------------------
-        // 1. 加载 IPv4
-        // -------------------------------------------------
-        byte[] v4Data = loadFileToBytes(FILE_V4);
-        if (v4Data != null) {
-            try {
-                searcherV4 = Searcher.newWithBuffer(Version.IPv4, toLongByteArray(v4Data));
-                v4Loaded = true;
-                // [Key Used]: ipGeolocationHelper.init.v4.success
-                ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.v4.success", String.valueOf(v4Data.length));
-            } catch (IOException e) {
-                // [Key Used]: ipGeolocationHelper.init.v4.failed
-                ServerLogger.errorWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.v4.failed", e.getMessage());
-            }
-        } else {
-            // [Key Used]: ipGeolocationHelper.init.v4.notFound
+        lowRamMode = NeoProxyServer.LOW_RAM_MODE;
+
+        searcherV4 = openSearcher(FILE_V4, Version.IPv4,
+                "ipGeolocationHelper.init.v4.success", "ipGeolocationHelper.init.v4.failed");
+        v4Loaded = searcherV4 != null;
+        if (!v4Loaded) {
             ServerLogger.warnWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.v4.notFound");
         }
 
-        // -------------------------------------------------
-        // 2. 加载 IPv6
-        // -------------------------------------------------
-        byte[] v6Data = loadFileToBytes(FILE_V6);
-        if (v6Data != null) {
-            try {
-                searcherV6 = Searcher.newWithBuffer(Version.IPv6, toLongByteArray(v6Data));
-                v6Loaded = true;
-                // [Key Used]: ipGeolocationHelper.init.v6.success
-                ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.v6.success", String.valueOf(v6Data.length));
-            } catch (IOException e) {
-                // [Key Used]: ipGeolocationHelper.init.v6.failed
-                ServerLogger.errorWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.v6.failed", e.getMessage());
-            }
-        } else {
-            // [Key Used]: ipGeolocationHelper.init.v6.notFound
+        searcherV6 = openSearcher(FILE_V6, Version.IPv6,
+                "ipGeolocationHelper.init.v6.success", "ipGeolocationHelper.init.v6.failed");
+        v6Loaded = searcherV6 != null;
+        if (!v6Loaded) {
             ServerLogger.infoWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.v6.notFound");
         }
     }
 
-    /**
-     * 读取 classpath 下的文件到 byte[]
-     */
-    private static byte[] loadFileToBytes(String fileName) {
-        try (InputStream inputStream = IPGeolocationHelper.class.getClassLoader().getResourceAsStream(fileName)) {
-            if (inputStream == null) {
-                // 这里返回 null，由调用方打印具体的 notFound 日志，避免重复
+    private static Searcher openSearcher(String fileName, Version version, String successKey, String failedKey) {
+        try {
+            if (lowRamMode) {
+                File xdbFile = resolveFileBackedDatabase(fileName);
+                if (xdbFile == null) {
+                    return null;
+                }
+                Searcher searcher = Searcher.newWithFileOnly(version, xdbFile);
+                ServerLogger.infoWithSource("IPGeolocationHelper", successKey, "file:" + xdbFile.length());
+                return searcher;
+            }
+
+            LongByteArray content = loadResourceToBuffer(fileName);
+            if (content == null) {
                 return null;
             }
-            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-            int nRead;
-            byte[] data = new byte[16384];
-            while ((nRead = inputStream.read(data, 0, data.length)) != -1) {
-                buffer.write(data, 0, nRead);
-            }
-            return buffer.toByteArray();
+            Searcher searcher = Searcher.newWithBuffer(version, content);
+            ServerLogger.infoWithSource("IPGeolocationHelper", successKey, String.valueOf(content.length()));
+            return searcher;
         } catch (IOException e) {
-            // [Key Used]: ipGeolocationHelper.init.ioError
-            // 记录具体是哪个文件读取失败
-            ServerLogger.errorWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.ioError", fileName + ", " + e.getMessage());
+            ServerLogger.errorWithSource("IPGeolocationHelper", failedKey, e.getMessage());
             return null;
         }
     }
 
-    private static LongByteArray toLongByteArray(byte[] data) throws IOException {
-        LongByteArray buffer = new LongByteArray(data.length);
-        buffer.append(data);
-        return buffer;
+    private static LongByteArray loadResourceToBuffer(String fileName) {
+        try (InputStream inputStream = IPGeolocationHelper.class.getClassLoader().getResourceAsStream(fileName)) {
+            if (inputStream == null) {
+                return null;
+            }
+            // Use small slices to avoid a temporary 50 MiB allocation during startup.
+            return Searcher.loadContentFromInputStream(inputStream, XDB_LOAD_SLICE_BYTES);
+        } catch (IOException e) {
+            ServerLogger.errorWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.ioError",
+                    fileName + ", " + e.getMessage());
+            return null;
+        }
+    }
+
+    private static File resolveFileBackedDatabase(String fileName) throws IOException {
+        Path externalPath = Path.of(NeoProxyServer.CURRENT_DIR_PATH, fileName);
+        if (Files.isRegularFile(externalPath)) {
+            return externalPath.toFile();
+        }
+
+        if (tempXdbDirectory == null) {
+            tempXdbDirectory = Files.createTempDirectory("neoproxy-ipdb-");
+            tempXdbDirectory.toFile().deleteOnExit();
+        }
+
+        Path targetPath = tempXdbDirectory.resolve(fileName);
+        try (InputStream inputStream = IPGeolocationHelper.class.getClassLoader().getResourceAsStream(fileName)) {
+            if (inputStream == null) {
+                return null;
+            }
+            Files.copy(inputStream, targetPath, StandardCopyOption.REPLACE_EXISTING);
+            targetPath.toFile().deleteOnExit();
+            TEMP_XDB_FILES.add(targetPath);
+            return targetPath.toFile();
+        } catch (IOException e) {
+            ServerLogger.errorWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.ioError",
+                    fileName + ", " + e.getMessage());
+            throw e;
+        }
     }
 
     public static LocationInfo getLocationInfo(String ip) {
@@ -101,31 +126,26 @@ public class IPGeolocationHelper {
         }
 
         try {
-            // 简单内网判断
             if (isInternalIp(ip)) {
                 return new LocationInfo("Localhost", "Intranet", true, "Local");
             }
 
-            String region = null;
-            String usedSource = "Unknown";
-
-            // 判断是否为 IPv6 (包含冒号)
             boolean isIpv6 = ip.indexOf(':') > -1;
+            String region;
+            String usedSource;
 
             if (isIpv6) {
-                if (v6Loaded && searcherV6 != null) {
-                    region = searcherV6.search(ip);
-                    usedSource = "Ip2region-v6";
-                } else {
+                if (!v6Loaded || searcherV6 == null) {
                     return LocationInfo.failed("IPv6 DB not loaded");
                 }
+                region = search(searcherV6, ip);
+                usedSource = lowRamMode ? "Ip2region-v6-file" : "Ip2region-v6";
             } else {
-                if (v4Loaded && searcherV4 != null) {
-                    region = searcherV4.search(ip);
-                    usedSource = "Ip2region-v4";
-                } else {
+                if (!v4Loaded || searcherV4 == null) {
                     return LocationInfo.failed("IPv4 DB not loaded");
                 }
+                region = search(searcherV4, ip);
+                usedSource = lowRamMode ? "Ip2region-v4-file" : "Ip2region-v4";
             }
 
             if (region == null || region.isEmpty()) {
@@ -133,56 +153,49 @@ public class IPGeolocationHelper {
             }
 
             return parseRegionStr(region, usedSource);
-
         } catch (Exception e) {
-            // [Key Used]: ipGeolocationHelper.query.error
-            ServerLogger.warnWithSource("IPGeolocationHelper", "ipGeolocationHelper.query.error", ip + ", " + e.getMessage());
+            ServerLogger.warnWithSource("IPGeolocationHelper", "ipGeolocationHelper.query.error",
+                    ip + ", " + e.getMessage());
             return LocationInfo.failed();
         }
     }
 
-    /**
-     * 适配 v3.13.0 最新格式：国家|省份|城市|ISP|国家代码
-     * 示例1 (国内): 中国|广东省|深圳市|移动|CN
-     * 示例2 (国外): United Kingdom|England|Yateley|0|GB
-     * 示例3 (保留): Reserved|Reserved|Reserved|0|0
-     */
+    private static String search(Searcher searcher, String ip) throws Exception {
+        // Searcher keeps mutable cursor/counter state; synchronize to avoid corrupt RandomAccessFile seeks.
+        synchronized (searcher) {
+            return searcher.search(ip);
+        }
+    }
+
     private static LocationInfo parseRegionStr(String region, String sourceName) {
         if (region == null || region.isEmpty()) {
             return LocationInfo.failed();
         }
 
         String[] parts = region.split("\\|");
-
-        // v3.13.0 统一为 5 段，如果不足 5 段说明数据文件版本不对
         if (parts.length < 5) {
             return new LocationInfo(region, "Unknown", true, sourceName);
         }
 
-        String country = parts[0]; // 国家
-        String province = parts[1]; // 省份
-        String city = parts[2]; // 城市
-        String isp = parts[3]; // ISP
-        String isoCode = parts[4]; // 国家代码 (iso-3166-alpha2)
+        String country = parts[0];
+        String province = parts[1];
+        String city = parts[2];
+        String isp = parts[3];
+        String isoCode = parts[4];
 
-        // 1. 处理保留地址
         if ("Reserved".equalsIgnoreCase(country)) {
             return new LocationInfo("Reserved IP", "Unknown", true, sourceName);
         }
 
-        // 2. 拼接地理位置 (国家 省份 城市)
-        // 过滤掉为 "0" 的字段（代表无该级信息）
         String location = Arrays.stream(new String[]{country, province, city})
                 .filter(s -> s != null && !"0".equals(s))
                 .distinct()
                 .collect(Collectors.joining(" "));
 
-        // 3. 处理国家代码 (建议拼在位置后面，方便识别海外城市)
         if (!"0".equals(isoCode)) {
             location += " [" + isoCode + "]";
         }
 
-        // 4. 处理 ISP
         if (isp == null || "0".equals(isp)) {
             isp = "Unknown";
         }
@@ -199,12 +212,38 @@ public class IPGeolocationHelper {
                 || "::1".equals(ip) || "0:0:0:0:0:0:0:1".equals(ip);
     }
 
-    public static void shutdown() {
+    public static synchronized void shutdown() {
+        closeSearcher(searcherV4);
+        closeSearcher(searcherV6);
+        searcherV4 = null;
+        searcherV6 = null;
+        v4Loaded = false;
+        v6Loaded = false;
+
+        for (Path path : TEMP_XDB_FILES) {
+            try {
+                Files.deleteIfExists(path);
+            } catch (IOException ignored) {
+            }
+        }
+        TEMP_XDB_FILES.clear();
+
+        if (tempXdbDirectory != null) {
+            try {
+                Files.deleteIfExists(tempXdbDirectory);
+            } catch (IOException ignored) {
+            }
+            tempXdbDirectory = null;
+        }
+    }
+
+    private static void closeSearcher(Searcher searcher) {
+        if (searcher == null) {
+            return;
+        }
         try {
-            if (searcherV4 != null) searcherV4.close();
-            if (searcherV6 != null) searcherV6.close();
-        } catch (IOException e) {
-            // ignore
+            searcher.close();
+        } catch (IOException ignored) {
         }
     }
 

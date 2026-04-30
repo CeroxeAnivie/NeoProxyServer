@@ -91,7 +91,7 @@ public class Database {
             stmt.execute("PRAGMA journal_mode = WAL;");   // 开启 WAL，读写并发
             stmt.execute("PRAGMA synchronous = NORMAL;");  // 优化磁盘同步
             stmt.execute("PRAGMA busy_timeout = 5000;");   // 防止锁超时
-            stmt.execute("PRAGMA temp_store = MEMORY;");   // 临时文件存内存
+            stmt.execute(NeoProxyServer.LOW_RAM_MODE ? "PRAGMA temp_store = FILE;" : "PRAGMA temp_store = MEMORY;");
         }
     }
 

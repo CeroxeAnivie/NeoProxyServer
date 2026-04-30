@@ -58,6 +58,41 @@ public final class ServerConstants {
     public static final int TCP_BUFFER_SIZE = 65535;
 
     /**
+     * TCP buffer floor. Going below this value makes encryption/frame overhead dominate useful payload.
+     */
+    public static final int MIN_TCP_BUFFER_SIZE = 512;
+
+    /**
+     * Low-RAM TCP buffer. This intentionally spends more CPU/syscalls to keep per-connection heap small.
+     */
+    public static final int LOW_RAM_TCP_BUFFER_SIZE = 1024;
+
+    /**
+     * One full UDP datagram must still fit even in low-RAM mode; otherwise the proxy would silently truncate UDP.
+     */
+    public static final int UDP_PACKET_BUFFER_SIZE = 65535;
+
+    /**
+     * Default per-UDP-session pending packet count.
+     */
+    public static final int UDP_SEND_QUEUE_CAPACITY = 100;
+
+    /**
+     * Low-RAM per-UDP-session pending packet count. Backpressure is preferred over unbounded heap growth.
+     */
+    public static final int LOW_RAM_UDP_SEND_QUEUE_CAPACITY = 1;
+
+    /**
+     * Normal secure-frame ceiling. Transfer frames are chunked, so larger packets are not required for proxying.
+     */
+    public static final int SECURE_PACKET_SIZE = 1024 * 1024;
+
+    /**
+     * Low-RAM secure-frame ceiling. Large enough for a full UDP datagram plus encryption overhead.
+     */
+    public static final int LOW_RAM_SECURE_PACKET_SIZE = 128 * 1024;
+
+    /**
      * 动态端口标识值 — 与 SequenceKey.DYNAMIC_PORT 一致
      */
     public static final int DYNAMIC_PORT = -1;

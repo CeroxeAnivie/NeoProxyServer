@@ -20,10 +20,13 @@ import java.util.concurrent.TimeUnit;
 
 import static neoproxy.neoproxyserver.core.Debugger.debugOperation;
 import static neoproxy.neoproxyserver.core.InternetOperator.close;
+import static neoproxy.neoproxyserver.core.constants.ServerConstants.UDP_PACKET_BUFFER_SIZE;
+import static neoproxy.neoproxyserver.core.constants.ServerConstants.UDP_SEND_QUEUE_CAPACITY;
 import static neoproxy.neoproxyserver.core.threads.TCPTransformer.TELL_BALANCE_MIB;
 
 public class UDPTransformer implements Runnable {
-    private static final int SEND_QUEUE_CAPACITY = 100;
+    public static int RECEIVE_BUFFER_LEN = UDP_PACKET_BUFFER_SIZE;
+    private static volatile int sendQueueCapacity = UDP_SEND_QUEUE_CAPACITY;
     private static final int IDLE_TIMEOUT_SECONDS = 30;
     public static final CopyOnWriteArrayList<UDPTransformer> udpClientConnections = new CopyOnWriteArrayList<>();
     private final HostClient hostClient;
@@ -31,7 +34,7 @@ public class UDPTransformer implements Runnable {
     private final DatagramSocket sharedDatagramSocket;
     private final String clientIP;
     private final int clientOutPort;
-    private final ArrayBlockingQueue<byte[]> sendQueue = new ArrayBlockingQueue<>(SEND_QUEUE_CAPACITY);
+    private final ArrayBlockingQueue<byte[]> sendQueue;
     private volatile boolean isRunning = true;
 
     public UDPTransformer(HostClient hostClient, HostReply hostReply, DatagramSocket sharedDatagramSocket, String clientIP, int clientOutPort) {
@@ -40,6 +43,14 @@ public class UDPTransformer implements Runnable {
         this.sharedDatagramSocket = sharedDatagramSocket;
         this.clientIP = clientIP;
         this.clientOutPort = clientOutPort;
+        this.sendQueue = new ArrayBlockingQueue<>(sendQueueCapacity);
+    }
+
+    public static void setSendQueueCapacity(int capacity) {
+        if (capacity < 1) {
+            throw new IllegalArgumentException("UDP send queue capacity must be positive");
+        }
+        sendQueueCapacity = capacity;
     }
 
     public static byte[] serializeDatagramPacket(DatagramPacket packet) {
@@ -243,8 +254,10 @@ public class UDPTransformer implements Runnable {
             Runnable clientToHostClientThread = () -> outClientToHostClient(aTenMibSize);
             Runnable hostClientToClientThread = () -> hostClientToOutClient(aTenMibSize);
 
-            ThreadManager threadManager = new ThreadManager(clientToHostClientThread, hostClientToClientThread);
-            List<Throwable> exceptions = threadManager.start();
+            List<Throwable> exceptions;
+            try (ThreadManager threadManager = new ThreadManager(clientToHostClientThread, hostClientToClientThread)) {
+                exceptions = threadManager.start();
+            }
 
             for (Throwable t : exceptions) {
                 if (t instanceof NoMoreNetworkFlowException) {

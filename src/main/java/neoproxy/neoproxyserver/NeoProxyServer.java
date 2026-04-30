@@ -1,6 +1,5 @@
 package neoproxy.neoproxyserver;
 
-import top.ceroxe.api.management.bufferedFile.SizeCalculator;
 import top.ceroxe.api.net.SecureServerSocket;
 import top.ceroxe.api.net.SecureSocket;
 import top.ceroxe.api.security.AtomicIdGenerator;
@@ -35,9 +34,13 @@ import static neoproxy.neoproxyserver.core.HostClient.waitForTcpEnabled;
 import static neoproxy.neoproxyserver.core.HostClient.waitForUDPEnabled;
 import static neoproxy.neoproxyserver.core.InternetOperator.*;
 import static neoproxy.neoproxyserver.core.ServerLogger.alert;
+import static neoproxy.neoproxyserver.core.constants.ServerConstants.LOW_RAM_SECURE_PACKET_SIZE;
+import static neoproxy.neoproxyserver.core.constants.ServerConstants.LOW_RAM_TCP_BUFFER_SIZE;
+import static neoproxy.neoproxyserver.core.constants.ServerConstants.LOW_RAM_UDP_SEND_QUEUE_CAPACITY;
+import static neoproxy.neoproxyserver.core.constants.ServerConstants.SECURE_PACKET_SIZE;
+import static neoproxy.neoproxyserver.core.constants.ServerConstants.UDP_SEND_QUEUE_CAPACITY;
 import static neoproxy.neoproxyserver.core.management.IPChecker.loadBannedIPs;
 import static neoproxy.neoproxyserver.core.management.SequenceKey.DYNAMIC_PORT;
-import static neoproxy.neoproxyserver.core.threads.TCPTransformer.BUFFER_LEN;
 
 public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = getJarDirOrUserDir();
@@ -64,6 +67,7 @@ public class NeoProxyServer {
     public static SecureServerSocket hostServerHookServerSocket = null;
     public static SecureServerSocket hostServerTransferServerSocket = null;
     public static boolean IS_DEBUG_MODE = false;
+    public static boolean LOW_RAM_MODE = false;
     public static MyConsole myConsole;
     public static boolean isStopped = false;
 
@@ -94,11 +98,15 @@ public class NeoProxyServer {
         }
         ConsoleManager.init();
         ConfigOperator.readAndSetValue();
-        WebAdminManager.init();
+        applyRuntimeMemoryProfile();
+        if (LOW_RAM_MODE) {
+            ServerLogger.logRaw("LowRAM", "WebAdmin disabled by --low-ram to avoid Jetty/Javalin resident memory.");
+        } else {
+            WebAdminManager.init();
+        }
         printLogo();
         SequenceKey.initProvider();
         UpdateManager.init();
-        SecureSocket.setMaxAllowedPacketSize((int) SizeCalculator.mibToByte(200));
         try {
             hostServerHookServerSocket = new SecureServerSocket(HOST_HOOK_PORT);
             Debugger.debugOperation("Bound HostHookPort: " + HOST_HOOK_PORT);
@@ -122,8 +130,28 @@ public class NeoProxyServer {
                 }
                 case "--zh-cn" -> ServerLogger.setLocale(Locale.SIMPLIFIED_CHINESE);
                 case "--en-us" -> ServerLogger.setLocale(Locale.US);
+                case "--low-ram" -> {
+                    LOW_RAM_MODE = true;
+                    Debugger.debugOperation("Low RAM mode enabled via argument.");
+                }
             }
         }
+    }
+
+    private static void applyRuntimeMemoryProfile() {
+        if (LOW_RAM_MODE) {
+            TCPTransformer.BUFFER_LEN = Math.min(TCPTransformer.BUFFER_LEN, LOW_RAM_TCP_BUFFER_SIZE);
+            UDPTransformer.setSendQueueCapacity(LOW_RAM_UDP_SEND_QUEUE_CAPACITY);
+            SecureSocket.setMaxAllowedPacketSize(LOW_RAM_SECURE_PACKET_SIZE);
+            ServerLogger.logRaw("LowRAM",
+                    "Enabled: TCP buffer=" + TCPTransformer.BUFFER_LEN
+                            + " bytes, UDP queue=" + LOW_RAM_UDP_SEND_QUEUE_CAPACITY
+                            + ", secure packet cap=" + LOW_RAM_SECURE_PACKET_SIZE + " bytes.");
+            return;
+        }
+
+        UDPTransformer.setSendQueueCapacity(UDP_SEND_QUEUE_CAPACITY);
+        SecureSocket.setMaxAllowedPacketSize(Math.max(SECURE_PACKET_SIZE, TCPTransformer.BUFFER_LEN + 4096));
     }
 
     private static void printLogo() {
@@ -315,7 +343,7 @@ public class NeoProxyServer {
         ThreadManager.runAsync(() -> {
             Debugger.debugOperation("UDP Service Loop started for client: " + hostClient.getIP());
             while (!hostClient.isStopped()) {
-                byte[] buffer = new byte[BUFFER_LEN];
+                byte[] buffer = new byte[UDPTransformer.RECEIVE_BUFFER_LEN];
                 DatagramPacket datagramPacket = new DatagramPacket(buffer, buffer.length);
                 DatagramSocket datagramSocket = hostClient.getClientDatagramSocket();
 

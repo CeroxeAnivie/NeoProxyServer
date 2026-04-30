@@ -2,6 +2,7 @@ package neoproxy.neoproxyserver.core.management;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import neoproxy.neoproxyserver.NeoProxyServer;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -65,6 +66,24 @@ class ConsoleManagerTest {
         assertNotNull(method);
         assertTrue(java.lang.reflect.Modifier.isStatic(method.getModifiers()));
         assertTrue(java.lang.reflect.Modifier.isPublic(method.getModifiers()));
+    }
+
+    @Test
+    @DisplayName("测试低内存模式仅在无交互终端时跳过控制台读行线程")
+    void testLowRamInteractiveConsoleDecision() throws Exception {
+        boolean originalLowRamMode = NeoProxyServer.LOW_RAM_MODE;
+        Method method = ConsoleManager.class.getDeclaredMethod("shouldStartInteractiveConsole");
+        method.setAccessible(true);
+
+        try {
+            NeoProxyServer.LOW_RAM_MODE = false;
+            assertTrue((Boolean) method.invoke(null));
+
+            NeoProxyServer.LOW_RAM_MODE = true;
+            assertEquals(System.console() != null, (Boolean) method.invoke(null));
+        } finally {
+            NeoProxyServer.LOW_RAM_MODE = originalLowRamMode;
+        }
     }
 
     @Test

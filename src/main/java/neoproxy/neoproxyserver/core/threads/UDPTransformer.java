@@ -221,23 +221,20 @@ public class UDPTransformer implements Runnable {
                 if (packetToClient != null) {
                     int packetLength = packetToClient.getLength();
 
-                    if (packetLength > 0) {
-                        NeoProxyServer.TOTAL_BYTES_COUNTER.add(packetLength);
-                        hostClient.getKey().mineMib("UDP-Transformer", SizeCalculator.byteToMib(packetLength + 10));
-                        tellRestBalance(hostClient, aTenMibSize, packetLength, hostClient.getLangData());
+                    NeoProxyServer.TOTAL_BYTES_COUNTER.add(packetLength);
+                    hostClient.getKey().mineMib("UDP-Transformer", SizeCalculator.byteToMib(packetLength + 10));
+                    tellRestBalance(hostClient, aTenMibSize, packetLength, hostClient.getLangData());
 
-                        // 【核心修改】直接调用共享限速器
-                        limiter.setMaxMbps(hostClient.getKey().getRate());
-                        limiter.onBytesTransferred(packetLength);
+                    limiter.setMaxMbps(hostClient.getKey().getRate());
+                    limiter.onBytesTransferred(packetLength);
 
-                        DatagramPacket outgoingPacket = new DatagramPacket(
-                                packetToClient.getData(),
-                                packetToClient.getLength(),
-                                InetAddress.getByName(clientIP),
-                                clientOutPort
-                        );
-                        sharedDatagramSocket.send(outgoingPacket);
-                    }
+                    DatagramPacket outgoingPacket = new DatagramPacket(
+                            packetToClient.getData(),
+                            packetToClient.getLength(),
+                            InetAddress.getByName(clientIP),
+                            clientOutPort
+                    );
+                    sharedDatagramSocket.send(outgoingPacket);
                 }
             }
         } catch (Exception e) {

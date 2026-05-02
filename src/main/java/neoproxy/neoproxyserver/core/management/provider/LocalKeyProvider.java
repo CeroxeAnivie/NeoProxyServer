@@ -37,7 +37,7 @@ public class LocalKeyProvider implements KeyDataProvider {
         Debugger.debugOperation("Initializing LocalKeyProvider...");
         SequenceKey.initKeyDatabase();
         scheduler.scheduleAtFixedRate(this::flushDirtyKeys, FLUSH_INTERVAL_SECONDS, FLUSH_INTERVAL_SECONDS, TimeUnit.SECONDS);
-        // Log: LocalKeyProvider initialized. Flush interval: {0}s
+        // 日志：LocalKeyProvider 已初始化。刷盘间隔：{0} 秒
         ServerLogger.info("localProvider.init", FLUSH_INTERVAL_SECONDS);
         Debugger.debugOperation("LocalKeyProvider init complete. Flush interval: " + FLUSH_INTERVAL_SECONDS + "s");
     }
@@ -50,7 +50,7 @@ public class LocalKeyProvider implements KeyDataProvider {
     @Override
     public void consumeFlow(String name, double mib) {
         if (mib > 0) {
-            // Debugger.debugOperation("Marking key dirty: " + name);
+            // Debugger.debugOperation("标记密钥为脏: " + name);
             dirtyKeys.add(name);
         }
     }
@@ -78,7 +78,7 @@ public class LocalKeyProvider implements KeyDataProvider {
                     }
                     it.remove();
                 } catch (Exception e) {
-                    // Log: Failed to flush key {0} to database: {1}
+                    // 日志：将密钥 {0} 刷入数据库失败：{1}
                     debugOperation(e);
                     ServerLogger.error("localProvider.flushError", e, name);
                 }

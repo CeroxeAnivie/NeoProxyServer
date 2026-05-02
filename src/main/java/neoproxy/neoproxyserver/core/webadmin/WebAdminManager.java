@@ -19,7 +19,7 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * WebAdminManager (Java 21 Virtual Threads Compatible)
+ * WebAdminManager（兼容 Java 21 Virtual Threads）
  * <p>
  * 修改：使用 ReentrantLock + Condition 替代 synchronized + wait。
  */

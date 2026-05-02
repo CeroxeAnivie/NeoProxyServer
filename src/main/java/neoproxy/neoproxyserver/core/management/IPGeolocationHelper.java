@@ -84,7 +84,7 @@ public class IPGeolocationHelper {
             if (inputStream == null) {
                 return null;
             }
-            // Use small slices to avoid a temporary 50 MiB allocation during startup.
+            // 使用小块切片，避免启动期间额外申请一个 50 MiB 的临时内存块。
             return Searcher.loadContentFromInputStream(inputStream, XDB_LOAD_SLICE_BYTES);
         } catch (IOException e) {
             ServerLogger.errorWithSource("IPGeolocationHelper", "ipGeolocationHelper.init.ioError",
@@ -161,7 +161,7 @@ public class IPGeolocationHelper {
     }
 
     private static String search(Searcher searcher, String ip) throws Exception {
-        // Searcher keeps mutable cursor/counter state; synchronize to avoid corrupt RandomAccessFile seeks.
+        // Searcher 持有可变的游标和计数状态；同步可以避免 RandomAccessFile 的 seek 状态被并发破坏。
         synchronized (searcher) {
             return searcher.search(ip);
         }

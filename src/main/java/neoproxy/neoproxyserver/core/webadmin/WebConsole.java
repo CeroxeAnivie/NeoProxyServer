@@ -20,28 +20,28 @@ public class WebConsole extends MyConsole {
 
     @Override
     public void log(String source, String message) {
-        super.log(source, message);
+        writeSafely(() -> super.log(source, message), "INFO", source, message, null);
         // 普通日志 -> INFO
         broadcast("INFO", source, message);
     }
 
     @Override
     public void warn(String source, String message) {
-        super.warn(source, message);
+        writeSafely(() -> super.warn(source, message), "WARN", source, message, null);
         // 警告日志 -> WARN
         broadcast("WARN", source, message);
     }
 
     @Override
     public void error(String source, String message) {
-        super.error(source, message);
+        writeSafely(() -> super.error(source, message), "ERROR", source, message, null);
         // 错误日志 -> ERROR
         broadcast("ERROR", source, message);
     }
 
     @Override
     public void error(String source, String message, Throwable throwable) {
-        super.error(source, message, throwable);
+        writeSafely(() -> super.error(source, message, throwable), "ERROR", source, message, throwable);
         // 带堆栈的错误 -> ERROR
         broadcast("ERROR", source, message + " (" + throwable.toString() + ")");
     }
@@ -54,5 +54,20 @@ public class WebConsole extends MyConsole {
         // 格式严格匹配前端正则：^\[(.*?)\] \[(.*?)\] \[(.*?)\]: (.*)$
         String formattedMsg = String.format("[%s] [%s] [%s]: %s", time, level, source, message);
         WebAdminManager.broadcastLog(formattedMsg);
+    }
+    private void writeSafely(Runnable consoleWrite, String level, String source, String message, Throwable throwable) {
+        try {
+            consoleWrite.run();
+        } catch (IllegalStateException terminalClosed) {
+            String fallback = String.format("[%s] [%s]: %s", level, source, message);
+            if ("ERROR".equals(level)) {
+                System.err.println(fallback);
+                if (throwable != null) {
+                    throwable.printStackTrace(System.err);
+                }
+            } else {
+                System.out.println(fallback);
+            }
+        }
     }
 }

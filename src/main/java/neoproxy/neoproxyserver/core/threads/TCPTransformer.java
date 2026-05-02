@@ -148,13 +148,13 @@ public class TCPTransformer {
             clientSocket.shutdownOutput();
             Thread.sleep(800);
         } catch (Exception e) {
-            // ignore
+            // 忽略
         }
 
         try {
             IllegalWebSiteException.throwException(hostClient.getKey().getName());
         } catch (IllegalWebSiteException e) {
-            // ignore
+            // 忽略
         }
         return true;
     }
@@ -277,11 +277,11 @@ public class TCPTransformer {
             byte[] srcIpBytes = srcIp.getAddress();
             byte[] dstIpBytes = dstIp.getAddress();
 
-            // 计算 PPv2 地址段长度: SRC_IP + DST_IP + SRC_PORT(2) + DST_PORT(2)
+            // 计算 PPv2 地址段长度：SRC_IP + DST_IP + SRC_PORT(2) + DST_PORT(2)
             int addrLen = srcIpBytes.length + dstIpBytes.length + 2 + 2;
 
-            // 【严谨优化】计算精确的 Buffer 大小: Header(16) + addrLen
-            // Header: Sig(12) + Ver(1) + Fam(1) + Len(2) = 16 bytes
+            // 【严谨优化】计算精确的 Buffer 大小：Header(16) + addrLen
+            // Header：Sig(12) + Ver(1) + Fam(1) + Len(2) = 16 字节
             int totalLen = 16 + addrLen;
             ByteBuffer buffer = ByteBuffer.allocate(totalLen);
 
@@ -315,7 +315,8 @@ public class TCPTransformer {
         byte[] buffer = new byte[BUFFER_LEN];
 
         // 【优化】直接使用 Socket 的 InputStream，移除冗余的 BufferedInputStream
-        try (InputStream input = this.clientInputStream) {
+        try {
+            InputStream input = this.clientInputStream;
             RateLimiter limiter = hostClient.getGlobalRateLimiter();
             int len;
             while ((len = input.read(buffer)) != -1) {
@@ -332,18 +333,15 @@ public class TCPTransformer {
                 }
             }
             hostReply.host().sendBytes(null);
-            shutdownOutput(hostReply.host());
-            shutdownInput(client);
         } catch (IOException e) {
             debugOperation(e);
-            shutdownOutput(hostReply.host());
-            shutdownInput(client);
         }
     }
 
     private void hostToClient(double[] aTenMibSize) {
         // 【优化】直接使用 Socket 输出流，移除 BufferedOutputStream
-        try (var outputStream = client.getOutputStream()) {
+        try {
+            OutputStream outputStream = client.getOutputStream();
             RateLimiter limiter = hostClient.getGlobalRateLimiter();
 
             byte[] data;
@@ -368,11 +366,9 @@ public class TCPTransformer {
             if (htmlInspector != null) {
                 writeToClient(outputStream, htmlInspector.finish(), limiter, aTenMibSize);
             }
-            shutdownInput(hostReply.host());
             shutdownOutput(client);
         } catch (IOException e) {
             debugOperation(e);
-            shutdownInput(hostReply.host());
             shutdownOutput(client);
         }
     }

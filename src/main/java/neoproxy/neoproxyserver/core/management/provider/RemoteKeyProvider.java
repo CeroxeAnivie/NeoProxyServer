@@ -418,7 +418,7 @@ public class RemoteKeyProvider implements KeyDataProvider {
         throw last;
     }
 
-    // ========== DTOs ==========
+    // ========== DTO 数据结构 ==========
 
     // ... (内部类保持不变)
     private static class NkmKeyResponse {

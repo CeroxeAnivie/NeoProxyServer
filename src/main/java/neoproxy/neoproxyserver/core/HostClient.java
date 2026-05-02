@@ -413,7 +413,7 @@ public final class HostClient implements Closeable {
                 }
             }
         } catch (Exception e) {
-            // ignore
+            // 忽略并发遍历异常
         }
 
         Set<String> allIPs = new HashSet<>();

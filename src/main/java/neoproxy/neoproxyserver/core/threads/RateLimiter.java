@@ -93,7 +93,7 @@ public class RateLimiter {
             if (maxMbps <= 0) {
                 this.maxBytesPerSec = Double.MAX_VALUE;
             } else {
-                // 1 Mbps = 125,000 bytes/sec
+                // 1 Mbps = 125,000 字节/秒
                 this.maxBytesPerSec = maxMbps * 125_000.0;
             }
 

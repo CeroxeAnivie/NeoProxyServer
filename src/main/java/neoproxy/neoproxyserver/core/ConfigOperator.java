@@ -23,7 +23,7 @@ public final class ConfigOperator {
     private static final Path CONFIG_PATH = CONFIG_FILE.toPath();
     private static final Path SYNC_CONFIG_PATH = SYNC_CONFIG_FILE.toPath();
 
-    // ==================== Sync Config Definitions ====================
+    // ==================== 同步配置定义 ====================
     public static String MANAGER_URL = null;
     public static String MANAGER_TOKEN = "";
     public static String NODE_ID = "Default-Node";

@@ -83,7 +83,7 @@ public class TransferSocketAdapter implements Runnable {
     }
 
     public static HostReply getHostReply(long socketID, int CONN_TYPE) throws SocketTimeoutException {
-        // Debugger.debugOperation("Waiting for HostReply ID: " + socketID + " Type: " + CONN_TYPE);
+        // Debugger.debugOperation("等待 HostReply，ID: " + socketID + " 类型: " + CONN_TYPE);
 
         final ConcurrentHashMap<Long, HostReply> map =
                 (CONN_TYPE == TransferSocketAdapter.CONN_TYPE.TCP) ? tcpHostReply :
@@ -174,7 +174,7 @@ public class TransferSocketAdapter implements Runnable {
                         return;
                     }
 
-                    accepted.setSoTimeout(0);//保险起见再调回去
+            accepted.setSoTimeout(0);// 保险起见再调回去
                     String connectionType = flags[0].trim();
                     long socketID;
                     try {
@@ -184,12 +184,6 @@ public class TransferSocketAdapter implements Runnable {
                         close(accepted);
                         return;
                     }
-                    if (socketID <= 0) {
-                        Debugger.debugOperation("TransferSocket rejected non-positive socket id: " + socketID);
-                        close(accepted);
-                        return;
-                    }
-
                     HostReply newReply = new HostReply(socketID, accepted);
 
                     boolean isTcp = "TCP".equals(connectionType);

@@ -1,5 +1,6 @@
 package neoproxy.neoproxyserver.core.management;
 
+import neoproxy.neoproxyserver.NeoProxyServer;
 import neoproxy.neoproxyserver.core.ConfigOperator;
 import neoproxy.neoproxyserver.core.Debugger;
 import neoproxy.neoproxyserver.core.HostClient;
@@ -20,7 +21,7 @@ import static neoproxy.neoproxyserver.core.management.IPChecker.*;
 import static neoproxy.neoproxyserver.core.management.SequenceKey.*;
 
 /**
- * ConsoleManager (Industrial SQLite Version)
+ * ConsoleManager（工业级 SQLite 版本）
  * 彻底解耦 JDBC 硬编码，由 Database 类驱动持久化。
  * 性能优化：利用 SQLite WAL 模式实现毫秒级查询。
  */
@@ -37,6 +38,7 @@ public class ConsoleManager {
     public static void init() {
         try {
             myConsole = new WebConsole("NeoProxyServer");
+            myConsole.setShutdownHook(NeoProxyServer::requestShutdownAndExit);
             initCommand();
             if (shouldStartInteractiveConsole()) {
                 myConsole.start();
@@ -48,10 +50,9 @@ public class ConsoleManager {
 
     private static boolean shouldStartInteractiveConsole() {
         /*
-         * Low-RAM mode must still be usable from an attached terminal; operators need the
-         * same command surface for emergency maintenance. The only case we skip is a
-         * service-style launch without stdin console, where JLine's reader thread can
-         * close the terminal and make later logging fail.
+         * 低内存模式下，附加终端仍必须可用；运维人员需要同样的命令面板来做紧急维护。
+         * 唯一需要跳过的场景是以服务方式启动且没有 stdin 控制台，此时 JLine 的 reader 线程可能会
+         * 关闭终端，导致后续日志输出失败。
          */
         return !LOW_RAM_MODE || System.console() != null;
     }

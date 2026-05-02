@@ -16,7 +16,6 @@ import neoproxy.neoproxyserver.core.webadmin.WebAdminManager;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.PushbackInputStream;
 import java.net.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,8 +25,10 @@ import java.security.CodeSource;
 import java.security.ProtectionDomain;
 import java.util.Arrays;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
 import static neoproxy.neoproxyserver.core.HostClient.waitForTcpEnabled;
@@ -70,6 +71,7 @@ public class NeoProxyServer {
     public static boolean LOW_RAM_MODE = false;
     public static MyConsole myConsole;
     public static boolean isStopped = false;
+    private static final AtomicBoolean SHUTDOWN_STARTED = new AtomicBoolean(false);
 
     private static CopyOnWriteArrayList<String> toCopyOnWriteArrayListWithLoop(String[] array) {
         CopyOnWriteArrayList<String> list = new CopyOnWriteArrayList<>();
@@ -164,7 +166,7 @@ public class NeoProxyServer {
         NeoProxyServer.checkARGS(args);
         NeoProxyServer.initStructure();
 
-        // Logs...
+        // 日志...
         ServerLogger.info("neoProxyServer.currentLogFile", myConsole.getLogFile().getAbsolutePath());
         ServerLogger.info("neoProxyServer.localDomainName", LOCAL_DOMAIN_NAME);
         ServerLogger.info("neoProxyServer.listenHostConnectPort", HOST_CONNECT_PORT);
@@ -185,6 +187,20 @@ public class NeoProxyServer {
             }
         }
         Debugger.debugOperation("Main loop exited.");
+    }
+
+    public static void requestShutdownAndExit() {
+        if (!SHUTDOWN_STARTED.compareAndSet(false, true)) {
+            return;
+        }
+
+        ThreadManager.runAsync(() -> {
+            try {
+                performShutdown();
+            } finally {
+                Runtime.getRuntime().halt(0);
+            }
+        });
     }
 
     private static void handleNewHostClient(HostClient hostClient) {
@@ -274,14 +290,14 @@ public class NeoProxyServer {
                 ThreadManager.runAsync(() -> {
                     try {
                         Sleeper.sleep(200);
-                        PushbackInputStream pbis = new PushbackInputStream(client.getInputStream(), 8);
+                        InputStream rawInput = client.getInputStream();
                         int originalTimeout = client.getSoTimeout();
                         client.setSoTimeout(1000);
 
                         byte[] headerBytes = new byte[8];
-                        int readLen;
+                        int readLen = 0;
                         try {
-                            int b = pbis.read();
+                            int b = rawInput.read();
                             if (b == -1) {
                                 Debugger.debugOperation("TCP Probe: Client sent EOS immediately.");
                                 client.close();
@@ -291,16 +307,14 @@ public class NeoProxyServer {
                             readLen = 1;
 
                             if (IS_DEBUG_MODE) {
-                                int available = pbis.available();
+                                int available = rawInput.available();
                                 if (available > 0) {
                                     int toRead = Math.min(available, 7);
-                                    int r = pbis.read(headerBytes, 1, toRead);
+                                    int r = rawInput.read(headerBytes, 1, toRead);
                                     if (r > 0) readLen += r;
                                 }
                                 Debugger.debugOperation("TCP Probe: Read " + readLen + " bytes: " + Arrays.toString(Arrays.copyOf(headerBytes, readLen)));
                             }
-                            pbis.unread(headerBytes, 0, readLen);
-
                         } catch (SocketTimeoutException e) {
                             Debugger.debugOperation("TCP Probe: Timeout while pre-reading. Continuing...");
                         } catch (IOException e) {
@@ -308,7 +322,13 @@ public class NeoProxyServer {
                             client.close();
                             return;
                         } finally {
-                            client.setSoTimeout(originalTimeout);
+                            try {
+                                if (!client.isClosed()) {
+                                    client.setSoTimeout(originalTimeout);
+                                }
+                            } catch (SocketException e) {
+                                Debugger.debugOperation("TCP Probe: Skip restoring SoTimeout because socket is already closed.");
+                            }
                         }
 
                         long socketID = AtomicIdGenerator.GLOBAL.nextId();
@@ -329,7 +349,11 @@ public class NeoProxyServer {
                         }
 
                         Debugger.debugOperation("Starting TCPTransformer for SocketID: " + socketID);
-                        TCPTransformer.start(hostClient, hostReply, client, pbis);
+                        InputStream transformerInput = rawInput;
+                        if (readLen > 0) {
+                            transformerInput = new PreReadInputStream(Arrays.copyOf(headerBytes, readLen), rawInput);
+                        }
+                        TCPTransformer.start(hostClient, hostReply, client, transformerInput);
                         ServerLogger.sayClientTCPConnectBuildUpInfo(hostClient, client);
                     } catch (Exception e) {
                         Debugger.debugOperation(e);
@@ -569,6 +593,13 @@ public class NeoProxyServer {
     }
 
     private static void shutdown() {
+        if (!SHUTDOWN_STARTED.compareAndSet(false, true)) {
+            return;
+        }
+        performShutdown();
+    }
+
+    private static void performShutdown() {
         Debugger.debugOperation("Shutdown hook triggered.");
         ServerLogger.info("neoProxyServer.shuttingDown");
         isStopped = true;
@@ -587,8 +618,10 @@ public class NeoProxyServer {
             if (hostServerTransferServerSocket != null) hostServerTransferServerSocket.close();
         } catch (Exception ignored) {
         }
-        ServerLogger.info("neoProxyServer.shutdownCompleted");
-        if (myConsole != null) myConsole.shutdown();
+        try {
+            WebAdminManager.shutdown();
+        } catch (Exception ignored) {
+        }
         Debugger.debugOperation("Shutdown process finished.");
     }
 
@@ -619,5 +652,53 @@ public class NeoProxyServer {
         } catch (Exception ignored) {
         }
         return fallbackPath;
+    }
+
+    /**
+     * 将 TCP 探测阶段已经读取的字节重新回放出去，但不接管 socket 输入流的所有权。
+     *
+     * <p>之所以不用 SequenceInputStream 或 PushbackInputStream：
+     * SequenceInputStream 会在子流耗尽后关闭它们，这会把正常的 TCP 半关闭变成关闭整个访问 socket。
+     * PushbackInputStream 在 read(byte[]) 中可能会尝试继续填满调用方的大缓冲区，即使它已经回放了一个很小的前缀。
+     * 这里需要的是严格的流视图：先立刻返回预读前缀，然后让后续读取完全交给底层流。</p>
+     */
+    private static final class PreReadInputStream extends InputStream {
+        private final byte[] prefix;
+        private final InputStream delegate;
+        private int offset;
+
+        private PreReadInputStream(byte[] prefix, InputStream delegate) {
+            this.prefix = Objects.requireNonNull(prefix, "prefix");
+            this.delegate = Objects.requireNonNull(delegate, "delegate");
+        }
+
+        @Override
+        public int read() throws IOException {
+            if (offset < prefix.length) {
+                return prefix[offset++] & 0xFF;
+            }
+            return delegate.read();
+        }
+
+        @Override
+        public int read(byte[] buffer, int off, int len) throws IOException {
+            Objects.requireNonNull(buffer, "buffer");
+            Objects.checkFromIndexSize(off, len, buffer.length);
+            if (len == 0) {
+                return 0;
+            }
+            if (offset < prefix.length) {
+                int copied = Math.min(len, prefix.length - offset);
+                System.arraycopy(prefix, offset, buffer, off, copied);
+                offset += copied;
+                return copied;
+            }
+            return delegate.read(buffer, off, len);
+        }
+
+        @Override
+        public void close() {
+            // 拥有它的 TCPTransformer 会在双向传输结束后自行关闭 Socket。
+        }
     }
 }

@@ -58,37 +58,37 @@ public final class ServerConstants {
     public static final int TCP_BUFFER_SIZE = 65535;
 
     /**
-     * TCP buffer floor. Going below this value makes encryption/frame overhead dominate useful payload.
+     * TCP 缓冲区下限。低于这个值后，加密和帧开销会开始压过有效载荷。
      */
     public static final int MIN_TCP_BUFFER_SIZE = 512;
 
     /**
-     * Low-RAM TCP buffer. This intentionally spends more CPU/syscalls to keep per-connection heap small.
+     * 低内存模式的 TCP 缓冲区。这样会主动增加 CPU / 系统调用开销，以换取更小的单连接堆占用。
      */
     public static final int LOW_RAM_TCP_BUFFER_SIZE = 1024;
 
     /**
-     * One full UDP datagram must still fit even in low-RAM mode; otherwise the proxy would silently truncate UDP.
+     * 即使在低内存模式下，也必须能容纳完整的 UDP 数据报；否则代理会静默截断 UDP。
      */
     public static final int UDP_PACKET_BUFFER_SIZE = 65535;
 
     /**
-     * Default per-UDP-session pending packet count.
+     * 默认的每个 UDP 会话待发送包数量。
      */
     public static final int UDP_SEND_QUEUE_CAPACITY = 100;
 
     /**
-     * Low-RAM per-UDP-session pending packet count. Backpressure is preferred over unbounded heap growth.
+     * 低内存模式的每个 UDP 会话待发送包数量。优先施加背压，而不是无限增长堆内存。
      */
     public static final int LOW_RAM_UDP_SEND_QUEUE_CAPACITY = 1;
 
     /**
-     * Normal secure-frame ceiling. Transfer frames are chunked, so larger packets are not required for proxying.
+     * 常规安全帧上限。传输帧会被分片，因此代理不需要更大的单包上限。
      */
     public static final int SECURE_PACKET_SIZE = 1024 * 1024;
 
     /**
-     * Low-RAM secure-frame ceiling. Large enough for a full UDP datagram plus encryption overhead.
+     * 低内存模式的安全帧上限。这个值仍能容纳完整 UDP 数据报及其加密开销。
      */
     public static final int LOW_RAM_SECURE_PACKET_SIZE = 128 * 1024;
 

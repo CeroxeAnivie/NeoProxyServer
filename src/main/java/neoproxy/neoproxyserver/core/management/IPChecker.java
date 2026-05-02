@@ -21,7 +21,7 @@ import static neoproxy.neoproxyserver.NeoProxyServer.availableHostClient;
 import static neoproxy.neoproxyserver.NeoProxyServer.hostServerHookServerSocket;
 
 /**
- * IP 封禁管理器 (Java 21 Virtual Threads Compatible)
+ * IP 封禁管理器（兼容 Java 21 Virtual Threads）
  * <p>
  * 修改：使用 ReentrantLock 替代 synchronized，防止文件 IO 导致虚拟线程 Pinning。
  */

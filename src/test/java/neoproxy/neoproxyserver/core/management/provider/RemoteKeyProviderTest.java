@@ -3,10 +3,55 @@ package neoproxy.neoproxyserver.core.management.provider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Method;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 @DisplayName("RemoteKeyProvider 测试")
 class RemoteKeyProviderTest {
+
+    @Test
+    @DisplayName("测试 buildSignature 采用稳定签名顺序")
+    void testBuildSignatureUsesStableCanonicalOrder() throws Exception {
+        RemoteKeyProvider provider = new RemoteKeyProvider("http://localhost:8080", "token-123", "test-node");
+
+        Method buildSignature = RemoteKeyProvider.class.getDeclaredMethod(
+                "buildSignature",
+                String.class,
+                String.class,
+                String.class,
+                String.class,
+                String.class
+        );
+        buildSignature.setAccessible(true);
+
+        String signature = (String) buildSignature.invoke(
+                provider,
+                "POST",
+                Protocol.API_SYNC,
+                "1746259200",
+                "abc123nonce",
+                "{\"nodeId\":\"test-node\"}"
+        );
+
+        assertEquals("uSIuoqJ53DG26iGTIwbH4NVTA5a/Y18SelOb6z8qlMg=", signature);
+    }
+
+    @Test
+    @DisplayName("测试心跳响应只在结构化 status=kill 时终止连接")
+    void testHeartbeatKillDecisionUsesStructuredJsonStatus() throws Exception {
+        RemoteKeyProvider provider = new RemoteKeyProvider("http://localhost:8080", "token-123", "test-node");
+
+        Method shouldKillHeartbeatResponse = RemoteKeyProvider.class.getDeclaredMethod(
+                "shouldKillHeartbeatResponse",
+                String.class
+        );
+        shouldKillHeartbeatResponse.setAccessible(true);
+
+        assertEquals(true, shouldKillHeartbeatResponse.invoke(provider, "{\"status\":\"kill\"}"));
+        assertEquals(false, shouldKillHeartbeatResponse.invoke(provider, "{\"status\":\"ok\"}"));
+        assertEquals(false, shouldKillHeartbeatResponse.invoke(provider, "not json"));
+    }
 
     @Test
     @DisplayName("测试构造器")

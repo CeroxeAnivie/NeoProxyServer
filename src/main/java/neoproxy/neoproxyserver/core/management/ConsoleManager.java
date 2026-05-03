@@ -79,20 +79,20 @@ public class ConsoleManager {
 
         registerWrapper("alert", "Set whether to enable verbose console output", (List<String> params) -> {
             if (params.size() != 1) {
-                myConsole.warn(COMMAND_SOURCE.get(), "Usage: alert <enable|disable>");
+                ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.alert");
                 return;
             }
             String subCommand = params.getFirst();
             switch (subCommand) {
                 case "enable" -> handleAlert(true);
                 case "disable" -> handleAlert(false);
-                default -> myConsole.warn(COMMAND_SOURCE.get(), "Usage: alert <enable|disable>");
+                default -> ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.alert");
             }
         });
 
         registerWrapper("webadmin", "Generate a temporary web admin link", (List<String> params) -> {
             if (LOW_RAM_MODE) {
-                ServerLogger.logRaw(COMMAND_SOURCE.get(), "WebAdmin is disabled while --low-ram is active.");
+                ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.webAdminDisabledInLowRam");
                 return;
             }
             String url = neoproxy.neoproxyserver.core.webadmin.WebAdminManager.generateNewSessionUrl();
@@ -105,7 +105,7 @@ public class ConsoleManager {
 
         registerWrapper("ban", "Ban a specific IP address", (List<String> params) -> {
             if (params.size() != 1) {
-                myConsole.warn(COMMAND_SOURCE.get(), "Usage: ban <ip_address>");
+                ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.ban");
                 return;
             }
             String ipToBan = params.getFirst();
@@ -122,7 +122,7 @@ public class ConsoleManager {
 
         registerWrapper("unban", "Unban a specific IP address", (List<String> params) -> {
             if (params.size() != 1) {
-                myConsole.warn(COMMAND_SOURCE.get(), "Usage: unban <ip_address>");
+                ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.unban");
                 return;
             }
             String ipToUnban = params.getFirst();
@@ -139,7 +139,7 @@ public class ConsoleManager {
 
         registerWrapper("find", "Find the location and ISP of an IP address", (List<String> params) -> {
             if (params.size() != 1) {
-                myConsole.warn(COMMAND_SOURCE.get(), "Usage: find <ip_address>");
+                ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.find");
                 return;
             }
             String ipToFind = params.getFirst();
@@ -189,12 +189,12 @@ public class ConsoleManager {
 
         registerWrapper("debug", "Enable or disable debug mode", (List<String> params) -> {
             if (params.size() != 1) {
-                myConsole.warn(COMMAND_SOURCE.get(), "Usage: debug <enable|disable>");
+                ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.debug");
                 return;
             }
             String action = params.getFirst();
             if (!action.equals("enable") && !action.equals("disable")) {
-                myConsole.warn(COMMAND_SOURCE.get(), "Usage: debug <enable|disable>");
+                ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.debug");
                 return;
             }
             if (action.equals("enable")) {
@@ -212,19 +212,19 @@ public class ConsoleManager {
 
         registerWrapper("web", "Enable or disable web HTML for a key", (List<String> params) -> {
             if (params.size() != 2) {
-                myConsole.warn(COMMAND_SOURCE.get(), "Usage: web <enable|disable> <key>");
+                ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.web");
                 return;
             }
             String action = params.get(0);
             String keyName = params.get(1);
             if (!action.equals("enable") && !action.equals("disable")) {
-                myConsole.warn(COMMAND_SOURCE.get(), "Usage: web <enable|disable> <key>");
+                ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.web");
                 return;
             }
 
             if (!isKeyExistsByName(keyName)) {
                 if (!(SequenceKey.PROVIDER instanceof RemoteKeyProvider) || !SequenceKey.getKeyCacheSnapshot().containsKey(keyName)) {
-                    myConsole.warn(COMMAND_SOURCE.get(), "Key not found: " + keyName);
+                    ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFoundSpecific", keyName);
                     return;
                 }
             }
@@ -261,7 +261,7 @@ public class ConsoleManager {
 
         registerWrapper("reload", "Reload configurations from config.cfg", (List<String> params) -> {
             if (!params.isEmpty()) {
-                myConsole.warn(COMMAND_SOURCE.get(), "Usage: reload");
+                ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.reload");
                 return;
             }
             handleReloadCommand();
@@ -269,7 +269,7 @@ public class ConsoleManager {
 
         registerWrapper("profile", "Generate a detailed performance diagnostic report", (List<String> params) -> {
             if (!params.isEmpty()) {
-                myConsole.warn(COMMAND_SOURCE.get(), "Usage: profile");
+                ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.profile");
                 return;
             }
             handleProfileCommand();
@@ -470,7 +470,7 @@ public class ConsoleManager {
 
     private static void handleEnableCommand(List<String> params) {
         if (params.size() != 2) {
-            myConsole.warn(COMMAND_SOURCE.get(), "Usage: key enable <name>");
+            ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.keyEnable");
             return;
         }
         String name = params.get(1);
@@ -487,7 +487,7 @@ public class ConsoleManager {
 
     private static void handleDisableCommand(List<String> params) {
         if (params.size() != 2) {
-            myConsole.warn(COMMAND_SOURCE.get(), "Usage: key disable <name>");
+            ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.keyDisable");
             return;
         }
         String name = params.get(1);
@@ -525,7 +525,7 @@ public class ConsoleManager {
 
     private static void handleLookupCommand(List<String> params) {
         if (params.size() != 2) {
-            myConsole.warn(COMMAND_SOURCE.get(), "Usage: key lp <name>");
+            ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.keyLookup");
             return;
         }
         String name = params.get(1);
@@ -560,17 +560,16 @@ public class ConsoleManager {
                 case "rate" -> listKeyRates();
                 case "expire-time" -> listKeyExpireTimes();
                 case "enable" -> listKeyEnableStatus();
-                default ->
-                        myConsole.warn(COMMAND_SOURCE.get(), "Usage: key list | key list <name | balance | rate | expire-time | enable>");
+                default -> ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.keyList");
             }
         } else {
-            myConsole.warn(COMMAND_SOURCE.get(), "Usage: key list | key list <name | balance | rate | expire-time | enable>");
+            ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.keyList");
         }
     }
 
     private static void handleDelCommand(List<String> params) {
         if (params.size() != 2) {
-            myConsole.warn(COMMAND_SOURCE.get(), "Usage: key del <name>");
+            ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.keyDelete");
             return;
         }
         String name = params.get(1);
@@ -583,7 +582,7 @@ public class ConsoleManager {
 
     private static void handleSetCommand(List<String> params) {
         if (params.size() < 2) {
-            myConsole.warn(COMMAND_SOURCE.get(), "Usage: key set <name> [b=<balance>] [r=<rate>] [p=<outPort>] [t=<expireTime>] [w=<webHTML>]");
+            ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.keySet");
             return;
         }
         String name = params.get(1);
@@ -705,7 +704,7 @@ public class ConsoleManager {
 
     private static void handleAddCommand(List<String> params) {
         if (params.size() != 6 && params.size() != 7) {
-            myConsole.warn(COMMAND_SOURCE.get(), "Usage: key add <name> <balance> <expireTime> <port> <rate> [webHTML]");
+            ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.keyAdd");
             return;
         }
         String name = params.get(1);
@@ -781,7 +780,7 @@ public class ConsoleManager {
             return;
         }
         String result = keys.stream().map(k -> String.format("%s%s(%d)", k.getName(), k.isEnable() ? "" : "(disabled)", findKeyClientNum(k.getName()))).collect(Collectors.joining(" "));
-        ServerLogger.infoWithSource(COMMAND_SOURCE.get(), result);
+        ServerLogger.logRaw(COMMAND_SOURCE.get(), result.replace("(disabled)", getDisabledMarker()));
     }
 
     private static void listKeyBalances() {
@@ -791,7 +790,7 @@ public class ConsoleManager {
             return;
         }
         String result = keys.stream().map(k -> String.format("%s%s(%.2f)", k.getName(), k.isEnable() ? "" : "(disabled)", k.getBalanceNoLock())).collect(Collectors.joining("\n"));
-        ServerLogger.infoWithSource(COMMAND_SOURCE.get(), result);
+        ServerLogger.logRaw(COMMAND_SOURCE.get(), result.replace("(disabled)", getDisabledMarker()));
     }
 
     private static void listKeyRates() {
@@ -801,7 +800,7 @@ public class ConsoleManager {
             return;
         }
         String result = keys.stream().map(k -> String.format("%s%s(%smbps)", k.getName(), k.isEnable() ? "" : "(disabled)", killDoubleEndZero(k.getRateNoLock()))).collect(Collectors.joining(" "));
-        ServerLogger.infoWithSource(COMMAND_SOURCE.get(), result);
+        ServerLogger.logRaw(COMMAND_SOURCE.get(), result.replace("(disabled)", getDisabledMarker()));
     }
 
     private static void listKeyExpireTimes() {
@@ -811,7 +810,7 @@ public class ConsoleManager {
             return;
         }
         String result = keys.stream().map(k -> String.format("%s%s( %s )", k.getName(), k.isEnable() ? "" : "(disabled)", k.getExpireTime())).collect(Collectors.joining("\n"));
-        ServerLogger.infoWithSource(COMMAND_SOURCE.get(), result);
+        ServerLogger.logRaw(COMMAND_SOURCE.get(), result.replace("(disabled)", getDisabledMarker()));
     }
 
     private static void listKeyEnableStatus() {
@@ -820,26 +819,34 @@ public class ConsoleManager {
             ServerLogger.errorWithSource(COMMAND_SOURCE.get(), "consoleManager.keyNotFound");
             return;
         }
-        String result = keys.stream().map(k -> String.format("%s: %s", k.getName(), k.isEnable() ? "enabled" : "disabled")).collect(Collectors.joining("\n"));
-        ServerLogger.infoWithSource(COMMAND_SOURCE.get(), result);
+        String enabled = ServerLogger.getMessage("consoleManager.keyStatus.enabled");
+        String disabled = ServerLogger.getMessage("consoleManager.keyStatus.disabled");
+        String result = keys.stream()
+                .map(k -> String.format("%s: %s", k.getName(), k.isEnable() ? enabled : disabled))
+                .collect(Collectors.joining("\n"));
+        ServerLogger.logRaw(COMMAND_SOURCE.get(), result);
     }
 
     private static void printKeyUsage() {
-        myConsole.warn(COMMAND_SOURCE.get(), "Usage:");
-        myConsole.warn(COMMAND_SOURCE.get(), "  key add <name> <balance> <expireTime> <port> <rate> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.add"));
-        myConsole.warn(COMMAND_SOURCE.get(), "  key set <name> [b=<balance>] [r=<rate>] [p=<port>] [t=<expireTime>] [w=<webHTML>] -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.set"));
-        myConsole.warn(COMMAND_SOURCE.get(), "  key del <name> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.del"));
-        myConsole.warn(COMMAND_SOURCE.get(), "  key enable <name> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.enable"));
-        myConsole.warn(COMMAND_SOURCE.get(), "  key disable <name> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.disable"));
-        myConsole.warn(COMMAND_SOURCE.get(), "  key list -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.list"));
-        myConsole.warn(COMMAND_SOURCE.get(), "  key lp <name> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.lp"));
-        myConsole.warn(COMMAND_SOURCE.get(), "  web <enable|disable> <key> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.web"));
-        myConsole.warn(COMMAND_SOURCE.get(), "  list -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.listCmd"));
-        myConsole.warn(COMMAND_SOURCE.get(), "  ban <ip_address> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.banCmd"));
-        myConsole.warn(COMMAND_SOURCE.get(), "  unban <ip_address> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.unbanCmd"));
-        myConsole.warn(COMMAND_SOURCE.get(), "  listbans -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.listbansCmd"));
-        myConsole.warn(COMMAND_SOURCE.get(), "  find <ip_address> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.findCmd"));
-        myConsole.warn(COMMAND_SOURCE.get(), "  reload -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.reloadCmd"));
+        ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.title");
+        ServerLogger.logRaw(COMMAND_SOURCE.get(), "  key add <name> <balance> <expireTime> <port> <rate> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.add"));
+        ServerLogger.logRaw(COMMAND_SOURCE.get(), "  key set <name> [b=<balance>] [r=<rate>] [p=<port>] [t=<expireTime>] [w=<webHTML>] -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.set"));
+        ServerLogger.logRaw(COMMAND_SOURCE.get(), "  key del <name> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.del"));
+        ServerLogger.logRaw(COMMAND_SOURCE.get(), "  key enable <name> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.enable"));
+        ServerLogger.logRaw(COMMAND_SOURCE.get(), "  key disable <name> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.disable"));
+        ServerLogger.logRaw(COMMAND_SOURCE.get(), "  key list -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.list"));
+        ServerLogger.logRaw(COMMAND_SOURCE.get(), "  key lp <name> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.lp"));
+        ServerLogger.logRaw(COMMAND_SOURCE.get(), "  web <enable|disable> <key> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.web"));
+        ServerLogger.logRaw(COMMAND_SOURCE.get(), "  list -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.listCmd"));
+        ServerLogger.logRaw(COMMAND_SOURCE.get(), "  ban <ip_address> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.banCmd"));
+        ServerLogger.logRaw(COMMAND_SOURCE.get(), "  unban <ip_address> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.unbanCmd"));
+        ServerLogger.logRaw(COMMAND_SOURCE.get(), "  listbans -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.listbansCmd"));
+        ServerLogger.logRaw(COMMAND_SOURCE.get(), "  find <ip_address> -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.findCmd"));
+        ServerLogger.logRaw(COMMAND_SOURCE.get(), "  reload -- " + ServerLogger.getMessage("consoleManager.printKeyUsage.reloadCmd"));
+    }
+
+    private static String getDisabledMarker() {
+        return ServerLogger.getMessage("consoleManager.keyStatus.disabledSuffix");
     }
 
     private static String validateAndFormatPortInput(String portInput) {

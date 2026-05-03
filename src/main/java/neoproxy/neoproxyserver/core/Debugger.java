@@ -6,7 +6,6 @@ public class Debugger {
     public static void debugOperation(Exception e) {
         if (IS_DEBUG_MODE) {
             ServerLogger.error("neoProxyServer.debugOperation", e, e.getMessage());
-            e.printStackTrace();
         }
     }
 

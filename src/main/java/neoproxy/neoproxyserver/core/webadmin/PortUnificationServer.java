@@ -30,7 +30,7 @@ public class PortUnificationServer {
         ThreadManager.runAsync(() -> {
             try {
                 serverSocket = new ServerSocket(publicPort);
-                ServerLogger.info("WebAdmin", "Unified Gateway listening on port " + publicPort);
+                ServerLogger.infoWithSource("WebAdmin", "webAdmin.gatewayStarted", publicPort);
 
                 while (isRunning) {
                     Socket clientSocket = serverSocket.accept();
@@ -47,7 +47,7 @@ public class PortUnificationServer {
                 }
             } catch (IOException e) {
                 if (isRunning) {
-                    ServerLogger.errorWithSource("WebAdmin", "Gateway Error", e);
+                    ServerLogger.errorWithSource("WebAdmin", "webAdmin.gatewayError", e, e.getMessage());
                 }
             }
         });

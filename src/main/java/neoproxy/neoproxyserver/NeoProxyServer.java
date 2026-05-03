@@ -95,14 +95,14 @@ public class NeoProxyServer {
         try {
             copyResourceToJarDirectory("templates/eula.txt");
         } catch (IOException e) {
-            e.printStackTrace();
+            ServerLogger.error("neoProxyServer.resourceCopyFailed", e, "templates/eula.txt");
             System.exit(-2);
         }
         ConsoleManager.init();
         ConfigOperator.readAndSetValue();
         applyRuntimeMemoryProfile();
         if (LOW_RAM_MODE) {
-            ServerLogger.logRaw("LowRAM", "WebAdmin disabled by --low-ram to avoid Jetty/Javalin resident memory.");
+            ServerLogger.infoWithSource("LowRAM", "neoProxyServer.lowRamWebAdminDisabled");
         } else {
             WebAdminManager.init();
         }
@@ -145,10 +145,10 @@ public class NeoProxyServer {
             TCPTransformer.BUFFER_LEN = Math.min(TCPTransformer.BUFFER_LEN, LOW_RAM_TCP_BUFFER_SIZE);
             UDPTransformer.setSendQueueCapacity(LOW_RAM_UDP_SEND_QUEUE_CAPACITY);
             SecureSocket.setMaxAllowedPacketSize(LOW_RAM_SECURE_PACKET_SIZE);
-            ServerLogger.logRaw("LowRAM",
-                    "Enabled: TCP buffer=" + TCPTransformer.BUFFER_LEN
-                            + " bytes, UDP queue=" + LOW_RAM_UDP_SEND_QUEUE_CAPACITY
-                            + ", secure packet cap=" + LOW_RAM_SECURE_PACKET_SIZE + " bytes.");
+            ServerLogger.infoWithSource("LowRAM", "neoProxyServer.lowRamProfileApplied",
+                    TCPTransformer.BUFFER_LEN,
+                    LOW_RAM_UDP_SEND_QUEUE_CAPACITY,
+                    LOW_RAM_SECURE_PACKET_SIZE);
             return;
         }
 

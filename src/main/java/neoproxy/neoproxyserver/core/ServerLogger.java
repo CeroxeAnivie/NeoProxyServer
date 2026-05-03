@@ -15,10 +15,11 @@ import java.util.ResourceBundle;
  */
 public class ServerLogger {
 
-    private static final String BUNDLE_NAME = "messages";
+    private static final String EN_BUNDLE_NAME = "messages_en";
+    private static final String ZH_BUNDLE_NAME = "messages_zh";
     public static boolean alert = true;
     private static ResourceBundle bundle;
-    private static Locale currentLocale = Locale.getDefault(); // 默认使用系统语言
+    private static Locale currentLocale = Locale.ENGLISH;
 
     static {
         setLocale(currentLocale);
@@ -32,15 +33,25 @@ public class ServerLogger {
      * @param locale 目标语言环境
      */
     public static void setLocale(Locale locale) {
-        currentLocale = locale;
-        try {
-            bundle = ResourceBundle.getBundle(BUNDLE_NAME, currentLocale);
-        } catch (MissingResourceException e) {
-            // 如果加载失败，将 bundle 设为 null，后续调用会失败并提示
-            e.printStackTrace();
-            System.err.println("CRITICAL ERROR: Failed to load ResourceBundle: " + BUNDLE_NAME + " for locale: " + currentLocale);
-            bundle = null;
+        if (locale == null) {
+            locale = Locale.ENGLISH;
         }
+        currentLocale = locale;
+        String bundleName = resolveBundleName(locale);
+        try {
+            bundle = ResourceBundle.getBundle(bundleName, Locale.ROOT);
+        } catch (MissingResourceException e) {
+            System.err.println("CRITICAL ERROR: Failed to load ResourceBundle: " + bundleName + " for locale: " + currentLocale);
+            try {
+                bundle = ResourceBundle.getBundle(EN_BUNDLE_NAME, Locale.ROOT);
+            } catch (MissingResourceException fallbackError) {
+                bundle = null;
+            }
+        }
+    }
+
+    private static String resolveBundleName(Locale locale) {
+        return "zh".equalsIgnoreCase(locale.getLanguage()) ? ZH_BUNDLE_NAME : EN_BUNDLE_NAME;
     }
 
     /**
@@ -51,9 +62,7 @@ public class ServerLogger {
      */
     public static void info(String key, Object... args) {
         String message = getMessage(key, args);
-        if (NeoProxyServer.myConsole != null) {
-            NeoProxyServer.myConsole.log("NeoProxyServer", message);
-        }
+        writeInfo("NeoProxyServer", message);
     }
 
     // ==================== 警告 ====================
@@ -67,9 +76,7 @@ public class ServerLogger {
      */
     public static void infoWithSource(String source, String key, Object... args) {
         String message = getMessage(key, args);
-        if (NeoProxyServer.myConsole != null) {
-            NeoProxyServer.myConsole.log(source, message);
-        }
+        writeInfo(source, message);
     }
 
     /**
@@ -80,9 +87,7 @@ public class ServerLogger {
      */
     public static void warn(String key, Object... args) {
         String message = getMessage(key, args);
-        if (NeoProxyServer.myConsole != null) {
-            NeoProxyServer.myConsole.warn("NeoProxyServer", message);
-        }
+        writeWarn("NeoProxyServer", message);
     }
 
     /**
@@ -94,9 +99,7 @@ public class ServerLogger {
      */
     public static void warnWithSource(String source, String key, Object... args) {
         String message = getMessage(key, args);
-        if (NeoProxyServer.myConsole != null) {
-            NeoProxyServer.myConsole.warn(source, message);
-        }
+        writeWarn(source, message);
     }
 
     // ==================== 错误 ====================
@@ -109,9 +112,7 @@ public class ServerLogger {
      */
     public static void error(String key, Object... args) {
         String message = getMessage(key, args);
-        if (NeoProxyServer.myConsole != null) {
-            NeoProxyServer.myConsole.error("NeoProxyServer", message);
-        }
+        writeError("NeoProxyServer", message, null);
     }
 
     /**
@@ -123,9 +124,7 @@ public class ServerLogger {
      */
     public static void error(String key, Throwable throwable, Object... args) {
         String message = getMessage(key, args);
-        if (NeoProxyServer.myConsole != null) {
-            NeoProxyServer.myConsole.error("NeoProxyServer", message, throwable);
-        }
+        writeError("NeoProxyServer", message, throwable);
     }
 
     /**
@@ -137,9 +136,20 @@ public class ServerLogger {
      */
     public static void errorWithSource(String source, String key, Object... args) {
         String message = getMessage(key, args);
-        if (NeoProxyServer.myConsole != null) {
-            NeoProxyServer.myConsole.error(source, message);
-        }
+        writeError(source, message, null);
+    }
+
+    /**
+     * 记录ERROR级别日志，并指定日志来源与异常堆栈。
+     *
+     * @param source    日志来源
+     * @param key       资源文件中的键
+     * @param throwable 异常对象
+     * @param args      格式化参数
+     */
+    public static void errorWithSource(String source, String key, Throwable throwable, Object... args) {
+        String message = getMessage(key, args);
+        writeError(source, message, throwable);
     }
 
     /**
@@ -181,9 +191,42 @@ public class ServerLogger {
      * @param message 原始消息
      */
     public static void logRaw(String source, String message) {
+        writeInfo(source, message);
+    }
+
+    private static void writeInfo(String source, String message) {
         if (NeoProxyServer.myConsole != null) {
             NeoProxyServer.myConsole.log(source, message);
+            return;
         }
+        System.out.println(formatFallbackLine("INFO", source, message));
+    }
+
+    private static void writeWarn(String source, String message) {
+        if (NeoProxyServer.myConsole != null) {
+            NeoProxyServer.myConsole.warn(source, message);
+            return;
+        }
+        System.out.println(formatFallbackLine("WARN", source, message));
+    }
+
+    private static void writeError(String source, String message, Throwable throwable) {
+        if (NeoProxyServer.myConsole != null) {
+            if (throwable != null) {
+                NeoProxyServer.myConsole.error(source, message, throwable);
+            } else {
+                NeoProxyServer.myConsole.error(source, message);
+            }
+            return;
+        }
+        System.err.println(formatFallbackLine("ERROR", source, message));
+        if (throwable != null) {
+            throwable.printStackTrace(System.err);
+        }
+    }
+
+    private static String formatFallbackLine(String level, String source, String message) {
+        return "[" + level + "] [" + source + "]: " + message;
     }
 
     // ==================== 兼容旧方法（已废弃） ====================

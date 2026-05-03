@@ -9,6 +9,229 @@
           rel="icon">
     <link href="https://npm.elemecdn.com/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
     <link href="/css/style.css" rel="stylesheet">
+    <style>
+        /* Why: 仅修正当前 webadmin 页面移动端问题，避免把试探性兼容修改扩散到全局样式。 */
+        #traffic-chart {
+            display: block;
+        }
+
+        @media (max-width: 768px) {
+            .main-container,
+            .view,
+            .panel,
+            .chart-wrapper,
+            .chart-container,
+            .table-container,
+            .file-mgr-container,
+            .file-scroll-area,
+            .perf-grid-bottom,
+            .port-panel,
+            .modal,
+            .modal-body,
+            .modal-footer {
+                min-width: 0;
+            }
+
+            .view {
+                overscroll-behavior-y: contain;
+            }
+
+            .mobile-header {
+                padding-left: max(1rem, env(safe-area-inset-left));
+                padding-right: max(1rem, env(safe-area-inset-right));
+            }
+
+            .mobile-header .logo {
+                min-width: 0;
+                margin-bottom: 0;
+                font-size: 1.1rem;
+                gap: 8px;
+            }
+
+            .mobile-header .status-badge {
+                max-width: 42vw;
+                margin-bottom: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .panel {
+                padding: 1rem;
+            }
+
+            .panel-header,
+            .chart-header,
+            .port-header-row {
+                flex-wrap: wrap !important;
+                align-items: stretch !important;
+            }
+
+            .panel-header,
+            .chart-header {
+                gap: 0.75rem;
+            }
+
+            .panel-header > *,
+            .chart-header > *,
+            .port-header-row > *,
+            .mobile-inline-form > *,
+            .editor-toolbar > * {
+                min-width: 0;
+            }
+
+            .chart-wrapper {
+                min-height: auto !important;
+            }
+
+            .chart-container {
+                aspect-ratio: 16 / 9;
+                min-height: 220px;
+                max-height: 52vh;
+            }
+
+            #traffic-chart {
+                width: 100%;
+                height: 100%;
+            }
+
+            .chart-controls {
+                width: 100%;
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+
+            .chart-btn {
+                min-height: 36px;
+            }
+
+            .dashboard-meta-row,
+            .mobile-inline-form {
+                flex-direction: column;
+                align-items: stretch !important;
+            }
+
+            .mobile-inline-form .btn,
+            .mobile-inline-form .flex-input,
+            .port-search-input {
+                width: 100%;
+            }
+
+            .panel-actions {
+                width: 100%;
+                flex-wrap: wrap;
+            }
+
+            .panel-actions .btn {
+                flex: 1 1 calc(25% - 5px);
+                min-width: 44px;
+            }
+
+            .port-header-row .panel-title {
+                white-space: normal;
+            }
+
+            .breadcrumb {
+                width: 100%;
+                padding-bottom: 0;
+            }
+
+            .file-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 0.75rem;
+            }
+
+            .file-item {
+                min-width: 0;
+                padding: 0.85rem 0.7rem;
+            }
+
+            .file-name,
+            .prop-v,
+            #move-current-path {
+                overflow-wrap: anywhere;
+                word-break: break-word;
+            }
+
+            .table-container {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+
+            .bottom-nav {
+                overflow-x: auto;
+                justify-content: flex-start;
+                gap: 2px;
+                padding-left: max(0.35rem, env(safe-area-inset-left));
+                padding-right: max(0.35rem, env(safe-area-inset-right));
+            }
+
+            .b-nav-btn {
+                flex: 1 0 72px;
+                min-width: 72px;
+                padding: 0.45rem 0.3rem;
+            }
+
+            .b-nav-btn span {
+                font-size: 0.65rem;
+                line-height: 1.1;
+            }
+
+            .editor-toolbar,
+            .modal-footer {
+                flex-wrap: wrap !important;
+                gap: 0.75rem;
+            }
+
+            .editor-toolbar .btn,
+            .modal-footer .btn {
+                flex: 1 1 auto;
+            }
+        }
+
+        @media (max-width: 420px) {
+            .main-container {
+                padding-top: 56px;
+            }
+
+            .mobile-header {
+                height: 56px;
+                padding-left: max(0.85rem, env(safe-area-inset-left));
+                padding-right: max(0.85rem, env(safe-area-inset-right));
+            }
+
+            .mobile-header .logo {
+                font-size: 1rem;
+            }
+
+            .view {
+                padding: 0.85rem;
+                padding-bottom: calc(78px + env(safe-area-inset-bottom)) !important;
+            }
+
+            .dash-value {
+                font-size: 1.7rem;
+            }
+
+            .chart-container {
+                aspect-ratio: 4 / 3;
+                min-height: 200px;
+            }
+
+            .file-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .panel-actions .btn {
+                flex-basis: calc(50% - 5px);
+            }
+
+            .b-nav-btn {
+                flex-basis: 64px;
+                min-width: 64px;
+            }
+        }
+    </style>
 </head>
 <body>
 
@@ -202,7 +425,7 @@
                 </div>
             </div>
             <div class="chart-container">
-                <svg id="traffic-chart" preserveAspectRatio="none">
+                <svg id="traffic-chart" preserveAspectRatio="xMidYMid meet">
                     <defs>
                         <linearGradient id="gradient" x1="0" x2="0" y1="0" y2="1">
                             <stop offset="0%" stop-color="var(--chart-top)"/>
@@ -220,7 +443,7 @@
             <div class="panel-header">
                 <div class="panel-title" data-i18n="dash_sys_info">System Info</div>
             </div>
-            <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:1rem">
+            <div class="dashboard-meta-row" style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:1rem">
                 <div><span data-i18n="lbl_ver" style="color:var(--text-sub)">Version:</span>
                     <span id="d-ver" style="color:var(--text-main);font-weight:bold">-</span></div>
                 <div><span data-i18n="lbl_support" style="color:var(--text-sub)">Support:</span>
@@ -291,7 +514,7 @@
         <div class="panel file-mgr-container">
             <div class="panel-header">
                 <div class="panel-title" data-i18n="f_title">File Manager</div>
-                <div style="display:flex;gap:5px">
+                <div class="panel-actions" style="display:flex;gap:5px">
                     <button class="btn btn-icon" data-i18n-title="btn_select_all" id="btn-select-all"
                             onclick="toggleSelectAll()" title="Select All"><i class="fas fa-check-square"></i></button>
                     <button class="btn btn-icon" data-i18n-title="btn_move" id="btn-move" onclick="openMoveSelector()"
@@ -337,7 +560,7 @@
                     <i class="fas fa-eraser"></i> <span data-i18n="btn_clear">Clear</span></button>
             </div>
             <div id="term-output" style="flex:1"></div>
-            <div style="display:flex;gap:10px;margin-top:10px;padding-bottom:env(safe-area-inset-bottom)">
+            <div class="mobile-inline-form" style="display:flex;gap:10px;margin-top:10px;padding-bottom:env(safe-area-inset-bottom)">
                 <input autocomplete="off" class="flex-input" id="cmd-input" placeholder="..." type="text">
                 <button class="btn btn-primary" data-i18n="btn_send" onclick="sendCmd()">Send</button>
             </div>
@@ -408,7 +631,7 @@
             <div class="panel-header">
                 <div class="panel-title" data-i18n="ban_title">Manual Ban</div>
             </div>
-            <div style="display:flex;gap:10px">
+            <div class="mobile-inline-form" style="display:flex;gap:10px">
                 <input class="flex-input" id="ban-ip-input" placeholder="IPv4 / IPv6" type="text">
                 <button class="btn btn-danger" onclick="doBanIp()">
                     <i class="fas fa-ban"></i> <span data-i18n="btn_ban">Ban IP</span></button>
@@ -432,7 +655,7 @@
 <!-- 文件编辑器弹窗 -->
 <div class="modal-overlay" id="editor-modal">
     <div class="modal large">
-        <div class="modal-header"
+        <div class="modal-header editor-toolbar"
              style="padding:1rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
             <span class="panel-title" data-i18n="modal_edit_title" id="editor-filename"
                   style="font-size:1rem">Edit</span>

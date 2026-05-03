@@ -56,4 +56,13 @@ public class UnRecognizedKeyException extends Exception {
         String message = ServerLogger.getMessage("exception.unRecognizedKey.message", key);
         throw new UnRecognizedKeyException(message);
     }
+
+    public static void throwException(String key, String detailMessageKey, Object... detailArgs)
+            throws UnRecognizedKeyException {
+        if (alert) {
+            ServerLogger.errorWithSource("NKM->" + key, detailMessageKey, detailArgs);
+        }
+        String message = ServerLogger.getMessage("exception.unRecognizedKey.message", key);
+        throw new UnRecognizedKeyException(message);
+    }
 }

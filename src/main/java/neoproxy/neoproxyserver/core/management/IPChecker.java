@@ -287,10 +287,11 @@ public class IPChecker {
 
         String format = "│ %-" + wIp + "s │ %-" + wLoc + "s │ %-" + wIsp + "s │\n";
         String border = "─".repeat(wIp + 2) + "┬" + "─".repeat(wLoc + 2) + "┬" + "─".repeat(wIsp + 2);
+        String[] headers = ServerLogger.getMessage("ipChecker.headers.banList").split("\\|", -1);
 
         StringBuilder sb = new StringBuilder();
         sb.append("\n┌").append(border.replace("┬", "─")).append("┐\n");
-        sb.append(String.format(format, "IP Address", "Location", "ISP"));
+        sb.append(String.format(format, headers[0], headers[1], headers[2]));
         sb.append("├").append(border).append("┤\n");
 
         for (BanInfo i : bannedIPMap.values()) {

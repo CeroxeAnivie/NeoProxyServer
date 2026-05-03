@@ -37,13 +37,13 @@ build/
 ### Mac OS ###
 .DS_Store
 
-logs
+/logs/
 dependency-reduced-pom.xml
 
-clients
+/clients/
 
-sk.mv.db
-sk.trace.db
+/sk.mv.db
+/sk.trace.db
 /sk
 /sk-wal
 /sk-shm

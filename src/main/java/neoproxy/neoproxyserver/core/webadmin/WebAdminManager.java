@@ -174,7 +174,7 @@ public class WebAdminManager {
                         // 为每个连接启动一个 Shield 处理器
                         ThreadManager.runAsync(() -> handleShieldConnection(client, internalPort));
                     } catch (IOException e) {
-                        if (isRunning) ServerLogger.errorWithSource("WebAdmin", "Accept Error", e);
+                        if (isRunning) ServerLogger.errorWithSource("WebAdmin", "webAdmin.acceptError", e, e.getMessage());
                     } catch (NullPointerException e) {
                         // internalServer 可能为空（shutdown时）
                         break;

@@ -19,12 +19,36 @@ class ProtocolTest {
     }
 
     @Test
+    @DisplayName("测试 API_GET_KEY 常量")
+    void testApiGetKeyConstant() throws Exception {
+        Field field = Protocol.class.getDeclaredField("API_GET_KEY");
+        field.setAccessible(true);
+        String value = (String) field.get(null);
+        assertEquals("/api/key", value);
+        assertTrue(Modifier.isStatic(field.getModifiers()));
+        assertTrue(Modifier.isFinal(field.getModifiers()));
+        assertTrue(Modifier.isPublic(field.getModifiers()));
+    }
+
+    @Test
     @DisplayName("测试 API_HEARTBEAT 常量")
     void testApiHeartbeatConstant() throws Exception {
         Field field = Protocol.class.getDeclaredField("API_HEARTBEAT");
         field.setAccessible(true);
         String value = (String) field.get(null);
         assertEquals("/api/heartbeat", value);
+        assertTrue(Modifier.isStatic(field.getModifiers()));
+        assertTrue(Modifier.isFinal(field.getModifiers()));
+        assertTrue(Modifier.isPublic(field.getModifiers()));
+    }
+
+    @Test
+    @DisplayName("测试 API_RELEASE 常量")
+    void testApiReleaseConstant() throws Exception {
+        Field field = Protocol.class.getDeclaredField("API_RELEASE");
+        field.setAccessible(true);
+        String value = (String) field.get(null);
+        assertEquals("/api/release", value);
         assertTrue(Modifier.isStatic(field.getModifiers()));
         assertTrue(Modifier.isFinal(field.getModifiers()));
         assertTrue(Modifier.isPublic(field.getModifiers()));

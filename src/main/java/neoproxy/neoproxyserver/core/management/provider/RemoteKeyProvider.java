@@ -37,6 +37,7 @@ import static neoproxy.neoproxyserver.core.Debugger.debugOperation;
  * 工业级 NKM 远程适配器 (Golden Fix - Gson Edition)
  */
 public class RemoteKeyProvider implements KeyDataProvider {
+    private static final String HEARTBEAT_STATUS_KILL = "kill";
 
     // ==================== 配置常量 ====================
     private static final int SYNC_INTERVAL_SECONDS = 60;
@@ -159,8 +160,9 @@ public class RemoteKeyProvider implements KeyDataProvider {
         // ... (保持原有代码不变)
         Debugger.debugOperation("Remote getKey request: " + name);
         try {
-            String endpoint = String.format("%s/api/key?name=%s&nodeId=%s",
+            String endpoint = String.format("%s%s?name=%s&nodeId=%s",
                     managerUrl,
+                    Protocol.API_GET_KEY,
                     encodeQueryValue(name),
                     encodeQueryValue(nodeId));
             HttpRequest req = buildRequest(endpoint, "GET", "").GET().build();
@@ -195,7 +197,7 @@ public class RemoteKeyProvider implements KeyDataProvider {
             }
 
             if (statusCode == 404 || statusCode == 403) {
-                UnRecognizedKeyException.throwException(name);
+                throwRejectedKeyException(name, statusCode, body);
             }
 
             if (statusCode == 409) {
@@ -336,7 +338,7 @@ public class RemoteKeyProvider implements KeyDataProvider {
                 json.addProperty("serial", name);
                 json.addProperty("nodeId", nodeId);
                 String body = gson.toJson(json);
-                HttpRequest req = buildRequest(managerUrl + "/api/release", "POST", body)
+                HttpRequest req = buildRequest(managerUrl + Protocol.API_RELEASE, "POST", body)
                         .POST(HttpRequest.BodyPublishers.ofString(body))
                         .build();
                 httpClient.send(req, HttpResponse.BodyHandlers.discarding());
@@ -355,7 +357,7 @@ public class RemoteKeyProvider implements KeyDataProvider {
                     .build();
             HttpResponse<String> response = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() == 200) {
-                return !response.body().contains("\"status\":\"kill\"");
+                return !shouldKillHeartbeatResponse(response.body());
             }
             return true;
         } catch (Exception e) {
@@ -418,6 +420,66 @@ public class RemoteKeyProvider implements KeyDataProvider {
         throw last;
     }
 
+    /**
+     * 只有 NKM 明确返回结构化 kill 指令时，当前连接才应被终止。
+     * 对空响应、非 JSON 或其它状态保持 fail-open，避免把控制面噪声误判成 kill。
+     */
+    private boolean shouldKillHeartbeatResponse(String responseBody) {
+        if (responseBody == null || responseBody.isBlank()) {
+            return false;
+        }
+        try {
+            HeartbeatResponse response = gson.fromJson(responseBody, HeartbeatResponse.class);
+            return response != null && HEARTBEAT_STATUS_KILL.equalsIgnoreCase(response.status);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private void throwRejectedKeyException(String name, int statusCode, String body) throws UnRecognizedKeyException {
+        NkmApiError error = parseNkmApiError(body);
+        if (statusCode == 404) {
+            UnRecognizedKeyException.throwException(name, "remoteProvider.reject.keyNotFound", name);
+        }
+
+        String errorText = error != null ? sanitizeLogField(error.error) : "-";
+        String reason = error != null ? sanitizeLogField(error.reason) : "-";
+        String status = error != null ? sanitizeLogField(error.status) : "-";
+
+        if ("Node Unauthorized".equalsIgnoreCase(reason)) {
+            UnRecognizedKeyException.throwException(name,
+                    "remoteProvider.reject.nodeUnauthorized", nodeId, name);
+        }
+        if (reason.startsWith("Default port is restricted to node:")) {
+            UnRecognizedKeyException.throwException(name,
+                    "remoteProvider.reject.defaultNodeDenied", nodeId, name, reason);
+        }
+        if ("DISABLED".equalsIgnoreCase(status)) {
+            UnRecognizedKeyException.throwException(name,
+                    "remoteProvider.reject.keyDisabled", name, reason);
+        }
+        UnRecognizedKeyException.throwException(name,
+                "remoteProvider.reject.accessDenied", name, errorText, reason, status);
+    }
+
+    private NkmApiError parseNkmApiError(String body) {
+        if (body == null || body.isBlank()) {
+            return null;
+        }
+        try {
+            return gson.fromJson(body, NkmApiError.class);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private String sanitizeLogField(String value) {
+        if (value == null || value.isBlank()) {
+            return "-";
+        }
+        return value.replace('\r', ' ').replace('\n', ' ').trim();
+    }
+
     // ========== DTO 数据结构 ==========
 
     // ... (内部类保持不变)
@@ -440,6 +502,10 @@ public class RemoteKeyProvider implements KeyDataProvider {
     private static class NkmSyncResponse {
         String status;
         Map<String, NkmKeyMetadata> metadata;
+    }
+
+    private static class HeartbeatResponse {
+        String status;
     }
 
     private static class NkmKeyMetadata {

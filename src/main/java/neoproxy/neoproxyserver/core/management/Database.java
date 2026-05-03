@@ -26,7 +26,7 @@ public class Database {
         try {
             Class.forName(DB_DRIVER);
             connectAndConfigure();
-            ServerLogger.info("Database initialized (SQLite WAL Mode).");
+            ServerLogger.infoWithSource("Database", "db.initSuccess");
         } catch (Exception e) {
             ServerLogger.error("db.initFailed", e, e.getMessage());
             Debugger.debugOperation(e);
@@ -51,7 +51,7 @@ public class Database {
         // 2. 重新建立连接并配置环境
         try {
             connectAndConfigure();
-            ServerLogger.info("Database connection reloaded.");
+            ServerLogger.infoWithSource("Database", "db.reloadSuccess");
         } catch (Exception e) {
             ServerLogger.error("db.initFailed", e, "Reload failed");
         }

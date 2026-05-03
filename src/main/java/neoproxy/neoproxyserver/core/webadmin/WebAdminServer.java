@@ -1161,7 +1161,7 @@ public class WebAdminServer {
 
         public void onError(WsContext ctx) {
             if (NeoProxyServer.IS_DEBUG_MODE)
-                ServerLogger.errorWithSource("WebAdmin", "webAdmin.conflict", "WebSocket error occurred");
+                ServerLogger.errorWithSource("WebAdmin", "webAdmin.websocketError", "WebSocket error occurred");
         }
 
         public void send(String message) {

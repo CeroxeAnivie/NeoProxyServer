@@ -148,7 +148,7 @@ public final class ProfileReporter {
             return reportFile.getAbsolutePath();
         } catch (IOException e) {
             Debugger.debugOperation(e);
-            ServerLogger.errorWithSource("ProfileReporter", "Failed to save profile report: " + e.getMessage());
+            ServerLogger.errorWithSource("ProfileReporter", "profileReporter.saveFailed", e, e.getMessage());
             return null;
         }
     }

@@ -3,7 +3,9 @@ package neoproxy.neoproxyserver.core.management.provider;
 import java.io.Serializable;
 
 public class Protocol {
+    public static final String API_GET_KEY = "/api/key";
     public static final String API_HEARTBEAT = "/api/heartbeat";
+    public static final String API_RELEASE = "/api/release";
     public static final String API_SYNC = "/api/sync";
     public static final String API_NODE_STATUS = "/api/node/status";
     public static final String API_CLIENT_UPDATE_URL = "/api/node/client/update-url";

@@ -142,11 +142,13 @@ public class NeoProxyServer {
 
     private static void applyRuntimeMemoryProfile() {
         if (LOW_RAM_MODE) {
-            TCPTransformer.BUFFER_LEN = Math.min(TCPTransformer.BUFFER_LEN, LOW_RAM_TCP_BUFFER_SIZE);
+            if (TCPTransformer.BUFFER_LEN > LOW_RAM_TCP_BUFFER_SIZE) {
+                ServerLogger.warnWithSource("LowRAM", "neoProxyServer.lowRamTcpBufferTooLarge",
+                        TCPTransformer.BUFFER_LEN, LOW_RAM_TCP_BUFFER_SIZE);
+            }
             UDPTransformer.setSendQueueCapacity(LOW_RAM_UDP_SEND_QUEUE_CAPACITY);
             SecureSocket.setMaxAllowedPacketSize(LOW_RAM_SECURE_PACKET_SIZE);
             ServerLogger.infoWithSource("LowRAM", "neoProxyServer.lowRamProfileApplied",
-                    TCPTransformer.BUFFER_LEN,
                     LOW_RAM_UDP_SEND_QUEUE_CAPACITY,
                     LOW_RAM_SECURE_PACKET_SIZE);
             return;

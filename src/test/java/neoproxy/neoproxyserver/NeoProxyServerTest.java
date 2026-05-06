@@ -53,7 +53,7 @@ class NeoProxyServerTest {
     }
 
     @Test
-    @DisplayName("测试--low-ram参数会启用低内存运行策略")
+    @DisplayName("测试--low-ram参数会启用低内存运行策略但保留TCP缓冲配置")
     void testLowRamArgumentAppliesMemoryProfile() throws Exception {
         int originalTcpBuffer = TCPTransformer.BUFFER_LEN;
         int originalPacketLimit = SecureSocket.getMaxAllowedPacketSize();
@@ -76,7 +76,7 @@ class NeoProxyServerTest {
             applyProfile.invoke(null);
 
             assertTrue(NeoProxyServer.LOW_RAM_MODE);
-            assertEquals(ServerConstants.LOW_RAM_TCP_BUFFER_SIZE, TCPTransformer.BUFFER_LEN);
+            assertEquals(ServerConstants.TCP_BUFFER_SIZE, TCPTransformer.BUFFER_LEN);
             assertEquals(ServerConstants.LOW_RAM_SECURE_PACKET_SIZE, SecureSocket.getMaxAllowedPacketSize());
             assertEquals(ServerConstants.LOW_RAM_UDP_SEND_QUEUE_CAPACITY, udpQueueCapacity.getInt(null));
         } finally {

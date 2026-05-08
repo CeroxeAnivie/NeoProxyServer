@@ -70,6 +70,7 @@ public class TCPTransformer {
 
     public static void start(HostClient hostClient, HostReply hostReply, Socket client, InputStream preCheckedStream) {
         hostClient.registerTcpSocket(client);
+        hostClient.registerTransferSocket(hostReply.host());
         TCPTransformer transformer = new TCPTransformer(hostClient, client, hostReply, preCheckedStream);
 
         final double[] aTenMibSize = {0};
@@ -87,6 +88,7 @@ public class TCPTransformer {
                     }
                 }
                 hostClient.unregisterTcpSocket(client);
+                hostClient.unregisterTransferSocket(hostReply.host());
                 close(client, hostReply.host());
                 ServerLogger.sayClientTCPConnectDestroyInfo(hostClient, client);
             } finally {

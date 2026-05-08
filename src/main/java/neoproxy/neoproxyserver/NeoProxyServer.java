@@ -46,6 +46,7 @@ import static neoproxy.neoproxyserver.core.management.SequenceKey.DYNAMIC_PORT;
 public class NeoProxyServer {
     public static final String CURRENT_DIR_PATH = getJarDirOrUserDir();
     public static final CopyOnWriteArrayList<HostClient> availableHostClient = new CopyOnWriteArrayList<>();
+    private static final CopyOnWriteArrayList<HostClient> initializingHostClient = new CopyOnWriteArrayList<>();
     public static final String ASCII_LOGO = """
             
                _____                                    \s
@@ -98,17 +99,25 @@ public class NeoProxyServer {
             ServerLogger.error("neoProxyServer.resourceCopyFailed", e, "templates/eula.txt");
             System.exit(-2);
         }
+        if (isStopped) return;
         ConsoleManager.init();
+        if (isStopped) return;
         ConfigOperator.readAndSetValue();
+        if (isStopped) return;
         applyRuntimeMemoryProfile();
+        if (isStopped) return;
         if (LOW_RAM_MODE) {
             ServerLogger.infoWithSource("LowRAM", "neoProxyServer.lowRamWebAdminDisabled");
         } else {
             WebAdminManager.init();
         }
+        if (isStopped) return;
         printLogo();
+        if (isStopped) return;
         SequenceKey.initProvider();
+        if (isStopped) return;
         UpdateManager.init();
+        if (isStopped) return;
         try {
             hostServerHookServerSocket = new SecureServerSocket(HOST_HOOK_PORT);
             Debugger.debugOperation("Bound HostHookPort: " + HOST_HOOK_PORT);
@@ -167,6 +176,9 @@ public class NeoProxyServer {
         Runtime.getRuntime().addShutdownHook(new Thread(NeoProxyServer::shutdown));
         NeoProxyServer.checkARGS(args);
         NeoProxyServer.initStructure();
+        if (isStopped) {
+            return;
+        }
 
         // 日志...
         ServerLogger.info("neoProxyServer.currentLogFile", myConsole.getLogFile().getAbsolutePath());
@@ -192,17 +204,9 @@ public class NeoProxyServer {
     }
 
     public static void requestShutdownAndExit() {
-        if (!SHUTDOWN_STARTED.compareAndSet(false, true)) {
-            return;
-        }
-
-        ThreadManager.runAsync(() -> {
-            try {
-                performShutdown();
-            } finally {
-                Runtime.getRuntime().halt(0);
-            }
-        });
+        isStopped = true;
+        shutdown();
+        System.exit(0);
     }
 
     private static void handleNewHostClient(HostClient hostClient) {
@@ -245,6 +249,8 @@ public class NeoProxyServer {
                 // 其他未知异常
                 Debugger.debugOperation(e);
                 hostClient.close();
+            } finally {
+                initializingHostClient.remove(hostClient);
             }
         });
     }
@@ -266,7 +272,9 @@ public class NeoProxyServer {
             if (alert) ServerLogger.info("neoProxyServer.banConnectInfo", clientAddress);
             SilentException.throwException();
         }
-        return new HostClient(hostServerHook);
+        HostClient hostClient = new HostClient(hostServerHook);
+        initializingHostClient.add(hostClient);
+        return hostClient;
     }
 
     public static void handleTransformerServiceWithNewThread(HostClient hostClient) {
@@ -605,6 +613,13 @@ public class NeoProxyServer {
         Debugger.debugOperation("Shutdown hook triggered.");
         ServerLogger.info("neoProxyServer.shuttingDown");
         isStopped = true;
+        for (HostClient hostClient : initializingHostClient) {
+            try {
+                hostClient.close();
+            } catch (Exception ignored) {
+            }
+        }
+        initializingHostClient.clear();
         for (HostClient hostClient : availableHostClient) {
             try {
                 hostClient.close();
@@ -621,7 +636,15 @@ public class NeoProxyServer {
         } catch (Exception ignored) {
         }
         try {
+            TransferSocketAdapter.shutdown();
+        } catch (Exception ignored) {
+        }
+        try {
             WebAdminManager.shutdown();
+        } catch (Exception ignored) {
+        }
+        try {
+            if (SequenceKey.PROVIDER != null) SequenceKey.PROVIDER.shutdown();
         } catch (Exception ignored) {
         }
         Debugger.debugOperation("Shutdown process finished.");

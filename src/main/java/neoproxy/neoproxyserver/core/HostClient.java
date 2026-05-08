@@ -59,6 +59,7 @@ public final class HostClient implements Closeable {
     private final SecureSocket hostServerHook;
     // 【优化】使用 Set 替代 List，消除数组复制开销，保持线程安全
     private final Set<Socket> activeTcpSockets = ConcurrentHashMap.newKeySet();
+    private final Set<SecureSocket> activeTransferSockets = ConcurrentHashMap.newKeySet();
 
     private final RateLimiter globalRateLimiter = new RateLimiter(0);
     private final AtomicBoolean isClosed = new AtomicBoolean(false);
@@ -135,7 +136,7 @@ public final class HostClient implements Closeable {
         Thread.startVirtualThread(() -> {
             try {
                 final long parkTimeNanos = 1_000_000L;
-                while (!hostClient.isTCPEnabled()) {
+                while (!hostClient.isStopped() && !hostClient.isTCPEnabled()) {
                     LockSupport.parkNanos(parkTimeNanos);
                 }
                 latch.countDown();
@@ -157,7 +158,7 @@ public final class HostClient implements Closeable {
         Thread.startVirtualThread(() -> {
             try {
                 final long parkTimeNanos = 1_000_000L;
-                while (!hostClient.isUDPEnabled()) {
+                while (!hostClient.isStopped() && !hostClient.isUDPEnabled()) {
                     LockSupport.parkNanos(parkTimeNanos);
                 }
                 latch.countDown();
@@ -375,6 +376,16 @@ public final class HostClient implements Closeable {
         activeTcpSockets.remove(socket);
     }
 
+    public void registerTransferSocket(SecureSocket socket) {
+        if (socket != null) {
+            activeTransferSockets.add(socket);
+        }
+    }
+
+    public void unregisterTransferSocket(SecureSocket socket) {
+        activeTransferSockets.remove(socket);
+    }
+
     // 【优化】返回 Collection 接口，兼容 ConsoleManager 的 for 循环
     public Collection<Socket> getActiveTcpSockets() {
         return activeTcpSockets;
@@ -451,6 +462,14 @@ public final class HostClient implements Closeable {
         activeTcpSockets.clear();
     }
 
+    private void cleanActiveTransferSockets() {
+        Debugger.debugOperation("Cleaning " + activeTransferSockets.size() + " active transfer sockets.");
+        for (SecureSocket socket : activeTransferSockets) {
+            InternetOperator.close(socket);
+        }
+        activeTransferSockets.clear();
+    }
+
     public void close() {
         if (!isClosed.compareAndSet(false, true)) {
             return;
@@ -465,6 +484,7 @@ public final class HostClient implements Closeable {
         }
 
         cleanActiveTcpSockets();
+        cleanActiveTransferSockets();
         neoproxy.neoproxyserver.NeoProxyServer.availableHostClient.remove(this);
         neoproxy.neoproxyserver.core.InternetOperator.close(hostServerHook);
 

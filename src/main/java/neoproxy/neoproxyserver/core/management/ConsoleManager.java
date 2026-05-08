@@ -77,6 +77,15 @@ public class ConsoleManager {
             ServerLogger.infoWithSource(COMMAND_SOURCE.get(), "consoleManager.unknownCommand");
         });
 
+        registerWrapper("exit", "Shutdown NeoProxyServer", (List<String> params) -> {
+            /*
+             * MyConsole ships with an "exit" command that only closes the console.
+             * Re-registering the same command name intentionally replaces that default
+             * entry, so every operator-facing exit path uses the server lifecycle.
+             */
+            NeoProxyServer.requestShutdownAndExit();
+        });
+
         registerWrapper("alert", "Set whether to enable verbose console output", (List<String> params) -> {
             if (params.size() != 1) {
                 ServerLogger.warnWithSource(COMMAND_SOURCE.get(), "consoleManager.usage.alert");

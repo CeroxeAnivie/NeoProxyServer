@@ -42,6 +42,7 @@ public class TransferSocketAdapter implements Runnable {
     );
 
     private static final AtomicBoolean cleanerStarted = new AtomicBoolean(false);
+    private static final AtomicBoolean stopped = new AtomicBoolean(false);
 
     public static int SO_TIMEOUT = 5000; // 毫秒
 
@@ -52,6 +53,22 @@ public class TransferSocketAdapter implements Runnable {
         if (cleanerStarted.compareAndSet(false, true)) {
             cleanerExecutor.execute(TransferSocketAdapter::cleanerLoop);
         }
+    }
+
+    public static void shutdown() {
+        stopped.set(true);
+        close(NeoProxyServer.hostServerTransferServerSocket);
+        tcpWaiting.forEach((socketID, future) -> future.cancel(true));
+        udpWaiting.forEach((socketID, future) -> future.cancel(true));
+        tcpWaiting.clear();
+        udpWaiting.clear();
+        tcpHostReply.forEach((socketID, hostReply) -> close(hostReply.host()));
+        udpHostReply.forEach((socketID, hostReply) -> close(hostReply.host()));
+        tcpHostReply.clear();
+        udpHostReply.clear();
+        delayQueue.clear();
+        cleanerExecutor.shutdownNow();
+        acceptHandlerPool.shutdownNow();
     }
 
     private static void cleanerLoop() {
@@ -146,12 +163,12 @@ public class TransferSocketAdapter implements Runnable {
             System.exit(-1);
         }
 
-        while (!isStopped) {
+        while (!isStopped && !stopped.get()) {
             SecureSocket host;
             try {
                 host = NeoProxyServer.hostServerTransferServerSocket.accept();
             } catch (IOException e) {
-                if (isStopped) break;
+                if (isStopped || stopped.get()) break;
                 debugOperation(e);
                 continue;
             }
@@ -223,8 +240,7 @@ public class TransferSocketAdapter implements Runnable {
             });
         }
 
-        acceptHandlerPool.shutdown();
-        cleanerExecutor.shutdown();
+        shutdown();
     }
 
     private static class DelayedEntry implements Delayed {

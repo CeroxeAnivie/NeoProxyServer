@@ -246,6 +246,7 @@ public class UDPTransformer implements Runnable {
 
     @Override
     public void run() {
+        hostClient.registerTransferSocket(hostReply.host());
         try {
             final double[] aTenMibSize = {0};
             Runnable clientToHostClientThread = () -> outClientToHostClient(aTenMibSize);
@@ -264,6 +265,7 @@ public class UDPTransformer implements Runnable {
             }
         } catch (Exception ignore) {
         } finally {
+            hostClient.unregisterTransferSocket(hostReply.host());
             close(hostReply.host());
             udpClientConnections.remove(this);
             ServerLogger.sayClientUDPConnectDestroyInfo(hostClient, clientIP + ":" + clientOutPort);

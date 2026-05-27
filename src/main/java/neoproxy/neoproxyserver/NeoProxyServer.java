@@ -672,9 +672,23 @@ public class NeoProxyServer {
             File file = new File(location.toURI());
             if (file.isFile() && file.getName().toLowerCase().endsWith(".jar")) {
                 File parentDir = file.getParentFile();
-                if (parentDir != null) return parentDir.getAbsolutePath();
+                if (parentDir != null) return parentDir.getCanonicalPath();
             }
         } catch (Exception ignored) {
+        }
+        return resolveProjectRootOrFallback(fallbackPath);
+    }
+
+    private static String resolveProjectRootOrFallback(String fallbackPath) {
+        try {
+            File current = new File(fallbackPath).getCanonicalFile();
+            while (current != null) {
+                if (new File(current, "src").isDirectory()) {
+                    return current.getCanonicalPath();
+                }
+                current = current.getParentFile();
+            }
+        } catch (IOException ignored) {
         }
         return fallbackPath;
     }

@@ -71,11 +71,9 @@ function checkAndParseTableData(rawPayload) {
 
     // 检测 ASCII 表格特征字符
     if (content.includes("┌") || content.includes("│")) {
-        handleTableData(content);
         isExpectingTable = false;
-        document.getElementById(tableTarget + '-table-wrapper').innerHTML = "";
         handleTableData(content);
-        return;
+        return true;
     }
 
     // 检测空列表关键词
@@ -86,11 +84,14 @@ function checkAndParseTableData(rawPayload) {
     ];
     for (let key of emptyKeywords) {
         if (content.includes(key)) {
-            renderEmptyTable(tableTarget);
+            const target = tableTarget;
             isExpectingTable = false;
-            return;
+            renderEmptyTable(target);
+            return true;
         }
     }
+
+    return false;
 }
 
 /**

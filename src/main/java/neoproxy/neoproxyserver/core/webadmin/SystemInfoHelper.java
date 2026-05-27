@@ -43,7 +43,7 @@ public class SystemInfoHelper {
         long usedJvm;
         try {
             OSProcess process = os.getProcess(os.getProcessId());
-            usedJvm = process.getResidentSetSize();
+            usedJvm = process.getResidentMemory();
         } catch (Exception e) {
             // 回退方案：使用JVM堆内存
             long totalJvm = Runtime.getRuntime().totalMemory();

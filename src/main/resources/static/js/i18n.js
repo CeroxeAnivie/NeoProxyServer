@@ -129,6 +129,9 @@ const LANG = {
         up_fail: "Failed",
         up_wait: "Pending",
         msg_deleted: "Deleted: ",
+        msg_moved: "Moved: ",
+        msg_copied: "Copied: ",
+        msg_failed: ", Failed: ",
         up_stats: "Uploaded: ",
         ctx_open: "Open",
         ctx_copy: "Copy",
@@ -151,6 +154,10 @@ const LANG = {
         prop_folders: "Folders",
         prop_total_size: "Total Size",
         prop_time: "Modified",
+        prop_type_file: "File",
+        prop_type_folder: "Folder",
+        file_root: "Root",
+        files_suffix: "Files",
         no_files: "No Files",
         msg_created: "Created: ",
         move_new_folder_ph: "Folder Name",
@@ -281,6 +288,9 @@ const LANG = {
         up_fail: "失败",
         up_wait: "等待中",
         msg_deleted: "已删除: ",
+        msg_moved: "已移动: ",
+        msg_copied: "已复制: ",
+        msg_failed: "，失败: ",
         up_stats: "已传: ",
         ctx_open: "打开",
         ctx_copy: "复制",
@@ -303,6 +313,10 @@ const LANG = {
         prop_folders: "文件夹数",
         prop_total_size: "总大小",
         prop_time: "修改时间",
+        prop_type_file: "文件",
+        prop_type_folder: "文件夹",
+        file_root: "根目录",
+        files_suffix: "个文件",
         no_files: "暂无文件",
         msg_created: "已创建: ",
         move_new_folder_ph: "文件夹名称",
@@ -334,8 +348,10 @@ function setLang(l) {
     if (currentTab === 'keys' && lastKeyData) renderKeyTable(lastKeyData);
     else if (currentTab === 'clients' && lastClientData) renderClientTable(lastClientData);
     else if (currentTab === 'bans' && lastBanData) renderBanTable(lastBanData);
+    else if (currentTab === 'files' && currentFileRootPath) {
+        const rootEl = document.getElementById("file-root-path");
+        if (rootEl) rootEl.innerText = t("file_root") + ": " + currentFileRootPath;
+    }
 
     updateHeader();
 }
-
-

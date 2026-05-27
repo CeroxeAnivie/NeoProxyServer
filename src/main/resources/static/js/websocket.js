@@ -38,7 +38,9 @@ function connectWs() {
             } else if (msg.type === "logo") {
                 logLogo(msg.payload);
             } else if (msg.type === "cmd_result") {
-                handleTableData(msg.payload);
+                if (!isExpectingTable || !checkAndParseTableData(msg.payload)) {
+                    handleTableData(msg.payload);
+                }
             } else if (msg.type === "dashboard_data") {
                 updateDashboard(JSON.parse(msg.payload));
             } else if (msg.type === "action" && msg.payload === "refresh_clients") {
@@ -48,7 +50,7 @@ function connectWs() {
             } else if (msg.type === "perf_ports") {
                 updatePorts(msg.payload);
             } else if (msg.type === "file_list") {
-                handleFileList(msg.payload, msg.path);
+                handleFileList(msg.payload, msg.path, msg.rootPath);
             } else if (msg.type === "file_content") {
                 showEditorContent(msg.payload);
             } else if (msg.type === "file_too_large") {
@@ -57,7 +59,8 @@ function connectWs() {
                 var text = msg.payload;
                 if (text.startsWith("Deleted: ")) text = t("msg_deleted") + text.substring(9);
                 else if (text.startsWith("Created: ")) text = t("msg_created") + text.substring(9);
-                else if (text.startsWith("Moved: ")) text = text;
+                else if (text.startsWith("Moved: ")) text = formatFileOpToast(text, "Moved: ", t("msg_moved"));
+                else if (text.startsWith("Copied: ")) text = formatFileOpToast(text, "Copied: ", t("msg_copied"));
                 showToast(text, "success");
             } else if (msg.type === "error") {
                 showToast(msg.payload, "danger");
@@ -67,6 +70,11 @@ function connectWs() {
         } catch (err) { /* 忽略非JSON消息 */
         }
     };
+}
+
+function formatFileOpToast(text, sourcePrefix, translatedPrefix) {
+    var body = text.substring(sourcePrefix.length);
+    return translatedPrefix + body.replace(", Failed: ", t("msg_failed"));
 }
 
 function updateStatus(connected) {
@@ -91,4 +99,3 @@ function lockDown() {
     if (ws) ws.close();
     document.getElementById("error-overlay").style.display = "flex";
 }
-

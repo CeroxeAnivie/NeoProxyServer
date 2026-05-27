@@ -22,11 +22,12 @@ function refreshFiles() {
     loadDir(curPath);
 }
 
-function handleFileList(list, path) {
+function handleFileList(list, path, rootPath) {
     list = list || [];
     if (fileRequestTarget === "view") {
         currentFileList = list;
-        renderFiles(list, path);
+        currentFileRootPath = rootPath || "";
+        renderFiles(list, path, rootPath);
     } else renderMoveList(list, path);
 }
 
@@ -49,8 +50,10 @@ function getFileIcon(name, isDir) {
     return "fa-file";
 }
 
-function renderFiles(list, path) {
+function renderFiles(list, path, rootPath) {
     curPath = path;
+    var rootEl = document.getElementById("file-root-path");
+    if (rootEl) rootEl.innerText = rootPath ? (t("file_root") + ": " + rootPath) : "";
     var parts = path.split(/[/\\\\]/);
     var bcHtml = '<span class="crumb" onclick="loadDir(\'\')"><i class="fas fa-home"></i></span>';
     var buildPath = "";
@@ -148,7 +151,7 @@ function handleFolderDrop(e, targetFolder) {
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.classList.remove("drag-over");
-    reqMoveTo(targetFolder);
+    reqMoveTo(curPath ? curPath + "/" + targetFolder : targetFolder);
 }
 
 function handleTouchStart(e, name) {
@@ -182,7 +185,9 @@ function handleTouchEnd(e) {
             var folderItem = elem.closest(".is-dir");
             if (folderItem) {
                 var targetName = folderItem.querySelector(".file-name").innerText;
-                if (targetName && targetName !== dragSrcItem.name) reqMoveTo(targetName);
+                if (targetName && targetName !== dragSrcItem.name) {
+                    reqMoveTo(curPath ? curPath + "/" + targetName : targetName);
+                }
             }
         }
     }
@@ -472,10 +477,10 @@ function copyFile(name, action) {
     clipboardFiles.clear();
     if (selectedFiles.has(name) && selectedFiles.size > 1) {
         selectedFiles.forEach(function (f) {
-            clipboardFiles.add(f);
+            clipboardFiles.add(curPath ? curPath + "/" + f : f);
         });
     } else {
-        clipboardFiles.add(name);
+        clipboardFiles.add(curPath ? curPath + "/" + name : name);
     }
     clipboardAction = action;
     showPasteFab();
@@ -484,7 +489,7 @@ function copyFile(name, action) {
 function showPasteFab() {
     var fab = document.getElementById("paste-fab");
     fab.classList.add("show");
-    document.getElementById("paste-count").innerText = clipboardFiles.size + " Files";
+    document.getElementById("paste-count").innerText = clipboardFiles.size + " " + t("files_suffix");
     document.getElementById("paste-action").innerText = clipboardAction === "copy" ? t("ctx_copy") : t("ctx_cut");
 }
 
@@ -498,7 +503,7 @@ function pasteFiles() {
     var cmd = clipboardAction === "cut" ? "#MOVE_FILES:" : "#COPY_FILES:";
     cmd += curPath;
     clipboardFiles.forEach(function (f) {
-        cmd += "|" + (curPath ? curPath + "/" : "") + f;
+        cmd += "|" + f;
     });
     ws.send(cmd);
     if (clipboardAction === "cut") clearClipboard();
@@ -544,7 +549,7 @@ function showProperties(name, size, isDir, path, time) {
             // 【安全修复】属性弹窗内容必须转义
             '<div style="font-weight:bold;margin-top:10px;word-break:break-all">' + escapeHtml(name) + "</div></div>" +
             '<div class="prop-row"><span class="prop-k">' + t("prop_type") + "</span>" +
-            '<span class="prop-v">' + (isDir ? "Folder" : "File") + "</span></div>" +
+            '<span class="prop-v">' + (isDir ? t("prop_type_folder") : t("prop_type_file")) + "</span></div>" +
             '<div class="prop-row"><span class="prop-k">' + t("prop_path") + "</span>" +
             '<span class="prop-v">' + escapeHtml(path) + "</span></div>" +
             '<div class="prop-row"><span class="prop-k">' + t("prop_size") + "</span>" +

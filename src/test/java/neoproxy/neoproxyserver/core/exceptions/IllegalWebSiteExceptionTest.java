@@ -52,8 +52,6 @@ class IllegalWebSiteExceptionTest {
             IllegalWebSiteException.throwException("test.com");
         } catch (IllegalWebSiteException e) {
             assertTrue(e instanceof IOException);
-        } catch (IOException e) {
-            fail("应该是IllegalWebSiteException");
         }
     }
 

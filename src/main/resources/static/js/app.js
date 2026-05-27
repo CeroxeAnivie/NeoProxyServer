@@ -36,6 +36,7 @@ let fileRequestTarget = 'view'; // 文件请求目标: view / modal
 let clipboardAction = null;    // 剪贴板操作: copy / cut
 let clipboardFiles = new Set(); // 剪贴板文件集合
 let currentFileList = [];      // 当前文件列表数据
+let currentFileRootPath = "";  // 后端实际文件管理根目录
 
 /* ========== DOM 引用 ========== */
 const termOutput = document.getElementById('term-output');

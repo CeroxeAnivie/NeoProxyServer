@@ -245,8 +245,9 @@ function handleUpload(files) {
     var arr = Array.from(files);
     arr.forEach(function (f) {
         var id = Date.now() + "_" + Math.random().toString(36).substr(2, 9);
-        addUploadItem(id, f.name, f.size);
-        uploadQueue.push({file: f, id: id, relPath: f.name});
+        var relPath = f.webkitRelativePath || f.name;
+        addUploadItem(id, relPath, f.size);
+        uploadQueue.push({file: f, id: id, relPath: relPath});
         totalFiles++;
     });
     updateHeader();

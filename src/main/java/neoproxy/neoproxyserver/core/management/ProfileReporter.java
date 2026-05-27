@@ -769,7 +769,7 @@ public final class ProfileReporter {
     private static long getJvmRss() {
         try {
             OSProcess process = OS.getProcess(OS.getProcessId());
-            return process.getResidentSetSize();
+            return process.getResidentMemory();
         } catch (Exception e) {
             // 如果获取失败，返回JVM堆内存使用量作为近似值
             return RUNTIME.totalMemory() - RUNTIME.freeMemory();

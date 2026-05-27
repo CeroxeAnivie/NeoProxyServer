@@ -397,7 +397,14 @@ public class WebAdminServer {
                 ctx.status(403).json("{\"status\":\"error\",\"msg\":\"Access Denied\"}");
                 return;
             }
-            if (!targetDir.exists()) targetDir.mkdirs();
+            if (!targetDir.exists() && !targetDir.mkdirs()) {
+                ctx.status(500).json("{\"status\":\"error\",\"msg\":\"Create upload directory failed\"}");
+                return;
+            }
+            if (!targetDir.isDirectory()) {
+                ctx.status(403).json("{\"status\":\"error\",\"msg\":\"Target path is not a directory\"}");
+                return;
+            }
             targetFile = new File(targetDir, filename).getCanonicalFile();
             if (isUnsafeSymlink(targetFile)) {
                 ctx.status(403).json("{\"status\":\"error\",\"msg\":\"Access Denied\"}");
@@ -506,7 +513,6 @@ public class WebAdminServer {
 
     private void zipFile(File fileToZip, String fileName, ZipOutputStream zipOut) throws IOException {
         if (isUnsafeSymlink(fileToZip)) return;
-        if (fileToZip.isHidden()) return;
         if (fileToZip.isDirectory()) {
             if (fileName.endsWith("/")) zipOut.putNextEntry(new ZipEntry(fileName));
             else zipOut.putNextEntry(new ZipEntry(fileName + "/"));
@@ -817,6 +823,10 @@ public class WebAdminServer {
                     handleMoveFiles(text.substring(12));
                     return;
                 }
+                if (text.startsWith("#COPY_FILES:")) {
+                    handleCopyFiles(text.substring(12));
+                    return;
+                }
                 if (text.startsWith("#GET_DASHBOARD")) {
                     handleGetDashboard();
                     return;
@@ -887,7 +897,14 @@ public class WebAdminServer {
                     sendJson("error", "Access Denied");
                     return;
                 }
-                if (!targetDir.exists()) targetDir.mkdirs();
+                if (!targetDir.exists() && !targetDir.mkdirs()) {
+                    sendJson("error", "Create target directory failed");
+                    return;
+                }
+                if (!targetDir.isDirectory()) {
+                    sendJson("error", "Target path is not a directory");
+                    return;
+                }
                 int success = 0, fail = 0;
                 for (int i = 1; i < parts.length; i++) {
                     String sourceRelPath = parts[i];
@@ -908,6 +925,11 @@ public class WebAdminServer {
                         continue;
                     }
                     if (!sourceFile.exists()) {
+                        fail++;
+                        continue;
+                    }
+                    if (sourceFile.isDirectory()
+                            && isSameOrChildPath(targetDir.getCanonicalPath(), sourceFile.getCanonicalPath())) {
                         fail++;
                         continue;
                     }
@@ -937,6 +959,84 @@ public class WebAdminServer {
             }
         }
 
+        private void handleCopyFiles(String payload) {
+            try {
+                String[] parts = payload.split("\\|", -1);
+                if (parts.length < 2) return;
+                String targetRelPath = parts[0];
+                Debugger.debugOperation("Copy Files to: " + targetRelPath);
+                File targetDir = resolveSandboxFile(targetRelPath);
+                if (targetDir.exists() && isUnsafeSymlink(targetDir)) {
+                    sendJson("error", "Access Denied");
+                    return;
+                }
+                if (!targetDir.exists() && !targetDir.mkdirs()) {
+                    sendJson("error", "Create target directory failed");
+                    return;
+                }
+                if (!targetDir.isDirectory()) {
+                    sendJson("error", "Target path is not a directory");
+                    return;
+                }
+                int success = 0, fail = 0;
+                for (int i = 1; i < parts.length; i++) {
+                    try {
+                        File sourceFile = resolveSandboxFile(parts[i]);
+                        if (!sourceFile.exists() || isSandboxRoot(sourceFile) || isUnsafeSymlink(sourceFile)) {
+                            fail++;
+                            continue;
+                        }
+                        if (sourceFile.isDirectory()
+                                && isSameOrChildPath(targetDir.getCanonicalPath(), sourceFile.getCanonicalPath())) {
+                            fail++;
+                            continue;
+                        }
+                        File destFile = buildNonConflictingDestination(targetDir, sourceFile.getName(), "_copy_");
+                        copyRecursively(sourceFile, destFile);
+                        success++;
+                    } catch (Exception e) {
+                        fail++;
+                    }
+                }
+                sendJson("action", "refresh_files");
+                sendJson("toast", "Copied: " + success + ", Failed: " + fail);
+            } catch (Exception e) {
+                sendJson("error", "Copy failed: " + e.getMessage());
+            }
+        }
+
+        private File buildNonConflictingDestination(File targetDir, String name, String suffix) throws IOException {
+            File destFile = new File(targetDir, name).getCanonicalFile();
+            if (!destFile.exists()) return destFile;
+            int dot = name.lastIndexOf('.');
+            String newName = (dot > 0) ? name.substring(0, dot) + suffix + System.currentTimeMillis() + name.substring(dot)
+                    : name + suffix + System.currentTimeMillis();
+            return new File(targetDir, newName).getCanonicalFile();
+        }
+
+        private void copyRecursively(File source, File target) throws IOException {
+            if (isUnsafeSymlink(source) || isUnsafeSymlink(target)) {
+                throw new SecurityException("Access Denied");
+            }
+            if (source.isDirectory()) {
+                if (target.exists() && !target.isDirectory()) {
+                    throw new IOException("Target exists and is not a directory");
+                }
+                if (!target.exists() && !target.mkdirs()) {
+                    throw new IOException("Create target directory failed");
+                }
+                File[] children = source.listFiles();
+                if (children == null) {
+                    throw new IOException("Directory is not readable: " + source.getAbsolutePath());
+                }
+                for (File child : children) {
+                    copyRecursively(child, new File(target, child.getName()).getCanonicalFile());
+                }
+                return;
+            }
+            Files.copy(source.toPath(), target.toPath(), StandardCopyOption.COPY_ATTRIBUTES);
+        }
+
         private void handleListFiles(String relPath) {
             try {
                 File dir = resolveSandboxFile(relPath);
@@ -949,8 +1049,15 @@ public class WebAdminServer {
                     sendJson("error", "Directory not found");
                     return;
                 }
+                if (!dir.isDirectory()) {
+                    sendJson("error", "Path is not a directory");
+                    return;
+                }
                 File[] files = dir.listFiles();
-                if (files == null) files = new File[0];
+                if (files == null) {
+                    sendJson("error", "Directory is not readable: " + dir.getAbsolutePath());
+                    return;
+                }
                 StringBuilder sb = new StringBuilder("[");
                 boolean needComma = false;
                 if (!relPath.isEmpty()) {
@@ -964,7 +1071,9 @@ public class WebAdminServer {
                     needComma = true;
                 }
                 sb.append("]");
-                sendJsonRaw("{\"type\":\"file_list\",\"path\":\"" + escapeJson(relPath) + "\",\"payload\":" + sb.toString() + "}");
+                sendJsonRaw("{\"type\":\"file_list\",\"path\":\"" + escapeJson(relPath) + "\",\"rootPath\":\""
+                        + escapeJson(new File(NeoProxyServer.CURRENT_DIR_PATH).getCanonicalPath())
+                        + "\",\"payload\":" + sb.toString() + "}");
             } catch (Exception e) {
                 sendJson("error", e.getMessage());
             }
@@ -1065,8 +1174,11 @@ public class WebAdminServer {
                     sendJson("error", "Exists already");
                     return;
                 }
-                if (isDir) f.mkdirs();
-                else f.createNewFile();
+                boolean created = isDir ? f.mkdirs() : f.createNewFile();
+                if (!created) {
+                    sendJson("error", "Create failed");
+                    return;
+                }
                 sendJson("action", "refresh_files");
                 sendJson("toast", "Created: " + name);
             } catch (Exception e) {

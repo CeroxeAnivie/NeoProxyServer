@@ -51,6 +51,9 @@ function connectWs() {
                 updatePorts(msg.payload);
             } else if (msg.type === "file_list") {
                 handleFileList(msg.payload, msg.path, msg.rootPath);
+            } else if (msg.type === "ban_list") {
+                isExpectingTable = false;
+                renderBanTable(msg.payload);
             } else if (msg.type === "file_content") {
                 showEditorContent(msg.payload);
             } else if (msg.type === "file_too_large") {

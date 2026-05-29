@@ -245,6 +245,18 @@ public class IPChecker {
         return new HashSet<>(bannedIPMap.keySet());
     }
 
+    public static List<BanInfo> getBannedIPInfos() {
+        LOCK.lock();
+        try {
+            return bannedIPMap.values().stream()
+                    .map(info -> new BanInfo(info.ip, info.location, info.isp))
+                    .sorted(Comparator.comparing(info -> info.ip))
+                    .toList();
+        } finally {
+            LOCK.unlock();
+        }
+    }
+
     public static boolean isValidIP(String ip) {
         return normalizeIP(ip) != null;
     }
@@ -312,9 +324,9 @@ public class IPChecker {
     }
 
     public static class BanInfo {
-        String ip;
-        String location;
-        String isp;
+        public final String ip;
+        public final String location;
+        public final String isp;
 
         public BanInfo(String ip, String location, String isp) {
             this.ip = ip;

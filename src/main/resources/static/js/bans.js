@@ -29,6 +29,7 @@ function renderBanTable(data) {
     lastBanData = data;
     var div = document.getElementById("ban-table-wrapper");
     if (!data) return renderEmptyTable("ban");
+    if (!data.rows || data.rows.length === 0) return renderEmptyTable("ban");
 
     var h = '<table><thead><tr>' +
         "<th>" + t("th_ip") + "</th>" +
@@ -50,7 +51,7 @@ function renderBanTable(data) {
             '<td><span class="l-ip">' + escIp + "</span></td>" +
             "<td>" + escLoc + "</td>" +
             "<td>" + escIsp + "</td>" +
-            '<td><button class="btn btn-action" onclick="ws.send(&apos;unban ' + escIp + "&apos;);setTimeout(refreshBans,500)">" +
+            '<td><button class="btn btn-action" onclick="ws.send(\'unban ' + escIp + '\');setTimeout(refreshBans,500)">' +
             '<i class="fas fa-unlock"></i> ' + t("act_unban") + "</button></td>" +
             "</tr>";
     });

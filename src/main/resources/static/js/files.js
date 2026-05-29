@@ -443,9 +443,9 @@ function showContextMenu(e, item) {
         }
 
         html += '<div class="context-sep"></div>';
-        html += '<div class="context-item" onclick="copyFile(\'' + escItemName + "', 'copy\')">" +
+        html += '<div class="context-item" onclick="copyFile(\'' + escItemName + '\', \'copy\')">' +
             '<i class="fas fa-copy"></i> ' + t("ctx_copy") + "</div>";
-        html += '<div class="context-item" onclick="copyFile(\'' + escItemName + "', 'cut\')">" +
+        html += '<div class="context-item" onclick="copyFile(\'' + escItemName + '\', \'cut\')">' +
             '<i class="fas fa-cut"></i> ' + t("ctx_cut") + "</div>";
 
         html += '<div class="context-sep"></div>';

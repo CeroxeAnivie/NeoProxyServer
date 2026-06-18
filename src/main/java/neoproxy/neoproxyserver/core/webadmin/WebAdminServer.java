@@ -718,6 +718,7 @@ public class WebAdminServer {
         private final String myId = UUID.randomUUID().toString();
         private final String remoteIp;
         private final WsContext wsContext;
+        private final String sessionToken;
         private int sessionType = 0;
         private volatile long lastActiveTime = System.currentTimeMillis();
         private volatile boolean isConnected = false;
@@ -725,6 +726,7 @@ public class WebAdminServer {
         public AdminWebSocket(WsContext ctx, String token, String remoteIp) {
             this.wsContext = ctx;
             this.remoteIp = remoteIp;
+            this.sessionToken = token;
             sessionType = WebAdminManager.verifyTokenAndGetType(token);
             GLOBAL_LOCK.lock();
             try {
@@ -772,6 +774,9 @@ public class WebAdminServer {
                     /* token 验证失败 (sessionType == 0)，用 1008 码关闭，前端 lockDown() 会识别 */
                     wsContext.closeSession(1008, "Unauthorized");
                     return;
+                }
+                if (sessionType == 1) {
+                    WebAdminManager.markTempSessionOpened(sessionToken);
                 }
                 lastConflictWarning.remove(remoteIp);
                 ServerLogger.infoWithSource("WebAdmin", "webAdmin.session.connected", remoteIp);
@@ -1332,11 +1337,13 @@ public class WebAdminServer {
         public void onClose(WsCloseContext ctx) {
             Debugger.debugOperation("WebAdmin WebSocket Close: " + remoteIp + " Reason: " + ctx.reason());
             isConnected = false;
+            boolean closedActiveTempSession = false;
             GLOBAL_LOCK.lock();
             try {
                 if (sessionType == 1 && myId.equals(activeTempSessionId)) {
                     activeTempSocket = null;
                     activeTempSessionId = null;
+                    closedActiveTempSession = true;
                     ServerLogger.infoWithSource("WebAdmin", "webAdmin.session.disconnected");
                 } else if (sessionType == 2 && myId.equals(activePermSessionId)) {
                     activePermSocket = null;
@@ -1345,6 +1352,9 @@ public class WebAdminServer {
                 }
             } finally {
                 GLOBAL_LOCK.unlock();
+            }
+            if (closedActiveTempSession) {
+                WebAdminManager.markTempSessionClosed(sessionToken);
             }
         }
 

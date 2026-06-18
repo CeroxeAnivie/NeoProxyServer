@@ -41,8 +41,9 @@ public class WebAdminManager {
 
     private static volatile boolean isRunning = false;
     private static volatile boolean isStarting = false;
-    private static String currentTempToken = null;
-    private static long tempTokenCreatedAt = 0;
+    private static volatile String currentTempToken = null;
+    private static volatile long tempTokenCreatedAt = 0;
+    private static volatile boolean tempSessionOpen = false;
     private static String permanentToken = "";
     // SSL 配置字段
     private static String sslCertPath = "";
@@ -318,6 +319,7 @@ public class WebAdminManager {
                 }
                 gatewaySocket = null;
             }
+            clearTempSessionState();
         } finally {
             MANAGER_LOCK.unlock();
         }
@@ -351,6 +353,7 @@ public class WebAdminManager {
 
         currentTempToken = UUID.randomUUID().toString();
         tempTokenCreatedAt = System.currentTimeMillis();
+        tempSessionOpen = false;
 
         String host = NeoProxyServer.LOCAL_DOMAIN_NAME;
         if (host == null || host.trim().isEmpty() || "0.0.0.0".equals(host)) {
@@ -366,13 +369,41 @@ public class WebAdminManager {
         if (permanentToken != null && !permanentToken.isEmpty() && permanentToken.equals(token)) {
             return 2;
         }
-        if (currentTempToken != null && currentTempToken.equals(token)) {
-            long now = System.currentTimeMillis();
-            if ((now - tempTokenCreatedAt) <= TEMP_TOKEN_VALIDITY_MS) {
-                return 1;
-            }
+        if (isCurrentTempToken(token) && (tempSessionOpen || isWithinOriginalTempWindow(System.currentTimeMillis()))) {
+            return 1;
         }
         return 0;
+    }
+
+    static void markTempSessionOpened(String token) {
+        if (isCurrentTempToken(token) && isWithinOriginalTempWindow(System.currentTimeMillis())) {
+            /*
+             * 临时链接的 5 分钟只限制“首次打开窗口”。一旦 WebSocket 建立，
+             * 后续 HTTP/WS 辅助请求必须跟随页面生命周期，否则长时间管理操作会被
+             * 生成时间误杀。
+             */
+            tempSessionOpen = true;
+        }
+    }
+
+    static void markTempSessionClosed(String token) {
+        if (isCurrentTempToken(token)) {
+            tempSessionOpen = false;
+        }
+    }
+
+    private static boolean isCurrentTempToken(String token) {
+        return currentTempToken != null && currentTempToken.equals(token);
+    }
+
+    private static boolean isWithinOriginalTempWindow(long now) {
+        return tempTokenCreatedAt > 0 && (now - tempTokenCreatedAt) <= TEMP_TOKEN_VALIDITY_MS;
+    }
+
+    private static void clearTempSessionState() {
+        currentTempToken = null;
+        tempTokenCreatedAt = 0;
+        tempSessionOpen = false;
     }
 
     public static boolean verifyToken(String token) {

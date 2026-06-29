@@ -3,6 +3,7 @@ package neoproxy.neoproxyserver.core;
 import top.ceroxe.api.net.SecureSocket;
 import top.ceroxe.api.thread.ThreadManager;
 import top.ceroxe.api.utils.Sleeper;
+import neoproxy.neoproxyserver.NeoProxyServer;
 import neoproxy.neoproxyserver.core.management.SequenceKey;
 import neoproxy.neoproxyserver.core.management.provider.Protocol;
 import neoproxy.neoproxyserver.core.threads.RateLimiter;
@@ -295,10 +296,10 @@ public final class HostClient implements Closeable {
             return;
         }
 
-        boolean enableTcp = flags.contains("T");
-        boolean enableUdp = flags.contains("U");
+        boolean enableTcp = NeoProxyServer.MC_ONLY_MODE || flags.contains("T");
+        boolean enableUdp = !NeoProxyServer.MC_ONLY_MODE && flags.contains("U");
         if (!canSwitchProtocolState(enableTcp, enableUdp)) {
-            Debugger.debugOperation("Protocol switch rejected because port " + getOutPort() + " is not available for both TCP and UDP.");
+            Debugger.debugOperation("Protocol switch rejected because port " + getOutPort() + " is not available for requested protocol state.");
             try {
                 InternetOperator.sendStr(this, languageData.THE_PORT_HAS_ALREADY_BIND);
             } catch (IOException e) {
@@ -356,6 +357,9 @@ public final class HostClient implements Closeable {
         int port = getOutPort();
         boolean tcpOwned = clientServerSocket != null && !clientServerSocket.isClosed();
         boolean udpOwned = clientDatagramSocket != null && !clientDatagramSocket.isClosed();
+        if (NeoProxyServer.MC_ONLY_MODE) {
+            return tcpOwned || InternetOperator.isTCPAvailable(port);
+        }
         if (tcpOwned && udpOwned) {
             return true;
         }

@@ -59,6 +59,8 @@ java -jar target/NeoProxyServer-XXXX.jar --zh-cn
 # 可选参数追加到后面
 # --debug                            打印调试信息（异常栈）
 # --en-us / --zh-cn                  强制指定语言
+# --low-ram                          启用低内存运行策略
+# --mc-only                          只允许 Minecraft TCP 流量，禁用 UDP 与 T/U 协议切换
 ```
 
 > 默认监听：

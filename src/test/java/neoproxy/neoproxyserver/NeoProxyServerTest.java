@@ -53,6 +53,24 @@ class NeoProxyServerTest {
     }
 
     @Test
+    @DisplayName("测试--mc-only参数会启用MC-only运行模式")
+    void testMcOnlyArgumentEnablesTcpOnlyMinecraftMode() throws Exception {
+        boolean originalMcOnlyMode = NeoProxyServer.MC_ONLY_MODE;
+        Method checkArgs = NeoProxyServer.class.getDeclaredMethod("checkARGS", String[].class);
+        checkArgs.setAccessible(true);
+
+        try {
+            NeoProxyServer.MC_ONLY_MODE = false;
+
+            checkArgs.invoke(null, (Object) new String[]{"--mc-only"});
+
+            assertTrue(NeoProxyServer.MC_ONLY_MODE);
+        } finally {
+            NeoProxyServer.MC_ONLY_MODE = originalMcOnlyMode;
+        }
+    }
+
+    @Test
     @DisplayName("测试--low-ram参数会启用低内存运行策略但保留TCP缓冲配置")
     void testLowRamArgumentAppliesMemoryProfile() throws Exception {
         int originalTcpBuffer = TCPTransformer.BUFFER_LEN;

@@ -70,6 +70,7 @@ public class NeoProxyServer {
     public static SecureServerSocket hostServerTransferServerSocket = null;
     public static boolean IS_DEBUG_MODE = false;
     public static boolean LOW_RAM_MODE = false;
+    public static boolean MC_ONLY_MODE = false;
     public static MyConsole myConsole;
     public static boolean isStopped = false;
     private static final AtomicBoolean SHUTDOWN_STARTED = new AtomicBoolean(false);
@@ -102,7 +103,11 @@ public class NeoProxyServer {
         if (isStopped) return;
         ConsoleManager.init();
         if (isStopped) return;
+        printLogo();
+        if (isStopped) return;
         ConfigOperator.readAndSetValue();
+        if (isStopped) return;
+        warnIfMcOnlyModeEnabled();
         if (isStopped) return;
         applyRuntimeMemoryProfile();
         if (isStopped) return;
@@ -111,8 +116,6 @@ public class NeoProxyServer {
         } else {
             WebAdminManager.init();
         }
-        if (isStopped) return;
-        printLogo();
         if (isStopped) return;
         SequenceKey.initProvider();
         if (isStopped) return;
@@ -145,6 +148,10 @@ public class NeoProxyServer {
                     LOW_RAM_MODE = true;
                     Debugger.debugOperation("Low RAM mode enabled via argument.");
                 }
+                case "--mc-only" -> {
+                    MC_ONLY_MODE = true;
+                    Debugger.debugOperation("MC-only mode enabled via argument.");
+                }
             }
         }
     }
@@ -165,6 +172,12 @@ public class NeoProxyServer {
 
         UDPTransformer.setSendQueueCapacity(UDP_SEND_QUEUE_CAPACITY);
         SecureSocket.setMaxAllowedPacketSize(Math.max(SECURE_PACKET_SIZE, TCPTransformer.BUFFER_LEN + 4096));
+    }
+
+    private static void warnIfMcOnlyModeEnabled() {
+        if (MC_ONLY_MODE) {
+            ServerLogger.warnWithSource("MC-Only", "neoProxyServer.mcOnlyModeEnabled");
+        }
     }
 
     private static void printLogo() {
@@ -304,32 +317,50 @@ public class NeoProxyServer {
                         int originalTimeout = client.getSoTimeout();
                         client.setSoTimeout(1000);
 
-                        byte[] headerBytes = new byte[8];
-                        int readLen = 0;
+                        byte[] preReadBytes = null;
                         try {
-                            int b = rawInput.read();
-                            if (b == -1) {
-                                Debugger.debugOperation("TCP Probe: Client sent EOS immediately.");
-                                client.close();
-                                return;
-                            }
-                            headerBytes[0] = (byte) b;
-                            readLen = 1;
-
-                            if (IS_DEBUG_MODE) {
-                                int available = rawInput.available();
-                                if (available > 0) {
-                                    int toRead = Math.min(available, 7);
-                                    int r = rawInput.read(headerBytes, 1, toRead);
-                                    if (r > 0) readLen += r;
+                            if (MC_ONLY_MODE) {
+                                preReadBytes = MinecraftTrafficInspector.readHandshakePrefix(rawInput);
+                                if (preReadBytes == null) {
+                                    Debugger.debugOperation("TCP Probe: Rejected non-Minecraft TCP traffic from " + client.getInetAddress());
+                                    close(client);
+                                    return;
                                 }
-                                Debugger.debugOperation("TCP Probe: Read " + readLen + " bytes: " + Arrays.toString(Arrays.copyOf(headerBytes, readLen)));
+                                if (IS_DEBUG_MODE) {
+                                    Debugger.debugOperation("TCP Probe: Accepted Minecraft handshake bytes: " + preReadBytes.length);
+                                }
+                            } else {
+                                byte[] headerBytes = new byte[8];
+                                int b = rawInput.read();
+                                if (b == -1) {
+                                    Debugger.debugOperation("TCP Probe: Client sent EOS immediately.");
+                                    close(client);
+                                    return;
+                                }
+                                headerBytes[0] = (byte) b;
+                                int readLen = 1;
+
+                                if (IS_DEBUG_MODE) {
+                                    int available = rawInput.available();
+                                    if (available > 0) {
+                                        int toRead = Math.min(available, 7);
+                                        int r = rawInput.read(headerBytes, 1, toRead);
+                                        if (r > 0) readLen += r;
+                                    }
+                                    Debugger.debugOperation("TCP Probe: Read " + readLen + " bytes: " + Arrays.toString(Arrays.copyOf(headerBytes, readLen)));
+                                }
+                                preReadBytes = Arrays.copyOf(headerBytes, readLen);
                             }
                         } catch (SocketTimeoutException e) {
+                            if (MC_ONLY_MODE) {
+                                Debugger.debugOperation("TCP Probe: Timeout while pre-reading. Closing...");
+                                close(client);
+                                return;
+                            }
                             Debugger.debugOperation("TCP Probe: Timeout while pre-reading. Continuing...");
                         } catch (IOException e) {
                             Debugger.debugOperation(e);
-                            client.close();
+                            close(client);
                             return;
                         } finally {
                             try {
@@ -360,8 +391,8 @@ public class NeoProxyServer {
 
                         Debugger.debugOperation("Starting TCPTransformer for SocketID: " + socketID);
                         InputStream transformerInput = rawInput;
-                        if (readLen > 0) {
-                            transformerInput = new PreReadInputStream(Arrays.copyOf(headerBytes, readLen), rawInput);
+                        if (preReadBytes != null && preReadBytes.length > 0) {
+                            transformerInput = new PreReadInputStream(preReadBytes, rawInput);
                         }
                         TCPTransformer.start(hostClient, hostReply, client, transformerInput);
                         ServerLogger.sayClientTCPConnectBuildUpInfo(hostClient, client);
@@ -373,6 +404,11 @@ public class NeoProxyServer {
             }
             Debugger.debugOperation("TCP Service Loop exited for client: " + hostClient.getIP());
         });
+
+        if (MC_ONLY_MODE) {
+            Debugger.debugOperation("UDP Service Loop skipped because MC-only mode is enabled for client: " + hostClient.getIP());
+            return;
+        }
 
         ThreadManager.runAsync(() -> {
             Debugger.debugOperation("UDP Service Loop started for client: " + hostClient.getIP());
@@ -461,13 +497,17 @@ public class NeoProxyServer {
     private static int getCurrentAvailableOutPort(SequenceKey sequenceKey) {
         Debugger.debugOperation("Searching for available port in range " + sequenceKey.getDyStart() + "-" + sequenceKey.getDyEnd());
         for (int i = sequenceKey.getDyStart(); i <= sequenceKey.getDyEnd(); i++) {
-            if (isTCPAndUDPAvailable(i)) {
+            if (isRequiredProtocolPortAvailable(i)) {
                 Debugger.debugOperation("Found available port: " + i);
                 return i;
             }
         }
         Debugger.debugOperation("No available ports found in range.");
         return -1;
+    }
+
+    private static boolean isRequiredProtocolPortAvailable(int port) {
+        return MC_ONLY_MODE ? isTCPAvailable(port) : isTCPAndUDPAvailable(port);
     }
 
     private static void checkHostClientLegitimacyAndTellInfo(HostClient hostClient) throws Exception {
@@ -564,13 +604,15 @@ public class NeoProxyServer {
         // --- 以下为版本匹配成功后的逻辑 ---
 
         // 处理 TCP/UDP 开启状态 (T/U 标志位)
-        if (info.length == 4) {
+        if (MC_ONLY_MODE) {
+            forceTcpOnly(hostClient);
+        } else if (info.length == 4) {
             applyProtocolFlags(hostClient, info[3]);
         }
 
         // 检查端口可用性 (如果是固定端口)
         if (currentSequenceKey.getPort() != DYNAMIC_PORT) {
-            if (!isTCPAndUDPAvailable(currentSequenceKey.getPort())) {
+            if (!isRequiredProtocolPortAvailable(currentSequenceKey.getPort())) {
                 InternetOperator.sendStr(hostClient, languageData.THE_PORT_HAS_ALREADY_BIND);
                 NoMorePortException.throwException(currentSequenceKey.getPort());
             }
@@ -596,6 +638,11 @@ public class NeoProxyServer {
         }
         hostClient.setTCPEnabled(normalizedFlags.contains("T"));
         hostClient.setUDPEnabled(normalizedFlags.contains("U"));
+    }
+
+    private static void forceTcpOnly(HostClient hostClient) {
+        hostClient.setTCPEnabled(true);
+        hostClient.setUDPEnabled(false);
     }
 
     private static String getClientVersionUpdateHint() {

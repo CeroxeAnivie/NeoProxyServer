@@ -331,20 +331,34 @@ public class RemoteKeyProvider implements KeyDataProvider {
 
     @Override
     public void releaseKey(String name) {
-        // ... (保持原有代码不变)
-        ThreadManager.runAsync(() -> {
-            try {
-                JsonObject json = new JsonObject();
-                json.addProperty("serial", name);
-                json.addProperty("nodeId", nodeId);
-                String body = gson.toJson(json);
-                HttpRequest req = buildRequest(managerUrl + Protocol.API_RELEASE, "POST", body)
-                        .POST(HttpRequest.BodyPublishers.ofString(body))
-                        .build();
-                httpClient.send(req, HttpResponse.BodyHandlers.discarding());
-            } catch (Exception ignored) {
+        if (name == null || name.isBlank()) {
+            return;
+        }
+
+        /*
+         * release 是关闭 HostClient 生命周期的最后一道外部一致性边界。
+         * 这里不能 fire-and-forget：客户端断线后可能立即重连，如果本方法在 NKM
+         * 真正释放 serial 之前就返回，下一次 getKey 会被远端会话锁误判为占用。
+         * sendWithRetry 已经提供有界超时，调用方最多等待一个受控的管理面 RTT。
+         */
+        try {
+            JsonObject json = new JsonObject();
+            json.addProperty("serial", name);
+            json.addProperty("nodeId", nodeId);
+            String body = gson.toJson(json);
+            HttpRequest req = buildRequest(managerUrl + Protocol.API_RELEASE, "POST", body)
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+            HttpResponse<String> response = sendWithRetry(req);
+            int statusCode = response.statusCode();
+            if (statusCode < 200 || statusCode >= 300) {
+                Debugger.debugOperation("NKM release failed for serial " + name
+                        + ". status=" + statusCode
+                        + ", body=" + sanitizeLogField(response.body()));
             }
-        });
+        } catch (Exception e) {
+            debugOperation(e);
+        }
     }
 
     @Override

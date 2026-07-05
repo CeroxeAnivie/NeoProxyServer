@@ -494,9 +494,11 @@ public final class HostClient implements Closeable {
 
         this.setTCPEnabled(false);
         neoproxy.neoproxyserver.core.InternetOperator.close(clientServerSocket);
+        clientServerSocket = null;
 
         this.setUDPEnabled(false);
         neoproxy.neoproxyserver.core.InternetOperator.close(clientDatagramSocket);
+        clientDatagramSocket = null;
 
         if (this.sequenceKey != null) {
             Debugger.debugOperation("Releasing key " + this.sequenceKey.getName() + " on close.");
